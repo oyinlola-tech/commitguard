@@ -9,15 +9,20 @@
 
 import os
 import subprocess
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 import yaml
 
+from commitguard.core.context import CommitContext
+from commitguard.core.result import Finding
+from commitguard.detectors.base import Detector
 from commitguard.git.commit import Commit
 from commitguard.provenance.author import Identity
+from commitguard.rules.loader import load_builtin_rules
+from commitguard.rules.matcher import CompiledRules
 
 TESTS_DIR = Path(__file__).parent
 FIXTURES_DIR = TESTS_DIR / "fixtures"
@@ -120,6 +125,41 @@ def commit_cases() -> list[CommitCase]:
 @pytest.fixture
 def human_commit() -> Commit:
     return load_commit_case(COMMIT_FIXTURES_DIR / "normal_human.yaml").commit
+
+
+HUMAN = Identity(name="Ada Lovelace", email="ada@example.com")
+
+
+def _make_commit(
+    message: str = "feat: implement authentication\n",
+    *,
+    author: Identity = HUMAN,
+    committer: Identity | None = None,
+    sha: str | None = None,
+) -> Commit:
+    """Build an in-memory commit; trailers are derived from ``message``."""
+    return Commit(sha=sha, author=author, committer=committer or author, message=message)
+
+
+def _run_detector(detector: Detector, commit: Commit) -> list[Finding]:
+    return list(detector.detect(CommitContext(commit=commit)))
+
+
+# Helpers are exposed as fixtures because tests use --import-mode=importlib,
+# under which conftest.py is not importable as a module.
+@pytest.fixture
+def make_commit() -> Callable[..., Commit]:
+    return _make_commit
+
+
+@pytest.fixture
+def run_detector() -> Callable[[Detector, Commit], list[Finding]]:
+    return _run_detector
+
+
+@pytest.fixture(scope="session")
+def rules() -> CompiledRules:
+    return load_builtin_rules()
 
 
 # --------------------------------------------------------------------------- #

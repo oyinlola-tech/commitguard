@@ -3,7 +3,7 @@ from typing import ClassVar
 
 import pytest
 
-from commitguard.core.context import ScanContext
+from commitguard.core.context import CommitContext
 from commitguard.core.result import Finding
 from commitguard.detectors.base import Detector
 from commitguard.detectors.registry import DetectorRegistry, builtin_registry
@@ -15,7 +15,7 @@ def _detector(name: str, rules: frozenset[str]) -> Detector:
     class _D(Detector):
         description: ClassVar[str] = "test"
 
-        def detect(self, context: ScanContext) -> Sequence[Finding]:
+        def detect(self, context: CommitContext) -> Sequence[Finding]:
             return []
 
     _D.name = name
@@ -63,10 +63,10 @@ def test_unknown_detector_lookup() -> None:
         DetectorRegistry().get("missing")
 
 
-def test_builtin_registry_contents() -> None:
-    registry = builtin_registry()
+def test_builtin_registry_contents(rules) -> None:  # type: ignore[no-untyped-def]
+    registry = builtin_registry(rules)
     assert [d.name for d in registry.all()] == ["bot", "coauthor", "identity", "trailer"]
 
 
-def test_every_builtin_rule_has_a_default_policy_and_vice_versa() -> None:
-    assert builtin_registry().rules() == KNOWN_POLICY_IDS
+def test_every_builtin_rule_has_a_default_policy_and_vice_versa(rules) -> None:  # type: ignore[no-untyped-def]
+    assert builtin_registry(rules).rules() == KNOWN_POLICY_IDS

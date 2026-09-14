@@ -1,34 +1,51 @@
 # Email domains associated with AI agent vendors.
 #
-# STATUS: rule data only; not loaded until Phase 2.
+# A vendor domain alone is NOT evidence of an AI agent: people who work at these
+# companies commit with the same domain. Matching semantics:
 #
-# IMPORTANT: a vendor domain alone is NOT evidence of an AI agent - employees of
-# these companies commit with the same domain. Phase 2 matching must combine a
-# domain with an automation-style local part (see `automation_local_parts`),
-# unless an entry sets `match: any_local_part` after explicit review.
+#   local_parts: automation (default)
+#     <automation local part>@domain  (e.g. noreply@anthropic.com) -> strong evidence
+#     any other address at the domain (jane@anthropic.com)         -> only
+#       corroborates a name alias of the same agent; never a match on its own.
+#   local_parts: any
+#     every address at the domain is strong evidence. Only for domains used
+#     exclusively for tool attribution.
+#
+# Google, Amazon, Microsoft/GitHub domains are intentionally absent: their
+# automation addresses are used by many non-AI services.
 
 schema_version: 1
 
 automation_local_parts:
   - noreply
   - no-reply
+  - donotreply
   - bot
   - agent
   - ai
+  - assistant
 
 domains:
   - domain: anthropic.com
-    vendor: Anthropic
-    match: automation_local_part
+    agent: claude
   - domain: openai.com
-    vendor: OpenAI
-    match: automation_local_part
+    agent: openai_codex
   - domain: cursor.com
-    vendor: Anysphere
-    match: automation_local_part
+    agent: cursor
+  - domain: windsurf.com
+    agent: windsurf
+  - domain: codeium.com
+    agent: codeium
+  - domain: cline.bot
+    agent: cline
+  - domain: roocode.com
+    agent: roo_code
+  - domain: cognition.ai
+    agent: devin
+  - domain: devin.ai
+    agent: devin
   - domain: all-hands.dev
-    vendor: All Hands AI
-    match: automation_local_part
+    agent: openhands
   - domain: aider.chat
-    vendor: Aider
-    match: any_local_part   # project domain used only for tool attribution
+    agent: aider
+    local_parts: any

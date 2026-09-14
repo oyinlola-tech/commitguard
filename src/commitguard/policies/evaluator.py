@@ -1,4 +1,4 @@
-"""Policy evaluation: :class:`ScanResult` + :class:`PolicySet` -> :class:`Decision`.
+"""Policy evaluation: :class:`DetectionResult` + :class:`PolicySet` -> :class:`Decision`.
 
 Evaluation rules (all fail closed):
 
@@ -11,7 +11,7 @@ Evaluation rules (all fail closed):
 """
 
 from commitguard.core.decision import Action, Decision, Explanation
-from commitguard.core.result import ScanResult
+from commitguard.core.result import DetectionResult
 from commitguard.policies.model import PolicySet
 
 
@@ -21,16 +21,16 @@ class PolicyEvaluator:
     def __init__(self, policies: PolicySet) -> None:
         self._policies = policies
 
-    def evaluate(self, result: ScanResult) -> Decision:
+    def evaluate(self, result: DetectionResult) -> Decision:
         explanations: list[Explanation] = []
 
         for finding in result.findings:
-            policy = self._policies.get(finding.rule)
+            policy = self._policies.get(finding.rule_id)
             if policy is None:
                 explanations.append(
                     Explanation(
                         action=Action.BLOCK,
-                        reason=f"no policy configured for rule {finding.rule!r}; failing closed",
+                        reason=f"no policy configured for rule {finding.rule_id!r}; failing closed",
                         finding=finding,
                     )
                 )

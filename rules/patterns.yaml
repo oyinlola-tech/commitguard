@@ -1,34 +1,52 @@
-# Text patterns for attribution in commit messages.
+# Trailer and message patterns.
 #
-# STATUS: rule data only; not loaded until Phase 2.
+# All keys are canonical trailer keys (lowercase, hyphenated). Written keys are
+# normalised before comparison, so "Co-Authored-By", "co_authored by" and
+# keys containing zero-width characters all compare equal.
 #
-# Patterns are plain case-insensitive literals, not regular expressions.
-# Regex from data files is avoided on purpose: it invites catastrophic
-# backtracking (ReDoS) on attacker-controlled commit messages.
+# There are no regular expressions here on purpose (no ReDoS on hostile commit
+# messages) and no free-text heuristics: ordinary wording such as
+# "feat: use AI service for recommendations" is never evidence.
 
 schema_version: 1
 
-# Trailer keys whose presence indicates AI attribution (rule: ai_trailer).
-attribution_trailer_keys:
-  - generated-by
-  - assisted-by
-  - ai-assisted
-  - ai-generated
-  - co-developed-by   # only when the value matches an AI identity
-
-# Trailer keys whose values are identities to check (rules: ai_coauthor, bot_identity).
-identity_trailer_keys:
+# Trailers whose values are co-author identities (CoauthorDetector -> ai_coauthor).
+coauthor_trailer_keys:
   - co-authored-by
+  - coauthored-by
+  - co-author
+  - co-authored
 
-# Free-text lines some tools add to commit messages (rule: ai_trailer).
-attribution_phrases:
-  - "generated with claude code"
-  - "generated with [claude code]"
+# Other trailers that can carry AI attribution (TrailerDetector -> ai_trailer).
+attribution_trailers:
+  - id: ai_generated_key
+    keys: [ai-generated-by, ai-assisted-by, ai-generated, ai-assisted, ai-co-authored-by]
+    match: key_present
+    description: The trailer key itself declares AI generation or assistance.
 
-# Tokens that, inside a co-author name, suggest an unknown AI agent.
-# Lower confidence: findings from these use a lower severity.
-unknown_agent_name_tokens:
-  - "ai agent"
-  - "coding agent"
-  - "llm"
-  - "gpt"
+  - id: generated_by_ai
+    keys: [generated-by, generated-with, assisted-by, created-by, made-with, co-developed-by]
+    match: ai_identity
+    description: A generation/assistance trailer names an AI agent.
+
+  - id: ai_reviewer_or_signoff
+    keys: [reviewed-by, signed-off-by, acked-by, tested-by, suggested-by, helped-by]
+    match: ai_identity
+    description: An AI agent is named in a review, sign-off or credit trailer.
+
+# Trailers checked for malformed values (TrailerDetector -> malformed_trailer).
+malformed_trailer_checks:
+  - keys: [co-authored-by, coauthored-by, co-author, co-authored]
+    require_identity: true   # value must be "Name <email>"
+  - keys: [signed-off-by, reviewed-by, generated-by, assisted-by, ai-generated-by]
+    require_identity: false  # only structural problems (missing colon, odd key)
+
+# Exact, whole-line attribution footers inserted by tools (TrailerDetector ->
+# ai_trailer). Compared after normalisation with leading emoji/symbols removed.
+message_markers:
+  - id: claude_code_footer
+    agent: claude
+    lines:
+      - "Generated with [Claude Code](https://claude.com/claude-code)"
+      - "Generated with [Claude Code](https://claude.ai/code)"
+      - "Generated with Claude Code"

@@ -12,12 +12,11 @@ from pathlib import Path
 from commitguard.exceptions.base import UnsafeInputError
 
 
-def read_text_limited(path: Path, *, max_bytes: int, encoding: str = "utf-8") -> str:
-    """Read a regular file as text, refusing files larger than ``max_bytes``.
+def read_bytes_limited(path: Path, *, max_bytes: int) -> bytes:
+    """Read a regular file, refusing files larger than ``max_bytes``.
 
     Raises :class:`FileNotFoundError` if the file is missing and
-    :class:`UnsafeInputError` if it is not a regular file, too large, or not
-    valid text in ``encoding``.
+    :class:`UnsafeInputError` if it is not a regular file or is too large.
     """
     st = path.stat()  # follows symlinks deliberately; the target must be regular
     if not stat.S_ISREG(st.st_mode):
@@ -28,6 +27,12 @@ def read_text_limited(path: Path, *, max_bytes: int, encoding: str = "utf-8") ->
         data = handle.read(max_bytes + 1)
     if len(data) > max_bytes:  # file grew between stat() and read()
         raise UnsafeInputError(f"{path} is larger than {max_bytes} bytes")
+    return data
+
+
+def read_text_limited(path: Path, *, max_bytes: int, encoding: str = "utf-8") -> str:
+    """Like :func:`read_bytes_limited`, decoding strictly as ``encoding``."""
+    data = read_bytes_limited(path, max_bytes=max_bytes)
     try:
         return data.decode(encoding)
     except UnicodeDecodeError as exc:

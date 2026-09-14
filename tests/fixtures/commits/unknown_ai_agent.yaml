@@ -1,10 +1,11 @@
 description: >
-  An AI agent not present in the identity rules, recognisable only by
-  heuristics (name tokens). Expected at lower severity in Phase 2.
+  An "AI agent" that is not in the rules, recognisable only by wording in its
+  name. By design this is NOT flagged: CommitGuard acts on explicit, configured
+  identity evidence, not on guesses. Add a rule to ai-identities.yaml instead.
 author: {name: Ada Lovelace, email: ada@example.com}
 message: |
   feat: generate API client
 
   Co-authored-by: Nimbus AI Agent <agent@nimbus-ai.example>
 expected:
-  rules: [ai_coauthor]
+  rules: []

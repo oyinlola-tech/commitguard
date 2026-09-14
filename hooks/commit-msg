@@ -22,4 +22,4 @@ if ! command -v commitguard >/dev/null 2>&1; then
     exit 1
 fi
 
-exec commitguard check --hook commit-msg --message-file "$1"
+exec commitguard check --quiet --message-file "$1"

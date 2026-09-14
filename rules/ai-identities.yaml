@@ -1,89 +1,131 @@
 # AI agent identities.
 #
-# STATUS: rule data only. Nothing loads this file yet; the loader, schema
-# validation and matching logic are Phase 2 work (see docs/detection-engine.md).
+# Loaded by commitguard.rules.loader and validated against
+# commitguard.rules.models.AIIdentityRules. Matching semantics:
 #
-# Every entry must be verified against a real commit before Phase 2 ships.
-# `verified: false` marks identities that are believed correct but still need
-# a reference commit recorded in `evidence`.
+#   names            full name equals an alias (after case/width/whitespace
+#                    normalisation). Alone: medium confidence.
+#   ambiguous_names  aliases that are also common human first names. Only
+#                    count together with this agent's email/domain evidence.
+#   name_prefixes    distinctive leading words ("Claude Opus" matches
+#                    "Claude Opus 4.5 (1M context)"). Alone: high confidence.
+#   emails           exact address. Alone: high confidence.
+#   github_logins    login in a <id>+<login>@users.noreply.github.com address,
+#                    or a "[bot]" account name. Alone: high confidence.
 #
-# Matching intent (Phase 2):
-#   names   - case-insensitive, whitespace-normalised, Unicode NFKC-normalised
-#   emails  - exact, case-insensitive
-#   logins  - GitHub account login, matched inside
-#             <id>+<login>@users.noreply.github.com addresses
+# There is NO substring matching: "Claude" never matches "Claudette" or
+# "Claude Dupont". Domains live in ai-domains.yaml.
+#
+# `verified: true` requires a public reference commit or vendor documentation
+# recorded in `reference`. Unverified entries are best-known identities that
+# still need confirmation - please contribute references.
 
 schema_version: 1
 
-identities:
-  - id: anthropic_claude
+agents:
+  - id: claude
+    display_name: Claude
     vendor: Anthropic
-    product: Claude / Claude Code
-    names: ["Claude"]
+    names: ["Claude", "Claude Code", "Anthropic Claude", "claude-code"]
+    name_prefixes: ["Claude Opus", "Claude Sonnet", "Claude Haiku", "Claude Fable"]
     emails: ["noreply@anthropic.com"]
-    logins: []
     verified: true
-    evidence: "Default Claude Code trailer: Co-authored-by: Claude <noreply@anthropic.com>"
+    reference: "Claude Code default trailer: Co-Authored-By: Claude <noreply@anthropic.com>"
 
-  - id: github_copilot_agent
-    vendor: GitHub
-    product: Copilot coding agent
-    names: ["Copilot"]
-    emails: []
-    logins: ["Copilot", "copilot-swe-agent[bot]"]
+  - id: chatgpt
+    display_name: ChatGPT
+    vendor: OpenAI
+    names: ["ChatGPT", "OpenAI ChatGPT"]
     verified: false
-    evidence: ""
 
   - id: openai_codex
+    display_name: OpenAI Codex
     vendor: OpenAI
-    product: ChatGPT / Codex
-    names: ["ChatGPT", "Codex"]
-    emails: []
-    logins: ["chatgpt-codex-connector[bot]"]
+    names: ["OpenAI Codex", "Codex", "codex-cli", "Codex CLI"]
+    github_logins: ["chatgpt-codex-connector[bot]"]
     verified: false
-    evidence: ""
 
-  - id: cursor_agent
+  - id: github_copilot
+    display_name: GitHub Copilot
+    vendor: GitHub
+    names: ["GitHub Copilot", "Copilot", "Copilot Agent", "copilot-swe-agent"]
+    github_logins: ["Copilot", "copilot-swe-agent[bot]"]
+    verified: false
+
+  - id: cursor
+    display_name: Cursor
     vendor: Anysphere
-    product: Cursor background agent
-    names: ["Cursor Agent"]
+    names: ["Cursor", "Cursor Agent", "cursoragent"]
     emails: ["cursoragent@cursor.com"]
-    logins: []
+    github_logins: ["cursor[bot]"]
     verified: false
-    evidence: ""
 
-  - id: cognition_devin
-    vendor: Cognition
-    product: Devin
-    names: ["Devin AI"]
-    emails: []
-    logins: ["devin-ai-integration[bot]"]
-    verified: false
-    evidence: ""
-
-  - id: google_jules
+  - id: gemini
+    display_name: Gemini
     vendor: Google
-    product: Jules
-    names: []
-    emails: []
-    logins: ["google-labs-jules[bot]"]
+    names: ["Gemini", "Google Gemini", "Gemini Code Assist", "Gemini CLI"]
+    github_logins: ["gemini-code-assist[bot]"]
     verified: false
-    evidence: ""
+
+  - id: jules
+    display_name: Jules
+    vendor: Google
+    names: ["Google Jules"]
+    ambiguous_names: ["Jules"]
+    github_logins: ["google-labs-jules[bot]"]
+    verified: false
+
+  - id: windsurf
+    display_name: Windsurf
+    vendor: Windsurf
+    names: ["Windsurf", "Windsurf Cascade", "Cascade"]
+    verified: false
+
+  - id: codeium
+    display_name: Codeium
+    vendor: Codeium
+    names: ["Codeium"]
+    verified: false
+
+  - id: cline
+    display_name: Cline
+    vendor: Cline
+    names: ["Cline"]
+    github_logins: ["cline[bot]"]
+    verified: false
+
+  - id: roo_code
+    display_name: Roo Code
+    vendor: Roo Code
+    names: ["Roo Code", "RooCode", "Roo Cline"]
+    verified: false
+
+  - id: amazon_q
+    display_name: Amazon Q Developer
+    vendor: Amazon
+    names: ["Amazon Q", "Amazon Q Developer", "Amazon CodeWhisperer", "CodeWhisperer"]
+    github_logins: ["amazon-q-developer[bot]"]
+    verified: false
+
+  - id: devin
+    display_name: Devin
+    vendor: Cognition
+    names: ["Devin AI"]
+    ambiguous_names: ["Devin"]
+    github_logins: ["devin-ai-integration[bot]"]
+    verified: false
 
   - id: aider
+    display_name: aider
     vendor: Aider
-    product: aider
-    names: ["aider"]
-    emails: []
-    logins: []
+    name_prefixes: ["aider"]
     verified: false
-    evidence: "aider appends the model name, e.g. 'aider (<model>)'; match name prefix."
+    reference: "aider attributes as 'aider (<model>)'"
 
-  - id: all_hands_openhands
+  - id: openhands
+    display_name: OpenHands
     vendor: All Hands AI
-    product: OpenHands
-    names: ["openhands"]
+    names: ["OpenHands", "OpenHands Agent"]
     emails: ["openhands@all-hands.dev"]
-    logins: []
+    github_logins: ["openhands-agent"]
     verified: false
-    evidence: ""

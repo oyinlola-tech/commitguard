@@ -118,3 +118,71 @@ def test_error_messages_do_not_echo_input_values() -> None:
     with pytest.raises(ConfigurationError) as excinfo:
         parse_config("version: 1\nsecret_token: ghp_supersecretvalue\n")
     assert "ghp_supersecretvalue" not in str(excinfo.value)
+
+
+def test_disabled_policy_config() -> None:
+    config = parse_config("version: 1\npolicies:\n  ai_coauthor:\n    enabled: false\n")
+    assert config.policies["ai_coauthor"].enabled is False
+
+
+def test_unknown_action_message_is_clear() -> None:
+    with pytest.raises(ConfigurationError, match=r"policies\.ai_coauthor\.action"):
+        parse_config("version: 1\npolicies:\n  ai_coauthor:\n    action: deny\n")
+
+
+def test_default_profile_equals_builtin_defaults() -> None:
+    from commitguard.policies.defaults import DEFAULT_POLICIES
+    from commitguard.policies.loader import build_policy_set
+
+    config = load_config(PROJECT_ROOT / "config" / "default.yaml")
+    assert dict(build_policy_set(config)) == dict(DEFAULT_POLICIES)
+
+
+class TestLayering:
+    def test_precedence_builtin_global_repository_explicit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from commitguard.config.loader import ConfigLayer, global_config_path, load_effective_config
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        global_path = global_config_path()
+        global_path.parent.mkdir(parents=True)
+        global_path.write_text("version: 1\n")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".commitguard.yaml").write_text("version: 1\n")
+        explicit = tmp_path / "explicit.yaml"
+        explicit.write_text("version: 1\n")
+
+        loaded = load_effective_config(repo, explicit_path=explicit)
+        assert [s.layer for s in loaded.sources] == [
+            ConfigLayer.BUILTIN,
+            ConfigLayer.GLOBAL,
+            ConfigLayer.REPOSITORY,
+            ConfigLayer.EXPLICIT,
+        ]
+        assert global_path == tmp_path / "xdg" / "commitguard" / "config.yaml"
+
+    def test_missing_optional_layers_are_skipped(self, tmp_path: Path) -> None:
+        from commitguard.config.loader import ConfigLayer, load_effective_config
+
+        loaded = load_effective_config(tmp_path)
+        assert [s.layer for s in loaded.sources] == [ConfigLayer.BUILTIN]
+
+    def test_invalid_global_config_is_an_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from commitguard.config.loader import global_config_path, load_effective_config
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        path = global_config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text("version: 1\npolicies:\n  nope: {}\n")
+        with pytest.raises(ConfigurationError, match="unknown policy"):
+            load_effective_config(None)
+
+    def test_missing_explicit_config_is_an_error(self, tmp_path: Path) -> None:
+        from commitguard.config.loader import load_effective_config
+
+        with pytest.raises(ConfigurationError, match="not found"):
+            load_effective_config(None, explicit_path=tmp_path / "missing.yaml")

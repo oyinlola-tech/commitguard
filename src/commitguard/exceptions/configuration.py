@@ -16,3 +16,7 @@ class ConfigurationError(CommitGuardError):
         self.path = path
         prefix = f"{path}: " if path is not None else ""
         super().__init__(f"{prefix}{message}")
+
+
+class RulesError(ConfigurationError):
+    """Raised when detection rule files are missing or invalid."""

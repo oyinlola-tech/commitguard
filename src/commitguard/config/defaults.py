@@ -2,6 +2,8 @@
 
 CONFIG_FILENAMES: tuple[str, ...] = (".commitguard.yaml", ".commitguard.yml")
 DEFAULT_CONFIG_FILENAME = CONFIG_FILENAMES[0]
+GLOBAL_CONFIG_DIRNAME = "commitguard"
+GLOBAL_CONFIG_FILENAME = "config.yaml"
 CURRENT_CONFIG_VERSION = 1
 
 #: Refuse to parse configuration files larger than this (defence against

@@ -1,7 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
-from commitguard.core.result import Evidence, Finding, Severity
+from commitguard.core.result import (
+    MAX_EVIDENCE_CHARS,
+    Confidence,
+    Evidence,
+    EvidenceSource,
+    Finding,
+    Severity,
+)
 
 SHA = "a" * 40
 
@@ -9,18 +16,20 @@ SHA = "a" * 40
 def make_finding(**overrides: object) -> Finding:
     data: dict[str, object] = {
         "detector": "coauthor",
-        "rule": "ai_coauthor",
+        "rule_id": "ai_coauthor",
         "severity": Severity.HIGH,
-        "message": "AI agent attribution detected in commit metadata.",
+        "confidence": Confidence.HIGH,
+        "title": "AI coauthor detected",
+        "message": "An AI agent was identified as a commit coauthor.",
         "evidence": (
             Evidence(
-                source="trailer:co-authored-by",
+                source=EvidenceSource.COAUTHOR_TRAILER,
                 value="Claude <noreply@anthropic.com>",
                 line_number=3,
             ),
         ),
         "commit_sha": SHA,
-        "remediation": "Remove the AI coauthor attribution before pushing.",
+        "remediation": "Remove the AI attribution before pushing this commit.",
     }
     data.update(overrides)
     return Finding.model_validate(data)
@@ -29,8 +38,9 @@ def make_finding(**overrides: object) -> Finding:
 def test_finding_matches_documented_shape() -> None:
     finding = make_finding()
     assert finding.detector == "coauthor"
-    assert finding.rule == "ai_coauthor"
+    assert finding.rule_id == "ai_coauthor"
     assert finding.severity is Severity.HIGH
+    assert finding.title == "AI coauthor detected"
     assert finding.evidence[0].value == "Claude <noreply@anthropic.com>"
 
 
@@ -39,7 +49,7 @@ def test_finding_requires_evidence() -> None:
         make_finding(evidence=())
 
 
-@pytest.mark.parametrize("field", ["message", "remediation"])
+@pytest.mark.parametrize("field", ["title", "message", "remediation"])
 def test_finding_requires_explanation_text(field: str) -> None:
     with pytest.raises(ValidationError):
         make_finding(**{field: ""})
@@ -48,7 +58,7 @@ def test_finding_requires_explanation_text(field: str) -> None:
 @pytest.mark.parametrize("rule", ["AI_COAUTHOR", "ai-coauthor", "", "1rule", "x" * 65])
 def test_finding_rejects_invalid_rule_ids(rule: str) -> None:
     with pytest.raises(ValidationError):
-        make_finding(rule=rule)
+        make_finding(rule_id=rule)
 
 
 def test_finding_rejects_invalid_sha() -> None:
@@ -59,17 +69,22 @@ def test_finding_rejects_invalid_sha() -> None:
 def test_finding_is_immutable() -> None:
     finding = make_finding()
     with pytest.raises(ValidationError):
-        finding.rule = "bot_identity"  # type: ignore[misc]
+        finding.rule_id = "bot_identity"  # type: ignore[misc]
+
+
+def test_evidence_is_truncated() -> None:
+    evidence = Evidence(source=EvidenceSource.MESSAGE, value="A" * 10_000)
+    assert len(evidence.value) == MAX_EVIDENCE_CHARS
+    assert evidence.value.endswith("[truncated]")
 
 
 def test_fingerprint_is_stable_and_evidence_sensitive() -> None:
     assert make_finding().fingerprint == make_finding().fingerprint
-    other = make_finding(evidence=(Evidence(source="trailer:co-authored-by", value="x"),))
+    other = make_finding(evidence=(Evidence(source=EvidenceSource.AUTHOR, value="x"),))
     assert other.fingerprint != make_finding().fingerprint
     assert make_finding(commit_sha="b" * 40).fingerprint != make_finding().fingerprint
 
 
-def test_severity_ordering() -> None:
-    ranks = [s.rank for s in (Severity.INFO, Severity.LOW, Severity.MEDIUM, Severity.HIGH)]
-    assert ranks == sorted(ranks)
-    assert Severity.CRITICAL.rank > Severity.HIGH.rank
+def test_orderings() -> None:
+    assert Severity.CRITICAL.rank > Severity.HIGH.rank > Severity.LOW.rank
+    assert Confidence.HIGH.rank > Confidence.MEDIUM.rank > Confidence.LOW.rank

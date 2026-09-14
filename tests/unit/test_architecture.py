@@ -10,11 +10,16 @@ import pytest
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "commitguard"
 
 # Layers that must stay pure: no CLI, no network, no Git I/O, no subprocesses.
-PURE_PACKAGES = ("core", "detectors", "policies", "provenance")
+PURE_PACKAGES = ("core", "detectors", "policies", "provenance", "rules")
+# Modules inside pure packages that are allowed to do I/O.
+IO_EXEMPT_MODULES = frozenset({"commitguard.rules.loader"})
 FORBIDDEN_IN_PURE = (
     "commitguard.cli",
     "commitguard.github",
     "commitguard.audit",
+    "commitguard.services",
+    "commitguard.rules.loader",
+    "commitguard.config.loader",
     "commitguard.git.commands",
     "commitguard.git.repository",
     "commitguard.git.hooks",
@@ -57,6 +62,8 @@ def _matches(name: str, prefix: str) -> bool:
 def test_pure_layers_do_not_import_io_or_interface_modules(package: str) -> None:
     violations: list[str] = []
     for path in (PACKAGE_ROOT / package).rglob("*.py"):
+        if _module_name(path) in IO_EXEMPT_MODULES:
+            continue
         for name in _imports(path):
             if any(_matches(name, forbidden) for forbidden in FORBIDDEN_IN_PURE):
                 violations.append(f"{_module_name(path)} imports {name}")
@@ -65,7 +72,11 @@ def test_pure_layers_do_not_import_io_or_interface_modules(package: str) -> None
 
 def test_pure_layers_do_not_transitively_load_forbidden_commitguard_modules() -> None:
     forbidden = [f for f in FORBIDDEN_IN_PURE if f.startswith("commitguard.")]
-    targets = [m for m in _all_modules() if m.split(".")[1:2] and m.split(".")[1] in PURE_PACKAGES]
+    targets = [
+        m
+        for m in _all_modules()
+        if m.split(".")[1:2] and m.split(".")[1] in PURE_PACKAGES and m not in IO_EXEMPT_MODULES
+    ]
     script = (
         "import importlib, sys\n"
         f"forbidden = {forbidden!r}\n"
@@ -127,4 +138,34 @@ def test_no_shell_true_anywhere() -> None:
         for path in PACKAGE_ROOT.rglob("*.py")
         if "shell=True" in path.read_text(encoding="utf-8")
     ]
+    assert offenders == []
+
+
+def test_detection_code_uses_no_network_or_llm_libraries() -> None:
+    banned = (
+        "requests",
+        "httpx",
+        "urllib3",
+        "aiohttp",
+        "openai",
+        "anthropic",
+        "google.generativeai",
+    )
+    violations = [
+        f"{_module_name(path)} imports {name}"
+        for path in PACKAGE_ROOT.rglob("*.py")
+        for name in _imports(path)
+        if any(_matches(name, b) for b in banned)
+    ]
+    assert violations == []
+
+
+def test_yaml_is_only_loaded_through_the_strict_safe_loader() -> None:
+    offenders = []
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        if _module_name(path) == "commitguard.security.safe_yaml":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "yaml.load(" in text or "yaml.unsafe_load" in text or "yaml.full_load" in text:
+            offenders.append(_module_name(path))
     assert offenders == []

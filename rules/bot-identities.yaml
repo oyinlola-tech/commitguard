@@ -1,30 +1,53 @@
-# Automation / bot identities (not AI agents).
+# Automation / bot identities. Bots are NOT AI agents.
 #
-# STATUS: rule data only; bot detection is Phase 5.
+# Only identities listed here produce bot_identity findings: there is no
+# generic "[bot]" heuristic, because AI agent accounts use that suffix too and
+# must be classified by ai-identities.yaml instead.
 #
-# GitHub App bot accounts commit as
-#   <login>[bot] <<numeric-id>+<login>[bot]@users.noreply.github.com>
-# Match on the login; the numeric ID is recorded for stronger matching.
+# Same matching semantics as ai-identities.yaml (names, emails, github_logins).
 
 schema_version: 1
 
-generic:
-  login_suffixes: ["[bot]"]
-
-identities:
+bots:
   - id: dependabot
-    login: "dependabot[bot]"
-    github_user_id: 49699333
+    display_name: Dependabot
+    vendor: GitHub
+    names: ["dependabot", "dependabot[bot]", "dependabot-preview[bot]"]
+    github_logins: ["dependabot[bot]", "dependabot-preview[bot]"]
     verified: true
+    reference: "49699333+dependabot[bot]@users.noreply.github.com"
+
   - id: github_actions
-    login: "github-actions[bot]"
-    github_user_id: 41898282
+    display_name: GitHub Actions
+    vendor: GitHub
+    names: ["github-actions", "github-actions[bot]"]
+    github_logins: ["github-actions[bot]"]
     verified: true
+    reference: "41898282+github-actions[bot]@users.noreply.github.com"
+
   - id: renovate
-    login: "renovate[bot]"
-    github_user_id: 29139614
+    display_name: Renovate
+    vendor: Mend
+    names: ["renovate", "renovate[bot]", "Renovate Bot"]
+    github_logins: ["renovate[bot]"]
+    emails: ["bot@renovateapp.com"]
     verified: false
+
   - id: pre_commit_ci
-    login: "pre-commit-ci[bot]"
-    github_user_id: 66853113
+    display_name: pre-commit.ci
+    vendor: pre-commit.ci
+    names: ["pre-commit-ci[bot]"]
+    github_logins: ["pre-commit-ci[bot]"]
+    verified: false
+
+  - id: release_bot
+    display_name: Release bot
+    names: ["release-bot", "semantic-release-bot"]
+    verified: false
+
+  - id: mergify
+    display_name: Mergify
+    vendor: Mergify
+    names: ["mergify[bot]"]
+    github_logins: ["mergify[bot]"]
     verified: false

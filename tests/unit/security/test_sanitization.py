@@ -18,7 +18,7 @@ def test_ansi_line_erase_is_neutralised() -> None:
     assert "Co-authored-by: Claude" in result
 
 
-@pytest.mark.parametrize("char", ["\x00", "\x07", "\x08", "\x7f", "\x9b", "‮", "⁦"])
+@pytest.mark.parametrize("char", ["\x00", "\x07", "\x08", "\x7f", "\x9b", chr(0x202E), chr(0x2066)])
 def test_control_and_bidi_characters_are_escaped(char: str) -> None:
     result = sanitize_for_terminal(f"a{char}b")
     assert char not in result
@@ -47,4 +47,4 @@ def test_malicious_fixture_is_fully_neutralised(commit_cases) -> None:  # type: 
     for text in (case.commit.message, case.commit.author.name):
         result = sanitize_for_terminal(text, max_length=10_000)
         assert not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in result)
-        assert "‮" not in result
+        assert chr(0x202E) not in result

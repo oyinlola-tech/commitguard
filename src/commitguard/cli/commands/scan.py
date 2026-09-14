@@ -1,29 +1,47 @@
-"""``commitguard scan``: scan existing commits.
+"""``commitguard scan``: analyse commits and explain every finding.
 
-TODO(phase-2): resolve the revision range via :class:`Repository`, build a
-:class:`ScanContext` per commit, run :class:`DetectionEngine` with the built-in
-registry, evaluate with :class:`PolicyEvaluator`, render explanations and exit
-with :attr:`ExitCode.BLOCKED` on BLOCK.
-TODO(phase-3): ``--hook pre-push`` reads ``<local ref> <local sha> <remote ref>
-<remote sha>`` lines from stdin to determine the commits being pushed.
+Exit codes: 0 allowed (including warnings), 1 blocked, 2 error.
 """
-
-from typing import Annotated
 
 import typer
 
-from commitguard.cli.output import not_implemented
+from commitguard.cli.common import (
+    DEFAULT_MAX_COMMITS,
+    ConfigOption,
+    FormatOption,
+    MaxCommitsOption,
+    RevisionArgument,
+)
+from commitguard.cli.output import ExitCode, OutputFormat, handled_errors, info
+from commitguard.cli.render import render_json, render_scan_text
+from commitguard.core.context import ScanTrigger
+from commitguard.core.decision import Action
+from commitguard.git.repository import Repository
+from commitguard.services.analysis import analyze_revisions, build_report, load_analyzer
 
 
 def scan_command(
-    revision_range: Annotated[
-        str,
-        typer.Argument(help="Commit or range to scan, e.g. HEAD or origin/main..HEAD."),
-    ] = "HEAD",
-    hook: Annotated[
-        str | None,
-        typer.Option("--hook", help="Run in Git hook mode (pre-push).", hidden=True),
-    ] = None,
+    revision_range: RevisionArgument = "HEAD",
+    config: ConfigOption = None,
+    output_format: FormatOption = OutputFormat.TEXT,
+    max_commits: MaxCommitsOption = DEFAULT_MAX_COMMITS,
 ) -> None:
-    """Scan commits for policy violations."""
-    not_implemented("commit scanning", "Phase 2")
+    """Scan commits for AI attribution and other policy violations."""
+    with handled_errors():
+        repository = Repository.discover()
+        analyzer, loaded = load_analyzer(repository, config_path=config)
+        reports = analyze_revisions(repository, analyzer, revision_range, max_commits=max_commits)
+        report = build_report(
+            reports,
+            repository=repository,
+            target=revision_range,
+            trigger=ScanTrigger.MANUAL,
+            config=loaded,
+        )
+        rendered = (
+            render_json(report) if output_format is OutputFormat.JSON else render_scan_text(report)
+        )
+
+    info(rendered)
+    if report.action is Action.BLOCK:
+        raise typer.Exit(code=int(ExitCode.BLOCKED))

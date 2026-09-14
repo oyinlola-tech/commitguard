@@ -4,9 +4,9 @@ from commitguard.policies.defaults import DEFAULT_POLICIES
 from commitguard.policies.loader import build_policy_set
 
 
-def test_empty_config_yields_defaults() -> None:
-    policies = build_policy_set(parse_config("version: 1\n"))
-    assert dict(policies) == dict(DEFAULT_POLICIES)
+def test_no_config_yields_defaults() -> None:
+    assert dict(build_policy_set()) == dict(DEFAULT_POLICIES)
+    assert dict(build_policy_set(parse_config("version: 1\n"))) == dict(DEFAULT_POLICIES)
 
 
 def test_override_changes_only_specified_fields() -> None:
@@ -22,7 +22,20 @@ def test_omitted_policies_keep_secure_defaults() -> None:
     policies = build_policy_set(config)
     assert policies["bot_identity"].enabled is False
     assert policies["ai_coauthor"].action is Action.BLOCK
-    assert policies["ai_coauthor"].enabled is True
+
+
+def test_later_layers_override_earlier_ones_field_by_field() -> None:
+    global_layer = parse_config(
+        "version: 1\npolicies:\n"
+        "  ai_coauthor:\n    action: warn\n"
+        "  bot_identity:\n    enabled: false\n"
+    )
+    repo_layer = parse_config("version: 1\npolicies:\n  ai_coauthor:\n    action: block\n")
+    explicit = parse_config("version: 1\npolicies:\n  bot_identity:\n    action: block\n")
+    policies = build_policy_set(global_layer, repo_layer, explicit)
+    assert policies["ai_coauthor"].action is Action.BLOCK
+    assert policies["bot_identity"].enabled is False  # from global, not reset by later layers
+    assert policies["bot_identity"].action is Action.BLOCK
 
 
 def test_defaults_block_all_ai_attribution() -> None:

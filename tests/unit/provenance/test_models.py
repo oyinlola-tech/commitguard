@@ -1,9 +1,11 @@
 import pytest
 from pydantic import ValidationError
 
+from commitguard.git.commit import Commit
 from commitguard.provenance.author import Identity
 from commitguard.provenance.signatures import SignatureInfo, SignatureStatus
-from commitguard.provenance.trailers import Trailer
+
+IDENT = Identity(name="Ada", email="ada@example.com")
 
 
 def test_identity_str() -> None:
@@ -20,16 +22,33 @@ def test_identity_is_immutable_and_strict() -> None:
         Identity(name="a", email="b", extra="x")  # type: ignore[call-arg]
 
 
-def test_trailer_key_normalisation() -> None:
-    trailer = Trailer(key=" CO-AUTHORED-BY ", value="Claude <noreply@anthropic.com>", line_number=3)
-    assert trailer.normalized_key == "co-authored-by"
-
-
-def test_trailer_line_numbers_are_one_based() -> None:
-    with pytest.raises(ValidationError):
-        Trailer(key="k", value="v", line_number=0)
-
-
 def test_signature_model() -> None:
     info = SignatureInfo(status=SignatureStatus.UNSIGNED)
     assert info.key_id is None
+
+
+def test_commit_derives_trailers_from_message() -> None:
+    commit = Commit(
+        author=IDENT,
+        committer=IDENT,
+        message="feat: x\n\nCo-authored-by: John Doe <john@example.com>\n",
+    )
+    (trailer,) = commit.trailers
+    assert trailer.name == "John Doe"
+    assert commit.trailers_with_key("co-authored-by") == (trailer,)
+    assert commit.signature is None
+    assert commit.short_sha == "pending"
+    assert commit.is_pending
+
+
+def test_commit_trailers_cannot_disagree_with_message() -> None:
+    commit = Commit(author=IDENT, committer=IDENT, message="feat: x\n")
+    data = commit.model_dump()
+    data["message"] = "feat: y\n\nCo-authored-by: Claude <noreply@anthropic.com>\n"
+    assert len(Commit.model_validate(data).trailers) == 1
+
+
+def test_commit_round_trip() -> None:
+    commit = Commit(sha="a" * 40, author=IDENT, committer=IDENT, message="x\n\nA-by: B <b@c.d>\n")
+    assert Commit.model_validate(commit.model_dump()) == commit
+    assert commit.short_sha == "aaaaaaa"

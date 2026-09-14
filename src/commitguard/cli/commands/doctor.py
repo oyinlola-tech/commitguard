@@ -11,10 +11,11 @@ import typer
 
 from commitguard import __version__
 from commitguard.cli.output import ExitCode, info
-from commitguard.config.loader import load_repository_config
+from commitguard.config.loader import load_effective_config
 from commitguard.exceptions.base import CommitGuardError
 from commitguard.git.commands import MINIMUM_GIT_VERSION, git_executable, git_version
 from commitguard.git.repository import Repository
+from commitguard.rules.loader import load_builtin_rules
 from commitguard.security.sanitization import sanitize_for_terminal
 from commitguard.utils.platform import MINIMUM_PYTHON, python_version, python_version_supported
 
@@ -68,20 +69,30 @@ def _run_checks() -> list[CheckResult]:
     results.append(CheckResult(Status.OK, "repository", str(repository.root)))
 
     try:
-        _, source = load_repository_config(repository.root)
+        loaded = load_effective_config(repository.root)
     except CommitGuardError as exc:
         results.append(CheckResult(Status.FAIL, "configuration", str(exc)))
     else:
-        if source is None:
-            detail = "no .commitguard.yaml; built-in defaults apply (run `commitguard init`)"
+        layers = ", ".join(str(source) for source in loaded.sources)
+        if not any(source.path for source in loaded.sources):
+            detail = "no configuration files; built-in defaults apply (run `commitguard init`)"
             results.append(CheckResult(Status.WARN, "configuration", detail))
         else:
-            results.append(CheckResult(Status.OK, "configuration", f"valid: {source}"))
+            results.append(CheckResult(Status.OK, "configuration", f"valid ({layers})"))
+
+    try:
+        rules = load_builtin_rules()
+    except CommitGuardError as exc:
+        results.append(CheckResult(Status.FAIL, "rules", str(exc)))
+    else:
+        detail = (
+            f"{len(rules.rules.ai_identities.agents)} AI agent rules, "
+            f"{len(rules.rules.ai_domains.domains)} vendor domains, "
+            f"{len(rules.rules.bots.bots)} bot rules"
+        )
+        results.append(CheckResult(Status.OK, "rules", detail))
 
     results.append(CheckResult(Status.TODO, "hooks", "hook installation checks arrive in Phase 3"))
-    results.append(
-        CheckResult(Status.TODO, "detectors", "built-in detectors are stubs until Phase 2")
-    )
     return results
 
 
@@ -94,4 +105,4 @@ def doctor_command() -> None:
         info(f"[{result.status.value:>4}] {result.name}: {detail}")
 
     if any(result.status is Status.FAIL for result in results):
-        raise typer.Exit(code=int(ExitCode.BLOCKED))
+        raise typer.Exit(code=int(ExitCode.ERROR))

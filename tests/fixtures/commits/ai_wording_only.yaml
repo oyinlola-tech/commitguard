@@ -1,0 +1,9 @@
+description: Commit wording about AI is not attribution and must not be flagged.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  feat: use AI service for recommendations
+
+  Integrates the ChatGPT API. Claude and Copilot were evaluated too.
+  Reviewed-by: Grace Hopper <grace@example.com>
+expected:
+  rules: []

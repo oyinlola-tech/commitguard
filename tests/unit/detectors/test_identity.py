@@ -1,50 +1,63 @@
-"""IdentityDetector tests.
-
-The interface tests pass today. The behavioural tests are the Phase 2
-specification: they are strict xfails, so implementing the detector makes them
-pass, which fails the run until the xfail marker is removed.
-"""
+"""IdentityDetector: AI agents as author or committer."""
 
 import pytest
 
-from commitguard.core.context import ScanContext
-from commitguard.detectors.base import Detector
+from commitguard.core.result import EvidenceSource
 from commitguard.detectors.identity import IdentityDetector
+from commitguard.provenance.author import Identity
 
-spec = pytest.mark.xfail(
-    raises=NotImplementedError, strict=True, reason="IdentityDetector is planned for Phase 2"
+HUMAN = Identity(name="Ada Lovelace", email="ada@example.com")
+CLAUDE = Identity(name="Claude", email="noreply@anthropic.com")
+
+
+@pytest.fixture
+def detector(rules):  # type: ignore[no-untyped-def]
+    return IdentityDetector(rules)
+
+
+def test_matches_fixture_expectations(detector, run_detector, commit_case) -> None:  # type: ignore[no-untyped-def]
+    findings = run_detector(detector, commit_case.commit)
+    assert {f.rule_id for f in findings} == commit_case.expected_rules & detector.rules
+
+
+def test_ai_author(detector, make_commit, run_detector) -> None:  # type: ignore[no-untyped-def]
+    (finding,) = run_detector(detector, make_commit(author=CLAUDE, committer=HUMAN))
+    assert finding.rule_id == "ai_identity"
+    assert [e.source for e in finding.evidence] == [EvidenceSource.AUTHOR]
+    assert finding.evidence[0].value == "Claude <noreply@anthropic.com>"
+
+
+def test_ai_committer(detector, make_commit, run_detector) -> None:  # type: ignore[no-untyped-def]
+    (finding,) = run_detector(detector, make_commit(author=HUMAN, committer=CLAUDE))
+    assert [e.source for e in finding.evidence] == [EvidenceSource.COMMITTER]
+
+
+def test_same_agent_as_author_and_committer_is_one_finding(
+    detector, make_commit, run_detector
+) -> None:  # type: ignore[no-untyped-def]
+    (finding,) = run_detector(detector, make_commit(author=CLAUDE, committer=CLAUDE))
+    assert [e.source for e in finding.evidence] == [EvidenceSource.AUTHOR, EvidenceSource.COMMITTER]
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        HUMAN,
+        Identity(name="Jane Doe", email="jane@anthropic.com"),
+        Identity(name="dependabot[bot]", email="49699333+dependabot[bot]@users.noreply.github.com"),
+        Identity(
+            name="github-actions[bot]",
+            email="41898282+github-actions[bot]@users.noreply.github.com",
+        ),
+        Identity(name="", email=""),
+    ],
 )
+def test_humans_and_bots_are_not_ai(
+    detector, make_commit, run_detector, identity: Identity
+) -> None:  # type: ignore[no-untyped-def]
+    assert run_detector(detector, make_commit(author=identity)) == []
 
 
-def test_implements_detector_interface() -> None:
-    detector = IdentityDetector()
-    assert isinstance(detector, Detector)
-    assert detector.name == "identity"
-    assert detector.rules
-    assert detector.description
-
-
-@pytest.mark.phase2
-@spec
-def test_reports_exactly_the_expected_rules(commit_case) -> None:  # type: ignore[no-untyped-def]
-    detector = IdentityDetector()
-    findings = detector.detect(ScanContext(commit=commit_case.commit))
-    assert {f.rule for f in findings} == commit_case.expected_rules & detector.rules
-
-
-@pytest.mark.phase2
-@spec
-def test_findings_carry_evidence_and_remediation(commit_case) -> None:  # type: ignore[no-untyped-def]
-    detector = IdentityDetector()
-    for finding in detector.detect(ScanContext(commit=commit_case.commit)):
-        assert finding.detector == detector.name
-        assert finding.evidence
-        assert finding.remediation
-
-
-@pytest.mark.phase2
-@spec
-def test_is_deterministic(commit_case) -> None:  # type: ignore[no-untyped-def]
-    detector = IdentityDetector()
-    context = ScanContext(commit=commit_case.commit)
-    assert detector.detect(context) == detector.detect(context)
+def test_trailers_are_not_this_detectors_concern(detector, make_commit, run_detector) -> None:  # type: ignore[no-untyped-def]
+    message = "feat\n\nCo-authored-by: Claude <noreply@anthropic.com>\n"
+    assert run_detector(detector, make_commit(message)) == []

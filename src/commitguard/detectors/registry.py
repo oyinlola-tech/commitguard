@@ -8,6 +8,7 @@ configuration must never cause arbitrary code to be imported or executed.
 from commitguard.detectors.base import Detector
 from commitguard.exceptions.base import UnsafeInputError
 from commitguard.exceptions.detection import DetectorRegistrationError
+from commitguard.rules.matcher import CompiledRules
 from commitguard.security.validation import validate_identifier
 
 
@@ -53,18 +54,19 @@ class DetectorRegistry:
         return name in self._detectors
 
 
-def builtin_registry() -> DetectorRegistry:
-    """Return a registry containing CommitGuard's built-in detectors.
-
-    Note: the built-in detectors are interface stubs until Phase 2 and raise
-    ``NotImplementedError``; the engine records that as a detector failure.
-    """
+def builtin_registry(rules: CompiledRules) -> DetectorRegistry:
+    """Return a registry of CommitGuard's built-in detectors using ``rules``."""
     from commitguard.detectors.bot import BotDetector
     from commitguard.detectors.coauthor import CoauthorDetector
     from commitguard.detectors.identity import IdentityDetector
     from commitguard.detectors.trailer import TrailerDetector
 
     registry = DetectorRegistry()
-    for detector in (CoauthorDetector(), IdentityDetector(), TrailerDetector(), BotDetector()):
+    for detector in (
+        CoauthorDetector(rules),
+        IdentityDetector(rules),
+        TrailerDetector(rules),
+        BotDetector(rules),
+    ):
         registry.register(detector)
     return registry

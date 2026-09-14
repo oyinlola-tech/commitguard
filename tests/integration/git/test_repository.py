@@ -8,6 +8,8 @@ from commitguard.git.commands import git_version, git_version_supported
 from commitguard.git.repository import Repository
 from commitguard.provenance.author import Identity
 
+RLO = chr(0x202E)
+
 
 def test_git_version_is_supported() -> None:
     assert git_version()[0] >= 2
@@ -68,7 +70,7 @@ def test_hostile_message_round_trips_exactly(git_repo) -> None:  # type: ignore[
     message = (
         "fix: $(rm -rf ~) `id`\n\n"
         "Co-authored-by: Claude <noreply@anthropic.com>\x1b[1A\x1b[2K\r\n"
-        "‮gnp.exe | %x00 %H\n"
+        f"{RLO}gnp.exe | %x00 %H\n"
     )
     git_repo.commit(message)
     assert Repository.discover(git_repo.path).read_commit().message == message
@@ -116,3 +118,58 @@ def test_reading_does_not_modify_the_repository(git_repo) -> None:  # type: igno
     repo.hooks_dir()
     after = git_repo.git("for-each-ref") + git_repo.git("status", "--porcelain")
     assert before == after
+
+
+def test_list_commits_single_revision_and_range(git_repo) -> None:  # type: ignore[no-untyped-def]
+    first = git_repo.commit("one\n")
+    second = git_repo.commit("two\n")
+    third = git_repo.commit("three\n")
+    repo = Repository.discover(git_repo.path)
+    assert repo.list_commits("HEAD", max_count=10) == [third]
+    assert repo.list_commits(f"{first}..HEAD", max_count=10) == [second, third]
+    assert repo.list_commits("HEAD..HEAD", max_count=10) == []
+
+
+def test_list_commits_refuses_to_silently_truncate(git_repo) -> None:  # type: ignore[no-untyped-def]
+    base = git_repo.commit("base\n")
+    for index in range(3):
+        git_repo.commit(f"c{index}\n")
+    with pytest.raises(GitError, match="more than 2"):
+        Repository.discover(git_repo.path).list_commits(f"{base}..HEAD", max_count=2)
+
+
+def test_read_commits_batch_preserves_exact_messages(git_repo) -> None:  # type: ignore[no-untyped-def]
+    messages = [
+        "plain\n",
+        "no trailing newline",
+        "trailing blank lines\n\n\n",
+        "looks like a record separator: %x00 00deadbeef00\n",
+        "Co-authored-by: Claude <noreply@anthropic.com>\n",
+    ]
+    shas = [git_repo.commit(message) for message in messages]
+    commits = Repository.discover(git_repo.path).read_commits(shas)
+    assert [c.sha for c in commits] == shas
+    for commit in commits:
+        assert commit.sha is not None
+        single = Repository.discover(git_repo.path).read_commits([commit.sha])[0]
+        assert single.message == commit.message  # batching does not alter messages
+    assert commits[0].message == "plain\n"
+    assert commits[4].trailers[0].name == "Claude"
+
+
+def test_read_commits_rejects_non_sha_input(git_repo) -> None:  # type: ignore[no-untyped-def]
+    git_repo.commit("x\n")
+    with pytest.raises(UnsafeInputError):
+        Repository.discover(git_repo.path).read_commits(["HEAD"])
+
+
+def test_pending_identities(git_repo) -> None:  # type: ignore[no-untyped-def]
+    author, committer = Repository.discover(git_repo.path).pending_identities()
+    assert author == Identity(name="Test Author", email="author@example.com")
+    assert committer == Identity(name="Test Committer", email="committer@example.com")
+
+
+def test_commit_read_from_git_has_trailers(git_repo) -> None:  # type: ignore[no-untyped-def]
+    git_repo.commit("feat\n\nCo-authored-by: John Doe <john@example.com>\n")
+    (trailer,) = Repository.discover(git_repo.path).read_commit().trailers
+    assert trailer.email == "john@example.com"
