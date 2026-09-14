@@ -1,0 +1,108 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "commitguard"
+version = "0.1.0.dev0"
+description = "Git commit provenance and contribution policy enforcement."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Oluwayemi Oyinlola" }]
+keywords = ["git", "security", "provenance", "policy", "git-hooks", "ai-attribution"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Typing :: Typed",
+]
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7,<3",
+    "PyYAML>=6.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+commitguard = "commitguard.cli.app:main"
+
+[project.urls]
+Documentation = "https://github.com/oyinlola/commitguard/tree/main/docs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/commitguard"]
+
+# --------------------------------------------------------------------------- #
+# Ruff
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "B",       # bugbear
+    "UP",      # pyupgrade
+    "S",       # bandit (security)
+    "SIM",     # simplify
+    "RUF",     # ruff-specific
+    "PT",      # pytest style
+    "TID",     # tidy imports
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use assert and invoke git through subprocess.
+"tests/**" = ["S101", "S603", "S607"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# --------------------------------------------------------------------------- #
+# mypy
+# --------------------------------------------------------------------------- #
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["commitguard"]
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# --------------------------------------------------------------------------- #
+# pytest
+# --------------------------------------------------------------------------- #
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+markers = [
+    "integration: tests that invoke real git or the filesystem beyond tmp_path basics",
+    "phase2: behavioural specification for Phase 2 (AI attribution detection)",
+    "phase3: behavioural specification for Phase 3 (Git hook enforcement)",
+]
