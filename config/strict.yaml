@@ -1,0 +1,24 @@
+# CommitGuard strict profile.
+#
+# Every attribution and identity signal blocks, including bots and malformed
+# trailers. Suitable for repositories where every commit must come from an
+# identified human contributor.
+
+version: 1
+
+policies:
+  ai_coauthor:
+    enabled: true
+    action: block
+  ai_identity:
+    enabled: true
+    action: block
+  ai_trailer:
+    enabled: true
+    action: block
+  malformed_trailer:
+    enabled: true
+    action: block
+  bot_identity:
+    enabled: true
+    action: block

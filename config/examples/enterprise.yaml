@@ -1,0 +1,30 @@
+# Example: organisation-wide baseline.
+#
+# Local configuration is only as trustworthy as the branch it was read from.
+# For real enforcement, pair this with GitHub enforcement (Phase 4), which reads
+# the policy from the protected base branch rather than from the pull request.
+#
+# Planned (not yet supported by the schema - adding these keys today is an error):
+#   - signed commit requirements          (Phase 5)
+#   - secret detection                    (Phase 5)
+#   - opt-in audit storage                (future)
+#   - organisation policy inheritance     (future)
+
+version: 1
+
+policies:
+  ai_coauthor:
+    enabled: true
+    action: block
+  ai_identity:
+    enabled: true
+    action: block
+  ai_trailer:
+    enabled: true
+    action: block
+  malformed_trailer:
+    enabled: true
+    action: block
+  bot_identity:
+    enabled: true
+    action: warn

@@ -1,0 +1,25 @@
+#!/bin/sh
+# commitguard-managed-hook
+#
+# CommitGuard commit-msg hook (TEMPLATE).
+# Checks the commit message (trailers, attribution) before the commit is created.
+#
+# STATUS: template only. `commitguard install` (Phase 3) will install this hook,
+# and the command it runs is not implemented yet - installing it by hand today
+# blocks every operation with a "not implemented" error.
+#
+# Behaviour: fails closed. If CommitGuard cannot be found the operation is
+# refused rather than silently allowed.
+#
+# Note: local hooks are bypassable (git --no-verify). They provide fast feedback;
+# repository-level enforcement is provided by GitHub enforcement (Phase 4).
+
+set -eu
+
+if ! command -v commitguard >/dev/null 2>&1; then
+    echo "commitguard: executable not found on PATH; refusing commit-msg (fail closed)." >&2
+    echo "commitguard: install CommitGuard, or remove this hook deliberately." >&2
+    exit 1
+fi
+
+exec commitguard check --hook commit-msg --message-file "$1"

@@ -1,0 +1,30 @@
+# Automation / bot identities (not AI agents).
+#
+# STATUS: rule data only; bot detection is Phase 5.
+#
+# GitHub App bot accounts commit as
+#   <login>[bot] <<numeric-id>+<login>[bot]@users.noreply.github.com>
+# Match on the login; the numeric ID is recorded for stronger matching.
+
+schema_version: 1
+
+generic:
+  login_suffixes: ["[bot]"]
+
+identities:
+  - id: dependabot
+    login: "dependabot[bot]"
+    github_user_id: 49699333
+    verified: true
+  - id: github_actions
+    login: "github-actions[bot]"
+    github_user_id: 41898282
+    verified: true
+  - id: renovate
+    login: "renovate[bot]"
+    github_user_id: 29139614
+    verified: false
+  - id: pre_commit_ci
+    login: "pre-commit-ci[bot]"
+    github_user_id: 66853113
+    verified: false

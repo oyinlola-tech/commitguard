@@ -1,0 +1,34 @@
+# Text patterns for attribution in commit messages.
+#
+# STATUS: rule data only; not loaded until Phase 2.
+#
+# Patterns are plain case-insensitive literals, not regular expressions.
+# Regex from data files is avoided on purpose: it invites catastrophic
+# backtracking (ReDoS) on attacker-controlled commit messages.
+
+schema_version: 1
+
+# Trailer keys whose presence indicates AI attribution (rule: ai_trailer).
+attribution_trailer_keys:
+  - generated-by
+  - assisted-by
+  - ai-assisted
+  - ai-generated
+  - co-developed-by   # only when the value matches an AI identity
+
+# Trailer keys whose values are identities to check (rules: ai_coauthor, bot_identity).
+identity_trailer_keys:
+  - co-authored-by
+
+# Free-text lines some tools add to commit messages (rule: ai_trailer).
+attribution_phrases:
+  - "generated with claude code"
+  - "generated with [claude code]"
+
+# Tokens that, inside a co-author name, suggest an unknown AI agent.
+# Lower confidence: findings from these use a lower severity.
+unknown_agent_name_tokens:
+  - "ai agent"
+  - "coding agent"
+  - "llm"
+  - "gpt"

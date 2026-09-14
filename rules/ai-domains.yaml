@@ -1,0 +1,34 @@
+# Email domains associated with AI agent vendors.
+#
+# STATUS: rule data only; not loaded until Phase 2.
+#
+# IMPORTANT: a vendor domain alone is NOT evidence of an AI agent - employees of
+# these companies commit with the same domain. Phase 2 matching must combine a
+# domain with an automation-style local part (see `automation_local_parts`),
+# unless an entry sets `match: any_local_part` after explicit review.
+
+schema_version: 1
+
+automation_local_parts:
+  - noreply
+  - no-reply
+  - bot
+  - agent
+  - ai
+
+domains:
+  - domain: anthropic.com
+    vendor: Anthropic
+    match: automation_local_part
+  - domain: openai.com
+    vendor: OpenAI
+    match: automation_local_part
+  - domain: cursor.com
+    vendor: Anysphere
+    match: automation_local_part
+  - domain: all-hands.dev
+    vendor: All Hands AI
+    match: automation_local_part
+  - domain: aider.chat
+    vendor: Aider
+    match: any_local_part   # project domain used only for tool attribution

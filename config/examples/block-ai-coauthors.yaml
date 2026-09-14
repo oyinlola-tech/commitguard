@@ -1,0 +1,20 @@
+# Example: block AI co-authors, only warn about other signals.
+#
+#   feat: implement authentication
+#
+#   Co-authored-by: Claude <noreply@anthropic.com>    <- blocked
+
+version: 1
+
+policies:
+  ai_coauthor:
+    enabled: true
+    action: block
+  ai_identity:
+    action: warn
+  ai_trailer:
+    action: warn
+  malformed_trailer:
+    action: warn
+  bot_identity:
+    action: allow

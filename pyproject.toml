@@ -42,9 +42,6 @@ dev = [
 [project.scripts]
 commitguard = "commitguard.cli.app:main"
 
-[project.urls]
-Documentation = "https://github.com/oyinlola/commitguard/tree/main/docs"
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/commitguard"]
 
@@ -64,6 +61,7 @@ select = [
     "B",       # bugbear
     "UP",      # pyupgrade
     "S",       # bandit (security)
+    "BLE",     # blind except
     "SIM",     # simplify
     "RUF",     # ruff-specific
     "PT",      # pytest style

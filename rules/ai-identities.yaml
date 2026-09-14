@@ -1,0 +1,89 @@
+# AI agent identities.
+#
+# STATUS: rule data only. Nothing loads this file yet; the loader, schema
+# validation and matching logic are Phase 2 work (see docs/detection-engine.md).
+#
+# Every entry must be verified against a real commit before Phase 2 ships.
+# `verified: false` marks identities that are believed correct but still need
+# a reference commit recorded in `evidence`.
+#
+# Matching intent (Phase 2):
+#   names   - case-insensitive, whitespace-normalised, Unicode NFKC-normalised
+#   emails  - exact, case-insensitive
+#   logins  - GitHub account login, matched inside
+#             <id>+<login>@users.noreply.github.com addresses
+
+schema_version: 1
+
+identities:
+  - id: anthropic_claude
+    vendor: Anthropic
+    product: Claude / Claude Code
+    names: ["Claude"]
+    emails: ["noreply@anthropic.com"]
+    logins: []
+    verified: true
+    evidence: "Default Claude Code trailer: Co-authored-by: Claude <noreply@anthropic.com>"
+
+  - id: github_copilot_agent
+    vendor: GitHub
+    product: Copilot coding agent
+    names: ["Copilot"]
+    emails: []
+    logins: ["Copilot", "copilot-swe-agent[bot]"]
+    verified: false
+    evidence: ""
+
+  - id: openai_codex
+    vendor: OpenAI
+    product: ChatGPT / Codex
+    names: ["ChatGPT", "Codex"]
+    emails: []
+    logins: ["chatgpt-codex-connector[bot]"]
+    verified: false
+    evidence: ""
+
+  - id: cursor_agent
+    vendor: Anysphere
+    product: Cursor background agent
+    names: ["Cursor Agent"]
+    emails: ["cursoragent@cursor.com"]
+    logins: []
+    verified: false
+    evidence: ""
+
+  - id: cognition_devin
+    vendor: Cognition
+    product: Devin
+    names: ["Devin AI"]
+    emails: []
+    logins: ["devin-ai-integration[bot]"]
+    verified: false
+    evidence: ""
+
+  - id: google_jules
+    vendor: Google
+    product: Jules
+    names: []
+    emails: []
+    logins: ["google-labs-jules[bot]"]
+    verified: false
+    evidence: ""
+
+  - id: aider
+    vendor: Aider
+    product: aider
+    names: ["aider"]
+    emails: []
+    logins: []
+    verified: false
+    evidence: "aider appends the model name, e.g. 'aider (<model>)'; match name prefix."
+
+  - id: all_hands_openhands
+    vendor: All Hands AI
+    product: OpenHands
+    names: ["openhands"]
+    emails: ["openhands@all-hands.dev"]
+    logins: []
+    verified: false
+    evidence: ""

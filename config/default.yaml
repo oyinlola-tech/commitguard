@@ -1,0 +1,24 @@
+# CommitGuard repository configuration.
+# Docs: docs/configuration.md
+#
+# Policies not listed here keep their built-in secure defaults.
+# Valid actions: allow | warn | block
+
+version: 1
+
+policies:
+  ai_coauthor:
+    enabled: true
+    action: block
+  ai_identity:
+    enabled: true
+    action: block
+  ai_trailer:
+    enabled: true
+    action: block
+  malformed_trailer:
+    enabled: true
+    action: warn
+  bot_identity:
+    enabled: true
+    action: warn

@@ -1,0 +1,45 @@
+# CommitGuard repository enforcement - PLACEHOLDER (Phase 4).
+#
+# Intended behaviour once `commitguard scan` exists:
+#   * run on every pull_request against protected branches;
+#   * check out with full history and scan base..head (every commit, not just HEAD);
+#   * load the policy from the BASE branch so a PR cannot relax its own policy;
+#   * fail the job on BLOCK and be configured as a required status check.
+#
+# Until then this workflow only verifies the CLI installs and runs. It does NOT
+# enforce any policy, so it is manual-trigger only to avoid a misleading green
+# check on pull requests.
+
+name: CommitGuard
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  commitguard:
+    name: CommitGuard (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      # TODO: pin third-party actions to full commit SHAs.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install CommitGuard
+        run: python -m pip install .
+
+      - name: Diagnose
+        run: commitguard doctor
+
+      - name: Show effective policy
+        run: commitguard policy list
+
+      # TODO(phase-4): commitguard scan "origin/${{ github.base_ref }}..HEAD"

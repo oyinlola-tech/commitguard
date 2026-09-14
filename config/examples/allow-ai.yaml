@@ -1,0 +1,15 @@
+# Example: a repository that explicitly permits AI agent attribution.
+#
+# Detection still runs, so findings remain visible (e.g. in `commitguard scan`
+# output), but the policy allows them. Allowing is always explicit: omitting a
+# policy keeps its secure default.
+
+version: 1
+
+policies:
+  ai_coauthor:
+    action: allow
+  ai_identity:
+    action: allow
+  ai_trailer:
+    action: allow
