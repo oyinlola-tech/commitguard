@@ -12,6 +12,8 @@ MAX_REVISION_LENGTH = 256
 
 _SHA_RE = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _IDENTIFIER_RE = re.compile(r"\A[a-z][a-z0-9_]{0,63}\Z")
+# section[.subsection].key - subsections are restricted here to keep it simple.
+_GIT_CONFIG_KEY_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9_./-]+)?\.[A-Za-z][A-Za-z0-9-]*\Z")
 
 
 def validate_revision(revision: str) -> str:
@@ -55,3 +57,10 @@ def validate_identifier(value: str, *, kind: str = "identifier") -> str:
             f"invalid {kind} {value!r}: expected lowercase snake_case (max 64 chars)"
         )
     return value
+
+
+def validate_git_config_key(key: str) -> str:
+    """Validate a Git configuration key such as ``core.hooksPath``."""
+    if len(key) > MAX_REVISION_LENGTH or not _GIT_CONFIG_KEY_RE.match(key):
+        raise UnsafeInputError(f"invalid git config key {key!r}")
+    return key
