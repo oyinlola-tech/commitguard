@@ -1,0 +1,10 @@
+description: >
+  An AI agent not present in the identity rules, recognisable only by
+  heuristics (name tokens). Expected at lower severity in Phase 2.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  feat: generate API client
+
+  Co-authored-by: Nimbus AI Agent <agent@nimbus-ai.example>
+expected:
+  rules: [ai_coauthor]

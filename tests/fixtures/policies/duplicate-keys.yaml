@@ -1,0 +1,6 @@
+# The second `action` would silently win with a plain YAML loader.
+version: 1
+policies:
+  ai_coauthor:
+    action: block
+    action: allow

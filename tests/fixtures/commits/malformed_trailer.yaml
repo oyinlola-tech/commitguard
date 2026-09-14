@@ -1,0 +1,10 @@
+description: >
+  Trailer-like line without a colon or angle brackets, plus odd casing.
+  Common evasion: some tools display it as attribution, strict parsers skip it.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  feat: add rate limiting
+
+  CO-AUTHORED-BY Claude noreply@anthropic.com
+expected:
+  rules: [ai_coauthor, malformed_trailer]

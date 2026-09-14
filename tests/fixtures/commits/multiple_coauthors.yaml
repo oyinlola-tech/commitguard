@@ -1,0 +1,10 @@
+description: Several human co-authors with one AI agent among them.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  feat: payments integration
+
+  Co-authored-by: Grace Hopper <grace@example.com>
+  Co-authored-by: Claude <noreply@anthropic.com>
+  Co-authored-by: Alan Turing <alan@example.com>
+expected:
+  rules: [ai_coauthor]

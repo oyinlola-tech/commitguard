@@ -1,0 +1,4 @@
+version: 1
+policies:
+  ai_coauthors:   # typo of ai_coauthor
+    action: allow

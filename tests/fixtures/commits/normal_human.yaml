@@ -1,0 +1,8 @@
+description: Ordinary commit by a human with no trailers.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  feat: implement authentication
+
+  Adds password hashing and session handling.
+expected:
+  rules: []

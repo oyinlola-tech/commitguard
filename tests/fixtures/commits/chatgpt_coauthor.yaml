@@ -1,0 +1,8 @@
+description: ChatGPT listed as co-author with a vendor noreply address.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  refactor: simplify token refresh
+
+  Co-authored-by: ChatGPT <noreply@openai.com>
+expected:
+  rules: [ai_coauthor]

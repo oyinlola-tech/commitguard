@@ -1,0 +1,8 @@
+description: GitHub Copilot agent listed as co-author via a GitHub noreply address.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  chore: add retry logic
+
+  Co-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>
+expected:
+  rules: [ai_coauthor]

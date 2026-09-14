@@ -1,0 +1,8 @@
+description: Human pair-programming co-author; must not be flagged.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  fix: handle expired sessions
+
+  Co-authored-by: Grace Hopper <grace@example.com>
+expected:
+  rules: []

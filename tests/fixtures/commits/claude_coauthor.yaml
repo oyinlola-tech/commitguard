@@ -1,0 +1,8 @@
+description: Claude listed as co-author (the canonical case CommitGuard exists for).
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  feat: implement authentication
+
+  Co-authored-by: Claude <noreply@anthropic.com>
+expected:
+  rules: [ai_coauthor]

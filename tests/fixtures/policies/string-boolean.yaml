@@ -1,0 +1,4 @@
+version: 1
+policies:
+  ai_coauthor:
+    enabled: "no"

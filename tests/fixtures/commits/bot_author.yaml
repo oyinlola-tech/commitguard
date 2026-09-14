@@ -1,0 +1,9 @@
+description: Dependency bot as author. A bot, not an AI agent.
+author: {name: "dependabot[bot]", email: "49699333+dependabot[bot]@users.noreply.github.com"}
+committer: {name: GitHub, email: noreply@github.com}
+message: |
+  build(deps): bump pyyaml from 6.0.1 to 6.0.2
+
+  Bumps pyyaml from 6.0.1 to 6.0.2.
+expected:
+  rules: [bot_identity]
