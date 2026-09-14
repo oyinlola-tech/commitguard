@@ -194,6 +194,112 @@ class Repository:
             raise MalformedGitOutputError(f"unexpected {variable} format")
         return Identity(name=ident[:open_index].strip(), email=ident[open_index + 1 : close_index])
 
+    @property
+    def common_dir(self) -> Path:
+        """The Git directory shared by all worktrees (where hooks normally live)."""
+        result = run_git(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=self.root
+        )
+        return Path(result.stdout.decode("utf-8", errors="surrogateescape").strip())
+
+    def peel_to_commit(self, oid: str) -> str | None:
+        """Return the commit an object (commit or annotated tag) refers to.
+
+        Returns None if the object does not exist locally or peels to a
+        non-commit object (e.g. a tag pointing at a tree or blob).
+        """
+        if not is_git_sha(oid):
+            raise UnsafeInputError("peel_to_commit requires a full object id")
+        result = run_git(
+            ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{oid}^{{commit}}"],
+            cwd=self.root,
+            check=False,
+        )
+        sha = result.stdout.decode("ascii", errors="replace").strip()
+        return sha if result.ok and is_git_sha(sha) else None
+
+    def has_commit(self, oid: str) -> bool:
+        return is_git_sha(oid) and self.peel_to_commit(oid) == oid
+
+    def remote_exists(self, name: str) -> bool:
+        if not _is_simple_remote_name(name):
+            return False
+        return self.config_get(f"remote.{name}.url") is not None
+
+    def remote_tracking_tips(self, remote: str) -> list[str]:
+        """Commit IDs at the tips of ``refs/remotes/<remote>/*`` (what the remote had)."""
+        if not self.remote_exists(remote):
+            return []
+        # One call: object type/name and, for tags, the peeled type/name.
+        result = run_git(
+            [
+                "for-each-ref",
+                "--format=%(objecttype) %(objectname) %(*objecttype) %(*objectname)",
+                "--",
+                f"refs/remotes/{remote}/",
+            ],
+            cwd=self.root,
+        )
+        tips = []
+        for line in result.stdout.decode("ascii", errors="replace").splitlines():
+            fields = line.split()
+            if len(fields) >= 2 and fields[0] == "commit" and is_git_sha(fields[1]):
+                tips.append(fields[1])
+            elif len(fields) == 4 and fields[2] == "commit" and is_git_sha(fields[3]):
+                tips.append(fields[3])
+        return sorted(set(tips))
+
+    def rev_list(
+        self,
+        include: Sequence[str],
+        exclude: Sequence[str] = (),
+        *,
+        max_count: int,
+    ) -> list[str]:
+        """Commits reachable from ``include`` but not from ``exclude``, oldest first.
+
+        All inputs must be full object IDs; they are passed on stdin (no argument
+        length limits, no option parsing). More than ``max_count`` results is an
+        error rather than a silent truncation.
+        """
+        for oid in (*include, *exclude):
+            if not is_git_sha(oid):
+                raise UnsafeInputError("rev_list requires full object ids")
+        if not include:
+            return []
+        stdin = "".join(f"{oid}\n" for oid in include) + "".join(f"^{oid}\n" for oid in exclude)
+        result = run_git(
+            ["rev-list", f"--max-count={max_count + 1}", "--stdin"],
+            cwd=self.root,
+            input_bytes=stdin.encode("ascii"),
+        )
+        shas = result.stdout.decode("ascii", errors="replace").split()
+        if not all(is_git_sha(sha) for sha in shas):
+            raise MalformedGitOutputError("unexpected rev-list output")
+        if len(shas) > max_count:
+            raise GitError(f"more than {max_count} commits would need to be analysed")
+        shas.reverse()
+        return shas
+
+    def cleanup_message(self, message: str) -> str:
+        """Apply the message cleanup ``git commit`` would apply by default.
+
+        Honours ``commit.cleanup`` (``strip``/``default``, ``whitespace``,
+        ``verbatim``, ``scissors``) and ``core.commentChar`` via
+        ``git stripspace``. A ``--cleanup`` option given on the command line is
+        invisible to hooks and cannot be honoured.
+        """
+        mode = (self.config_get("commit.cleanup") or "default").lower()
+        if mode == "verbatim":
+            return message
+        if mode in ("default", "strip", "scissors"):
+            message = _cut_at_scissors(message)
+        args = ["stripspace"]
+        if mode in ("default", "strip"):
+            args.append("--strip-comments")
+        result = run_git(args, cwd=self.root, input_bytes=message.encode("utf-8", "surrogatepass"))
+        return result.stdout.decode("utf-8", errors="replace")
+
     def config_get(self, key: str) -> str | None:
         """Return a Git configuration value, or None if it is unset."""
         validate_git_config_key(key)
@@ -234,3 +340,24 @@ def _parse_commit_record(raw: bytes, *, expected_sha: str) -> Commit:
         )
     except (ValueError, UnsafeInputError, ValidationError) as exc:
         raise MalformedGitOutputError(f"invalid commit metadata: {type(exc).__name__}") from exc
+
+
+_SCISSORS = "------------------------ >8 ------------------------"
+
+
+def _cut_at_scissors(message: str) -> str:
+    lines = message.split("\n")
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.endswith(_SCISSORS) and len(stripped) <= len(_SCISSORS) + 4:
+            return "\n".join(lines[:index]) + ("\n" if index else "")
+    return message
+
+
+def _is_simple_remote_name(name: str) -> bool:
+    """A configured remote name usable in ref patterns (no globs, paths or URLs)."""
+    return (
+        0 < len(name) <= 200
+        and not name.startswith(("-", "."))
+        and all(ch.isalnum() or ch in "._-" for ch in name)
+    )

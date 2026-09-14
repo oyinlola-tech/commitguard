@@ -19,3 +19,17 @@ def python_version_supported() -> bool:
 def is_windows() -> bool:
     """Return True on Windows (affects hook scripts and executable bits)."""
     return sys.platform.startswith("win")
+
+
+def path_for_posix_shell(path: str) -> str:
+    """Render a filesystem path for use inside a POSIX ``sh`` script.
+
+    Git for Windows runs hooks with its bundled ``sh``, which accepts
+    ``C:/Users/...`` style paths; backslashes would be escape characters.
+    """
+    return path.replace("\\", "/") if is_windows() else path
+
+
+def supports_executable_bit() -> bool:
+    """False on Windows, where Git decides executability from the ``#!`` line."""
+    return not is_windows()

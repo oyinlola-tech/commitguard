@@ -12,6 +12,7 @@ from commitguard.exceptions.git import (
     GitCommandError,
     GitError,
     GitNotFoundError,
+    HookInstallError,
     MalformedGitOutputError,
     NotAGitRepositoryError,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "GitCommandError",
     "GitError",
     "GitNotFoundError",
+    "HookInstallError",
     "MalformedGitOutputError",
     "NotAGitRepositoryError",
     "RulesError",

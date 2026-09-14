@@ -51,6 +51,7 @@ def run_git(
     cwd: Path | None = None,
     check: bool = True,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    input_bytes: bytes | None = None,
 ) -> CommandResult:
     """Run ``git <args>`` with CommitGuard's hardening applied.
 
@@ -59,7 +60,13 @@ def run_git(
     """
     argv = [git_executable(), "--no-pager", *args]
     try:
-        result = run_command(argv, cwd=cwd, env_overrides=GIT_ENV_OVERRIDES, timeout=timeout)
+        result = run_command(
+            argv,
+            cwd=cwd,
+            env_overrides=GIT_ENV_OVERRIDES,
+            timeout=timeout,
+            input_bytes=input_bytes,
+        )
     except FileNotFoundError as exc:
         raise GitNotFoundError("git executable could not be started") from exc
     except subprocess.TimeoutExpired as exc:

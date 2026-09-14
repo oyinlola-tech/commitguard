@@ -7,7 +7,7 @@ silent change in security behaviour.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 
 from commitguard.core.decision import Action
 from commitguard.policies.defaults import KNOWN_POLICY_IDS
@@ -30,6 +30,29 @@ class PolicyOverride(BaseModel):
         return value
 
 
+class EnforcementOverride(BaseModel):
+    """Which Git hooks enforce policy. Unset fields keep the value from lower layers.
+
+    Disabling a hook never changes *policies*; it only stops that hook from
+    running the analysis, and ``commitguard doctor`` reports enforcement as
+    incomplete.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pre_commit: StrictBool | None = None
+    commit_msg: StrictBool | None = None
+    pre_push: StrictBool | None = None
+    max_push_commits: StrictInt | None = Field(default=None, ge=1, le=1_000_000)
+
+    @field_validator("pre_commit", "commit_msg", "pre_push", "max_push_commits", mode="before")
+    @classmethod
+    def _reject_explicit_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("must not be null; remove the key to use the default")
+        return value
+
+
 class CommitGuardConfig(BaseModel):
     """Top-level ``.commitguard.yaml`` document."""
 
@@ -37,6 +60,7 @@ class CommitGuardConfig(BaseModel):
 
     version: Literal[1]
     policies: dict[str, PolicyOverride] = {}
+    enforcement: EnforcementOverride = EnforcementOverride()
 
     @field_validator("version", mode="before")
     @classmethod

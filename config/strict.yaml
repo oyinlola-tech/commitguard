@@ -22,3 +22,8 @@ policies:
   bot_identity:
     enabled: true
     action: block
+
+enforcement:
+  pre_commit: true
+  commit_msg: true
+  pre_push: true

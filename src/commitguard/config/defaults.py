@@ -35,4 +35,11 @@ policies:
   bot_identity:
     enabled: true
     action: warn
+
+# Which Git hooks enforce the policies above (after `commitguard install`).
+# Disabling a hook is visible in `commitguard doctor`.
+enforcement:
+  pre_commit: true
+  commit_msg: true
+  pre_push: true
 """

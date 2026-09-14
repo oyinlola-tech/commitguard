@@ -35,3 +35,7 @@ class GitCommandError(GitError):
         # Only the git sub-command is echoed; arguments may contain user data.
         subcommand = next((a for a in self.command[1:] if not a.startswith("-")), "?")
         super().__init__(f"git {subcommand} failed with exit code {returncode}: {stderr}")
+
+
+class HookInstallError(GitError):
+    """Raised when hooks cannot be installed or removed safely."""

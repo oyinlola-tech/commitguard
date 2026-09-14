@@ -8,6 +8,9 @@
 #   - signed commit requirements          (Phase 5)
 #   - secret detection                    (Phase 5)
 #   - opt-in audit storage                (future)
+#
+# Local hook enforcement (Phase 3) is on by default; it is listed explicitly
+# here so that disabling it is a visible change in review.
 #   - organisation policy inheritance     (future)
 
 version: 1
@@ -28,3 +31,8 @@ policies:
   bot_identity:
     enabled: true
     action: warn
+
+enforcement:
+  pre_commit: true
+  commit_msg: true
+  pre_push: true
