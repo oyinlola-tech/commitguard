@@ -1,7 +1,7 @@
 # Architecture
 
-> Status: Phase 1. This document describes the intended architecture and marks
-> which parts exist today.
+> Status: Phase 2. Detection and policy are implemented; hooks (Phase 3) and
+> GitHub enforcement (Phase 4) are not.
 
 ## Goals
 
@@ -29,51 +29,58 @@
                    ┌─────────▼─────────┐
                    │  Commit (git/)    │  normalised, immutable, untrusted data
                    └─────────┬─────────┘
-                             │ ScanContext
+                             │ CommitContext
                    ┌─────────▼─────────┐
                    │ DetectionEngine   │  runs DetectorRegistry in name order
+                   │  + rules/*.yaml   │  (via services.analysis.Analyzer)
                    │  (core/)          │
                    └─────────┬─────────┘
           ┌─────────────┬────┴────────┬──────────────┐
           ▼             ▼             ▼              ▼
      coauthor       identity       trailer          bot        (detectors/)
           └─────────────┴──────┬──────┴──────────────┘
-                               │ ScanResult (findings + detector failures)
+                               │ DetectionResult (findings + detector failures)
                    ┌───────────▼───────────┐
                    │ PolicyEvaluator       │  PolicySet from config + defaults
                    │  (policies/)          │
                    └───────────┬───────────┘
                                │ Decision (ALLOW / WARN / BLOCK + explanations)
                    ┌───────────▼───────────┐
-                   │ CLI output / exit code│  sanitised explanation, 0 or 1
+                   │ CLI output / exit code│  sanitised text or JSON; exit 0, 1 or 2
                    └───────────────────────┘
 ```
 
 ## Packages and dependency rules
 
-| Package | Responsibility | May import | Status |
-|---|---|---|---|
-| `cli` | Typer app, commands, terminal output, exit codes | everything | skeleton; `init`, `policy list`, `doctor` work |
-| `core` | `ScanContext`, `Finding`, `ScanResult`, `Decision`, `DetectionEngine` | `detectors.base/registry`, `git.commit`, `provenance`, `security` | implemented |
-| `detectors` | pure detectors + explicit registry | `core.context/result`, `git.commit`, `provenance`, `security` | interface + registry implemented; detectors are stubs |
-| `policies` | `Policy`, `PolicySet`, defaults, evaluator | `core`, `config.schema` | implemented |
-| `provenance` | `Identity`, `Trailer`, `SignatureInfo`; parsing/analysis | `security` | models only; parsing is Phase 2 |
-| `git` | Git CLI wrapper, repository queries, commit model, hooks, diff | `utils`, `security`, `provenance` | discovery + commit reading implemented |
-| `config` | schema, loader, defaults | `core.decision`, `policies.defaults`, `utils`, `security` | implemented |
-| `github` | Phase 4 enforcement | — | placeholder |
-| `audit` | opt-in audit events and storage | `core` | placeholder |
-| `security` | validation, sanitisation, hashing | `exceptions` | implemented |
-| `exceptions`, `utils` | error types, subprocess/filesystem/platform helpers | stdlib | implemented |
+| Package | Responsibility | Status |
+|---|---|---|
+| `cli` | Typer app, commands, text/JSON rendering, exit codes | `scan`, `check`, `init`, `policy list`, `doctor` work; `install`/`uninstall` are Phase 3 |
+| `services` | the one analysis pipeline (config + rules + engine + evaluator + Git reading) shared by every entry point; report models | implemented |
+| `core` | `CommitContext`, `Finding`, `Evidence`, `DetectionResult`, `Decision`, `DetectionEngine` | implemented |
+| `detectors` | pure detectors + explicit registry | implemented (4 detectors) |
+| `rules` | rule schemas, compiled matcher (pure); loader (reads packaged YAML) | implemented |
+| `policies` | `Policy`, `PolicySet`, defaults, layered merge, evaluator | implemented |
+| `provenance` | identities, trailer parsing, normalisation, signatures model | implemented (signature verification: Phase 5) |
+| `git` | Git CLI wrapper, repository queries, commit model, hooks, diff | reading implemented; hooks/diff are Phase 3 |
+| `config` | schema, layered loader, defaults | implemented |
+| `github` | Phase 4 enforcement | placeholder |
+| `audit` | opt-in audit events and storage | placeholder (reports are audit-ready) |
+| `security` | validation, sanitisation, hashing, strict safe YAML | implemented |
+| `exceptions`, `utils` | error types, subprocess/filesystem/platform helpers | implemented |
+
+Dependency direction: `cli → services → {git, config, rules.loader} → {detectors, policies, core, rules, provenance} → {security, exceptions}`.
 
 Enforced by `tests/unit/test_architecture.py`:
 
-- `core`, `detectors`, `policies` and `provenance` never import `cli`, `github`,
-  `audit`, or the Git I/O modules (`git.commands`, `git.repository`, `git.hooks`,
-  `git.diff`), nor `subprocess`.
-- Nothing below `cli` imports `cli`.
+- `core`, `detectors`, `policies`, `provenance` and `rules` (except
+  `rules.loader`) never import `cli`, `services`, `github`, `audit`, config/rule
+  loaders, Git I/O modules, filesystem/subprocess helpers, `subprocess`,
+  `socket`, `urllib` or `http` — directly or transitively.
+- Nothing outside `cli` imports `cli`.
+- No module imports HTTP clients or AI SDKs (`requests`, `httpx`, `openai`, `anthropic`, …).
+- YAML is only parsed through `security.safe_yaml`.
 - Every module imports cleanly in a fresh interpreter (no import cycles).
-
-`git.commit` is pure data and is the one `git` module detectors may use.
+- No `shell=True` anywhere.
 
 ## Key design decisions
 

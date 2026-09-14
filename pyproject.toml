@@ -45,6 +45,10 @@ commitguard = "commitguard.cli.app:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/commitguard"]
 
+# Rule data lives in the top-level rules/ directory and ships inside the package.
+[tool.hatch.build.targets.wheel.force-include]
+"rules" = "commitguard/rules/data"
+
 # --------------------------------------------------------------------------- #
 # Ruff
 # --------------------------------------------------------------------------- #

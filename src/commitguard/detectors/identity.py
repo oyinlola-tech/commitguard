@@ -13,6 +13,7 @@ from typing import ClassVar
 from commitguard.core.context import CommitContext
 from commitguard.core.result import Evidence, EvidenceSource, Finding, Severity
 from commitguard.detectors.base import Detector, group_by_rule
+from commitguard.provenance.normalization import uses_disguising_characters
 from commitguard.rules.matcher import CompiledRules, IdentityMatch
 
 RULE_AI_IDENTITY = "ai_identity"
@@ -53,7 +54,16 @@ class IdentityDetector(Detector):
                         f"{match.display_name}."
                     ),
                     evidence=tuple(
-                        Evidence(source=source, value=value, matched=m.reasons)
+                        Evidence(
+                            source=source,
+                            value=value,
+                            matched=m.reasons,
+                            notes=(
+                                ("contains look-alike or invisible Unicode characters",)
+                                if uses_disguising_characters(value)
+                                else ()
+                            ),
+                        )
                         for source, value, m in items
                     ),
                     commit_sha=commit.sha,

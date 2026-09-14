@@ -85,9 +85,10 @@ class ParsedTrailers(BaseModel):
 @dataclass
 class _Draft:
     key: str
-    value: str
-    raw: str
+    value_parts: list[str]
+    raw_parts: list[str]
     line_number: int
+    last_line: int
     paragraph: int
     issues: list[TrailerIssue] = field(default_factory=list)
 
@@ -162,32 +163,38 @@ def parse_trailers(message: str) -> ParsedTrailers:
             parsed = None  # the subject ("feat: ...") is not a trailer
         if parsed is None:
             continuation = line[:1].isspace()
-            if continuation and drafts and drafts[-1].line_number == line_number - 1:
-                drafts[-1].value = f"{drafts[-1].value} {line.strip()}".strip()
-                drafts[-1].raw = f"{drafts[-1].raw} {line.strip()}"
+            if continuation and drafts and drafts[-1].last_line == line_number - 1:
+                # Collected as parts and joined once: repeated string concatenation
+                # would be quadratic on messages with many continuation lines.
+                drafts[-1].value_parts.append(line.strip())
+                drafts[-1].raw_parts.append(line.strip())
+                drafts[-1].last_line = line_number
             continue
 
         if len(drafts) >= MAX_TRAILERS:
             truncated = True
             break
         key, value, issues = parsed
-        drafts.append(_Draft(key, value, line.strip(), line_number, paragraph, issues))
+        drafts.append(
+            _Draft(key, [value], [line.strip()], line_number, line_number, paragraph, issues)
+        )
 
     trailers = []
     for draft in drafts:
+        value = " ".join(part for part in draft.value_parts if part)
         issues = list(draft.issues)
-        if not draft.value:
+        if not value:
             issues.append(TrailerIssue.EMPTY_VALUE)
         trailers.append(
             Trailer(
                 key=draft.key,
-                value=draft.value,
-                raw=draft.raw,
+                value=value,
+                raw=" ".join(draft.raw_parts),
                 line_number=draft.line_number,
                 in_trailer_block=draft.paragraph == last_content_paragraph
                 and last_content_paragraph > 0,
                 issues=tuple(issues),
-                identity=parse_identity(draft.value),
+                identity=parse_identity(value),
             )
         )
     return ParsedTrailers(trailers=tuple(trailers), truncated=truncated)

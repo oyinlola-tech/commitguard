@@ -148,6 +148,7 @@ def test_pathological_input_is_fast() -> None:
         "Co-authored-by: " + "<" * 200_000,
         "a-by " * 200_000,
         "\n".join(["Co-authored-by: A <a@b.io>"] * 50_000),
+        "x\n\nSigned-off-by: A\n" + "  continuation line\n" * 200_000,  # no quadratic folding
     ]
     start = time.perf_counter()
     for text in inputs:

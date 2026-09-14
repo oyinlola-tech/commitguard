@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, computed_field
 from commitguard.core.decision import Action, Decision
 from commitguard.core.result import DetectionResult, DetectorFailure, Finding
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION: Literal[1] = 1
 
 
 class EvaluatedFinding(BaseModel):
@@ -108,6 +108,7 @@ class ScanReport(BaseModel):
     def summary(self) -> dict[str, int]:
         counts = {action.value: 0 for action in Action}
         for commit in self.commits:
-            for item in (*commit.findings, *commit.failures):
-                counts[item.action.value] += 1
+            actions = [f.action for f in commit.findings] + [f.action for f in commit.failures]
+            for action in actions:
+                counts[action.value] += 1
         return {"commits": len(self.commits), **counts}

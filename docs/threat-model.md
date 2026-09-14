@@ -53,7 +53,8 @@ branches, and every decision should be explainable with preserved evidence.
 - YAML object construction: `SafeLoader` only **[done]**.
 - Plugins/commands named in config: not supported by design; explicit
   in-code detector registry **[done]**.
-- ReDoS via regex rule data: rule files use literals only **[planned; recorded in rules/patterns.yaml]**.
+- ReDoS via regex rule data: rules are literal values; the parser and matcher use no regular expressions **[done]**.
+- Malicious rule files: strict schema, cross-validation, strict safe YAML **[done]**.
 
 ### Crafted commit metadata
 - **Terminal escape injection** (hide a trailer, spoof output): all untrusted
@@ -67,16 +68,29 @@ branches, and every decision should be explainable with preserved evidence.
 - **`git replace` objects** substituting an innocent commit:
   `GIT_NO_REPLACE_OBJECTS=1` **[done]**.
 - **`.mailmap` rewriting an AI identity** into a human one: `--no-use-mailmap` **[done]**.
-- **Evasion by formatting** (casing, whitespace, malformed trailers, look-alike
-  Unicode): **[planned, Phase 2]**, specified as xfail tests.
-- **Resource exhaustion** (huge messages): config size-limited **[done]**;
-  bounded Git output **[planned]**.
+- **Evasion by formatting**: key casing/spacing/underscores, missing colon,
+  zero-width and bidi characters, fullwidth/mathematical letters, Cyrillic/Greek
+  look-alikes, Unicode line separators, indented trailers, trailers outside the
+  trailer block: normalised and still detected **[done]**.
+- **Trailer flood** (hide attribution after thousands of trailers): parsing is
+  bounded and exceeding the limit fails closed (BLOCK) **[done]**.
+- **False positives** (humans named like an agent, employees at vendor domains):
+  exact matching only, vendor domains never sufficient alone, ambiguous names
+  need corroboration **[done]**; single-token alias names remain a documented
+  medium-confidence risk.
+- **Resource exhaustion**: config/rule/message files size-limited, linear-time
+  parsing, `--max-commits` refuses oversized ranges **[done]**; bounded Git
+  output capture **[planned]**.
+- **Record-splitting in batched Git output**: records separated by a random
+  per-call boundary and cross-checked against requested SHAs **[done]**.
 
 ### Detector failure
 - Any detector exception or invalid output → BLOCK (fail closed) **[done]**.
+- Unexpected CLI errors exit 2 (never 1 = "blocked", never 0) without tracebacks **[done]**.
 
 ### Information disclosure
-- No network access in the local tool; no telemetry **[done]**.
+- No network access and no AI/LLM APIs in the local tool; no telemetry; enforced by architecture tests **[done]**.
+- Reports and JSON contain concise metadata evidence only, never file contents or full messages **[done]**.
 - Tracebacks never render local variables (`pretty_exceptions_show_locals=False`) **[done]**.
 - Environment variables are never logged **[done — nothing logs them]**.
 - Tokens for Phase 4 read at call time, never persisted **[planned]**.

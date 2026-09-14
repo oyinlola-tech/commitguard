@@ -18,6 +18,7 @@ from typing import ClassVar
 from commitguard.core.context import CommitContext
 from commitguard.core.result import Evidence, EvidenceSource, Finding, Severity
 from commitguard.detectors.base import Detector, require_complete_trailers
+from commitguard.provenance.normalization import uses_disguising_characters
 from commitguard.provenance.trailers import Trailer
 from commitguard.rules.matcher import CompiledRules
 
@@ -76,6 +77,8 @@ class CoauthorDetector(Detector):
 
 def _notes(trailer: Trailer) -> tuple[str, ...]:
     notes: list[str] = []
+    if uses_disguising_characters(trailer.raw):
+        notes.append("contains look-alike or invisible Unicode characters")
     if not trailer.in_trailer_block:
         notes.append("outside the commit's trailer block")
     notes.extend(f"trailer: {issue.value}" for issue in trailer.issues)

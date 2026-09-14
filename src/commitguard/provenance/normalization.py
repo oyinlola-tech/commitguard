@@ -102,3 +102,12 @@ def normalize_trailer_key(key: str) -> str:
     """Canonical trailer key: ``Co_Authored By`` -> ``co-authored-by``."""
     text = normalize_text(key).replace("_", " ").replace("-", " ")
     return "-".join(text.split())
+
+
+def uses_disguising_characters(text: str) -> bool:
+    """True if matching ``text`` relied on folding look-alike or invisible characters.
+
+    Plain case and whitespace differences do not count; NFKC compatibility
+    forms, control/format characters and homoglyphs do.
+    """
+    return normalize_text(text) != " ".join(text.casefold().split())

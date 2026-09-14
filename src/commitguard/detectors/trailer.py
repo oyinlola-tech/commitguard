@@ -98,6 +98,7 @@ class TrailerDetector(Detector):
             value=trailer.normalized_key,
             rule=f"{PATTERNS_FILE}#{rule.id}",
         )
+        reasons: tuple[MatchReason, ...]
         if rule.match == "key_present":
             if normalize_text(trailer.value) in rule.ignore_values:
                 return None

@@ -183,7 +183,15 @@ def test_malformed_ai_trailer_still_detected(detector, make_commit, run_detector
     ],
 )
 def test_unicode_evasion(detector, make_commit, run_detector, identity: str) -> None:  # type: ignore[no-untyped-def]
-    assert len(run_detector(detector, make_commit(coauthored(identity)))) == 1
+    (finding,) = run_detector(detector, make_commit(coauthored(identity)))
+    assert "contains look-alike or invisible Unicode characters" in finding.evidence[0].notes
+
+
+def test_plain_case_differences_are_not_reported_as_disguise(
+    detector, make_commit, run_detector
+) -> None:  # type: ignore[no-untyped-def]
+    (finding,) = run_detector(detector, make_commit(coauthored("CLAUDE <noreply@anthropic.com>")))
+    assert finding.evidence[0].notes == ()
 
 
 def test_trailer_outside_trailer_block_is_still_attribution(

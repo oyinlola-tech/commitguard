@@ -1,6 +1,6 @@
 """Security decisions.
 
-A :class:`Decision` is the policy engine's verdict over a :class:`ScanResult`,
+A :class:`Decision` is the policy engine's verdict over a :class:`DetectionResult`,
 with an explanation for every finding and failure that contributed to it.
 """
 

@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added (Phase 2 — AI attribution detection)
+
+- Commit model with derived trailers, pending commits and reserved signature field.
+- Lenient, bounded trailer and identity parser recording malformed and evasive
+  variants (missing separators, odd key spellings, invisible characters,
+  Unicode line separators, trailing escape codes).
+- Rule files as data (`rules/*.yaml`) with strict schemas, cross-validation and
+  packaging into the wheel; deterministic identity matcher with confidence levels.
+- Detectors: `coauthor` (`ai_coauthor`), `identity` (`ai_identity`), `trailer`
+  (`ai_trailer`, `malformed_trailer`), `bot` (`bot_identity`).
+- Engine skips detectors with no enabled rules and validates finding commit SHAs.
+- Layered configuration: built-in → global → repository → `--config`.
+- Working `commitguard scan` and `commitguard check` (revision ranges,
+  `--message-file`, `--format json`, `--quiet`, `--max-commits`).
+- Shared analysis service and JSON/audit-ready report models.
+
+### Changed
+
+- Exit codes: `0` allowed, `1` blocked, `2` any error (previously 3/4/5/70).
+- `Finding.rule` renamed to `rule_id`; findings gain `title` and `confidence`;
+  `ScanContext` → `CommitContext`, `ScanResult` → `DetectionResult`.
+- Unknown agents are no longer expected to be inferred from name wording.
+- `commit-msg` hook template now calls `commitguard check --quiet --message-file`.
+
+### Security
+
+- Invisible and look-alike characters in source files replaced with code points.
+- Unexpected CLI exceptions map to exit code 2 without tracebacks.
+
+## [0.1.0.dev0] - Phase 1
+
 ### Added
 
 - Phase 1 foundation: project structure, packaging (`pyproject.toml`), CI,

@@ -1,9 +1,9 @@
 # Git hooks
 
-> Status: templates exist in `hooks/`. `commitguard install` / `uninstall` and
-> the commands the hooks call (`check`, `scan`) are **not implemented yet**
-> (Phase 3). Do not install the templates by hand yet: they will refuse every
-> commit with a "not implemented" error.
+> Status: templates exist in `hooks/`. The engine the hooks call is ready:
+> `commitguard check --message-file` (used by the `commit-msg` template) works
+> today. `commitguard install` / `uninstall`, comment stripping for message
+> files, and the `pre-commit`/`pre-push` hook modes are **Phase 3**.
 
 ## Why hooks
 
@@ -21,7 +21,7 @@ git push                                   # pre-push hook scans pushed commits
 | Hook | When | Planned command | Checks |
 |---|---|---|---|
 | `pre-commit` | before the message is written | `commitguard check --hook pre-commit` | author/committer identity, staged changes (later: secrets) |
-| `commit-msg` | after the message is written, before the commit exists | `commitguard check --hook commit-msg --message-file "$1"` | trailers and attribution in the message |
+| `commit-msg` | after the message is written, before the commit exists | `commitguard check --quiet --message-file "$1"` (works today) | trailers, attribution, pending author/committer |
 | `pre-push` | before objects are sent | `commitguard scan --hook pre-push` | every commit being pushed (covers commits made with `--no-verify`, amended, or created by tools) |
 
 `commit-msg` is where AI co-author trailers are best caught: the commit is
