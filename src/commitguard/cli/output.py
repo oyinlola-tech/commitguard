@@ -35,7 +35,8 @@ def info(message: str) -> None:
 
 def error(message: str) -> None:
     typer.echo(
-        "commitguard: error: " + sanitize_for_terminal(message, max_length=4000, keep_newlines=True),
+        "commitguard: error: "
+        + sanitize_for_terminal(message, max_length=4000, keep_newlines=True),
         err=True,
     )
 

@@ -37,7 +37,9 @@ class Evidence(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    source: str = Field(min_length=1, description="Where it was found, e.g. 'trailer:co-authored-by'")
+    source: str = Field(
+        min_length=1, description="Where it was found, e.g. 'trailer:co-authored-by'"
+    )
     value: str
     line_number: int | None = Field(default=None, ge=1)
 

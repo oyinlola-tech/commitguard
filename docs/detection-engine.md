@@ -62,8 +62,7 @@ class ExampleDetector(Detector):
     rules = frozenset({"example_rule"})
     description = "One-line description."
 
-    def detect(self, context: ScanContext) -> Sequence[Finding]:
-        ...
+    def detect(self, context: ScanContext) -> Sequence[Finding]: ...
 ```
 
 Contract (see `detectors/base.py`): pure, deterministic, declared rules only,

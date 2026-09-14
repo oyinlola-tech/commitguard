@@ -97,10 +97,11 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+addopts = ["-rfEs", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
 markers = [
     "integration: tests that invoke real git or the filesystem beyond tmp_path basics",
     "phase2: behavioural specification for Phase 2 (AI attribution detection)",
     "phase3: behavioural specification for Phase 3 (Git hook enforcement)",
+    "phase5: behavioural specification for Phase 5 (security intelligence)",
 ]

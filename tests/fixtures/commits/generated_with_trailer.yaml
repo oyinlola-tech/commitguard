@@ -1,0 +1,10 @@
+description: Attribution via a Generated-by trailer and a tool footer, no Co-authored-by.
+author: {name: Ada Lovelace, email: ada@example.com}
+message: |
+  docs: document configuration schema
+
+  🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+  Generated-by: Claude Code
+expected:
+  rules: [ai_trailer]

@@ -13,7 +13,9 @@ MAX_REVISION_LENGTH = 256
 _SHA_RE = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _IDENTIFIER_RE = re.compile(r"\A[a-z][a-z0-9_]{0,63}\Z")
 # section[.subsection].key - subsections are restricted here to keep it simple.
-_GIT_CONFIG_KEY_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9_./-]+)?\.[A-Za-z][A-Za-z0-9-]*\Z")
+_GIT_CONFIG_KEY_RE = re.compile(
+    r"\A[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9_./-]+)?\.[A-Za-z][A-Za-z0-9-]*\Z"
+)
 
 
 def validate_revision(revision: str) -> str:

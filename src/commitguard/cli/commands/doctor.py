@@ -78,9 +78,7 @@ def _run_checks() -> list[CheckResult]:
         else:
             results.append(CheckResult(Status.OK, "configuration", f"valid: {source}"))
 
-    results.append(
-        CheckResult(Status.TODO, "hooks", "hook installation checks arrive in Phase 3")
-    )
+    results.append(CheckResult(Status.TODO, "hooks", "hook installation checks arrive in Phase 3"))
     results.append(
         CheckResult(Status.TODO, "detectors", "built-in detectors are stubs until Phase 2")
     )

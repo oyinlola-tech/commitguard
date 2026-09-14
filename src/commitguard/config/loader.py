@@ -30,13 +30,13 @@ class _UniqueKeySafeLoader(yaml.SafeLoader):
     "billion laughs" style of resource exhaustion entirely.
     """
 
-    def compose_node(self, parent: yaml.Node | None, index: int) -> yaml.Node | None:  # type: ignore[override]
+    def compose_node(self, parent: yaml.Node | None, index: int) -> yaml.Node | None:
         if self.check_event(yaml.events.AliasEvent):
-            event = self.peek_event()
+            event = self.peek_event()  # type: ignore[no-untyped-call]
             raise yaml.composer.ComposerError(
                 None, None, "YAML aliases are not allowed in configuration", event.start_mark
             )
-        return super().compose_node(parent, index)  # type: ignore[arg-type]
+        return super().compose_node(parent, index)
 
 
 def _construct_unique_mapping(

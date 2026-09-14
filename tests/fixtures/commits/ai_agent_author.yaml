@@ -1,0 +1,6 @@
+description: AI agent account recorded as the commit author and committer (no trailer).
+author: {name: Copilot, email: "198982749+Copilot@users.noreply.github.com"}
+message: |
+  fix: correct null check in session middleware
+expected:
+  rules: [ai_identity]
