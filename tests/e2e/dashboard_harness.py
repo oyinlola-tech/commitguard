@@ -15,6 +15,19 @@ script; the production server has no such routes.
 Usage::
 
     python tests/e2e/dashboard_harness.py --port 4173 --static web/dist
+
+Local demo (everything a reviewer would want to click through, on real data)::
+
+    cd web && npm run build && cd ..
+    python tests/e2e/dashboard_harness.py --demo
+    # open http://localhost:4173 and choose "Continue with GitHub" (signs in as alice)
+
+``--demo`` replays the complete lifecycle through the real stack - clean, blocked
+and warning pull requests, a fix, a GitHub "Re-run", a merge queue group, a GitHub
+outage that fails closed, published policy versions and a rollback, an installation
+suspended and reconnected, notification settings and delivered notifications - and
+replaces the github.com authorization page with an immediate local sign-in. It is a
+development tool: the production server has none of these routes.
 """
 
 import argparse
@@ -40,12 +53,16 @@ from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
 
 import commitguard.api.app as dashboard_app  # noqa: E402
 from commitguard.api.hosting import build_dashboard, create_server_app  # noqa: E402
+from commitguard.api.http import set_cookie  # noqa: E402
 from commitguard.api.settings import DashboardSettings, Environment  # noqa: E402
 from commitguard.audit.models import Actor, ActorType  # noqa: E402
 from commitguard.controlplane.access import Role  # noqa: E402
 from commitguard.controlplane.members import MembershipService  # noqa: E402
+from commitguard.core.decision import Action  # noqa: E402
 from commitguard.github.app import GitHubAppService  # noqa: E402
+from commitguard.github.client import TransportError  # noqa: E402
 from commitguard.github.identifiers import RepositoryRef  # noqa: E402
+from commitguard.github.permissions import OPTIONAL_PERMISSIONS, REQUIRED_PERMISSIONS  # noqa: E402
 from commitguard.notifications.settings import (  # noqa: E402
     NotificationMode,
     NotificationSettings,
@@ -68,6 +85,8 @@ fake = _load("commitguard_e2e_fake_github", ROOT / "tests/integration/github/app
 ORG = 1001
 OWNER = (501, "alice")
 VIEWER = (502, "victor")
+SECURITY = (503, "sam")
+ADMIN = (504, "ada")
 AI_TRAILER = "Co-authored-by: Claude <noreply@anthropic.com>"
 BLOCK_CONFIG = "version: 1\npolicies:\n  ai_coauthor:\n    enabled: true\n    action: block\n"
 PROJECT = RepositoryRef(id=5001, owner="octo-org", name="payments-api")
@@ -130,7 +149,8 @@ class Repo:
 
 
 class Stack:
-    def __init__(self, port: int, static_dir: Path | None) -> None:
+    def __init__(self, port: int, static_dir: Path | None, *, demo: bool = False) -> None:
+        self.demo_mode = demo
         self.tmp = Path(tempfile.mkdtemp(prefix="commitguard-e2e-"))
         self.origin = f"http://localhost:{port}"
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -198,15 +218,20 @@ class Stack:
 
     def seed(self) -> dict[str, Any]:
         repositories = (PROJECT, WEB, DOCS)
-        self.github.add_installation(fake.INSTALLATION_ID, repositories, account_id=ORG)
-        self.env.deliver(
-            "installation",
-            fake.installation_payload(
-                "created", fake.INSTALLATION_ID, repositories, account_id=ORG
-            ),
+        permissions = {**REQUIRED_PERMISSIONS, **OPTIONAL_PERMISSIONS}
+        self.github.add_installation(
+            fake.INSTALLATION_ID, repositories, account_id=ORG, permissions=permissions
         )
+        installation = fake.installation_payload(
+            "created", fake.INSTALLATION_ID, repositories, account_id=ORG
+        )
+        installation["installation"]["permissions"] = permissions
+        self.env.deliver("installation", installation)
         members = MembershipService(self.service.store, self.service.audit)
-        for user, role in ((OWNER, Role.OWNER), (VIEWER, Role.VIEWER)):
+        people = ((OWNER, Role.OWNER), (VIEWER, Role.VIEWER))
+        if self.demo_mode:
+            people += ((SECURITY, Role.SECURITY_MANAGER), (ADMIN, Role.ADMIN))
+        for user, role in people:
             members.grant(
                 account_id=ORG,
                 user_id=user[0],
@@ -327,9 +352,162 @@ class Stack:
         result = self.service.notifications.run_once()
         return {"dispatched": result.dispatched, "attempted": result.attempted}
 
+    # -- Demo --------------------------------------------------------------- #
+    def sign_in(self, user_id: int, return_to: str = "/dashboard") -> tuple[str, str]:
+        """Complete the real OAuth flow against the fake GitHub; returns (token, path)."""
+        auth = self.dashboard._auth
+        start = auth.begin_sign_in(return_to)
+        code, state = self.github.authorize(user_id, start.authorize_url)
+        done = auth.complete_sign_in(
+            code=code, state=state, cookie_state=start.state, user_agent="CommitGuard demo"
+        )
+        return done.session_token.reveal(), done.return_to
+
+    def demo(self) -> None:
+        """Replay the complete CommitGuard lifecycle, as GitHub would deliver it."""
+        from commitguard.controlplane.notifications import NotificationCenter
+
+        self.seed()
+        store, service = self.service.store, self.service
+        token, _ = self.sign_in(OWNER[0])
+        alice = self.dashboard._auth.authenticate(token)
+        assert alice is not None
+
+        # Enforcement evidence: payments-api requires the check and uses a merge queue.
+        self.github.rulesets[PROJECT.id] = [
+            {
+                "type": "required_status_checks",
+                "parameters": {"required_status_checks": [{"context": "commitguard-app"}]},
+            },
+            {"type": "merge_queue", "parameters": {}},
+        ]
+        self.github.workflows[DOCS.id] = {
+            ".github/workflows/commitguard.yml": (
+                ROOT / ".github/workflows/commitguard.yml"
+            ).read_text(encoding="utf-8")
+        }
+        for repository in (PROJECT, WEB, DOCS):
+            self.dashboard._commands.refresh_enforcement(alice, repository.id)
+
+        # Organization notification settings: e-mail for blocked violations, a webhook.
+        center = NotificationCenter(store, service.audit, service.notifications.settings)
+        settings = center.organization_settings(alice, ORG)
+        document = {t.type: t.organization.model_dump() for t in settings.types}
+        document["high_violation"]["email"] = True
+        center.update_organization(
+            alice,
+            ORG,
+            {
+                "expected_version": settings.version,
+                "types": document,
+                "email_recipients": ["security@octo-org.example"],
+            },
+        )
+        center.add_webhook(
+            alice, ORG, {"url": "https://hooks.octo-org.example/commitguard", "confirm": True}
+        )
+
+        # Organization policy v1 and v2.
+        policies = service.policies
+        actor = Actor.user(OWNER[0], OWNER[1])
+        now = self.dashboard._now()
+        policies.update(
+            account_id=ORG,
+            actor=actor,
+            authenticated_at=now,
+            expected_version=0,
+            floors={"ai_coauthor": Action.BLOCK},
+            reason="Organization rule: AI agents may assist but are never credited as authors",
+            confirm_weakening=False,
+        )
+
+        # Pull requests: blocked (#9), then #21 blocked, fixed, re-run, merge queue.
+        self.ai_commit()
+        service.process_pending()
+        blocked = self.phase7_commit()
+        service.process_pending()
+        fixed = self.phase7_fix()
+        service.process_pending()
+        self.rerun(fixed["head"])
+        service.process_pending()
+        self.merge_group()
+        service.process_pending()
+
+        # A GitHub outage while scanning a push: the check fails closed.
+        docs = self.repos[DOCS.id]
+        before = docs.head("main")
+        git(docs.dev, "checkout", "-q", "main")
+        after = docs.commit("docs(handbook): describe incident escalation\n")
+        git(docs.dev, "push", "-q", "origin", "main")
+        self.github.fail("GET", rf"/repositories/{DOCS.id}$", TransportError("connection reset"))
+        self.env.deliver("push", fake.push_payload(before, after, repository=DOCS))
+        service.process_pending()
+        self.github.failures.clear()
+
+        # A problematic policy is published and rolled back.
+        policies.update(
+            account_id=ORG,
+            actor=Actor.user(ADMIN[0], ADMIN[1]),
+            authenticated_at=self.dashboard._now(),
+            expected_version=1,
+            floors={"bot_identity": Action.BLOCK},
+            reason="Tighten bot identities",
+            confirm_weakening=True,
+        )
+        policies.rollback(
+            account_id=ORG,
+            actor=actor,
+            authenticated_at=self.dashboard._now(),
+            target_version=1,
+            expected_current_version=2,
+            reason="v2 dropped the AI co-author floor by mistake",
+            confirm=True,
+        )
+
+        # The installation is suspended and reconnected.
+        installation = self.github.installations[fake.INSTALLATION_ID]
+        repositories = (PROJECT, WEB, DOCS)
+
+        def lifecycle(action: str) -> None:
+            payload = fake.installation_payload(
+                action, fake.INSTALLATION_ID, repositories, account_id=ORG
+            )
+            payload["installation"]["permissions"] = dict(installation.permissions)
+            self.env.deliver("installation", payload)
+
+        installation.suspended = True
+        lifecycle("suspend")
+        installation.suspended = False
+        lifecycle("unsuspend")
+        service.notifications.run_once()
+        self.dashboard._auth.sign_out(alice)
+        print(f"demo: blocked {blocked['head'][:12]}, fixed {fixed['head'][:12]}", flush=True)
+
+    def demo_sign_in(
+        self, environ: WSGIEnvironment, start_response: StartResponse
+    ) -> Iterable[bytes]:
+        """Local stand-in for github.com: sign in as the requested demo user."""
+        from urllib.parse import parse_qs
+
+        query = parse_qs(str(environ.get("QUERY_STRING", "")))
+        users = {str(u[0]): u for u in (OWNER, VIEWER, SECURITY, ADMIN)}
+        user = users.get(query.get("user", [str(OWNER[0])])[0], OWNER)
+        token, return_to = self.sign_in(user[0], query.get("return_to", ["/dashboard"])[0])
+        start_response(
+            "302 Found",
+            [
+                ("Location", return_to),
+                set_cookie("__Host-commitguard_session", token, max_age=8 * 3600),
+                ("Content-Length", "0"),
+            ],
+        )
+        return [b""]
+
     # -- WSGI -------------------------------------------------------------- #
     def wsgi(self, environ: WSGIEnvironment, start_response: StartResponse) -> Iterable[bytes]:
         path = environ.get("PATH_INFO", "")
+        if self.demo_mode and path in ("/api/v1/auth/login", "/demo/sign-in"):
+            return self.demo_sign_in(environ, start_response)
         if not path.startswith("/__e2e/"):
             return self.app(environ, start_response)
         length = int(environ.get("CONTENT_LENGTH") or 0)
@@ -379,17 +557,35 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=4173)
     parser.add_argument("--static", type=Path, default=ROOT / "web" / "dist")
-    parser.add_argument("--seed", action="store_true", help="seed demo data at start-up")
+    parser.add_argument("--seed", action="store_true", help="seed test data at start-up")
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="replay the full lifecycle and enable local sign-in (development only)",
+    )
     args = parser.parse_args()
     static = args.static.resolve() if (args.static / "index.html").is_file() else None
-    stack = Stack(args.port, static)
-    if args.seed:
+    stack = Stack(args.port, static, demo=args.demo)
+    if args.demo:
+        stack.demo()
+    elif args.seed:
         stack.seed()
     stack.service.start()
     server = make_server(
         "127.0.0.1", args.port, stack.wsgi, server_class=_Server, handler_class=_Quiet
     )
     print(f"CommitGuard e2e stack on {stack.origin} (data: {stack.tmp})", flush=True)
+    if args.demo:
+        for user, role in (
+            (OWNER, "owner"),
+            (ADMIN, "admin"),
+            (SECURITY, "security manager"),
+            (VIEWER, "viewer"),
+        ):
+            print(
+                f"  sign in as {user[1]} ({role}): {stack.origin}/demo/sign-in?user={user[0]}",
+                flush=True,
+            )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

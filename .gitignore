@@ -39,5 +39,6 @@ dist/
 
 # Dashboard (web/)
 web/test-results/
+web/test-results-screenshots/
 web/playwright-report/
 web/node_modules/.tmp/

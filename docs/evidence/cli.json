@@ -1,0 +1,34 @@
+{
+  "version": "commitguard 0.1.0.dev0",
+  "sessions": [
+    {
+      "cwd": "~/northwind-api",
+      "steps": [
+        {
+          "command": "git commit -m \"feat: add session refresh\" -m \"Co-authored-by: Claude <noreply@anthropic.com>\"",
+          "exit": 1,
+          "output": "CommitGuard\n\u2717 COMMIT BLOCKED (commit-msg)\n\n  AI coauthor detected [ai_coauthor, high]\n  Evidence: Claude <noreply@anthropic.com> (Co-authored-by trailer, line 3)\n  Action: block\n\nNothing was committed. Your staged changes are unchanged.\nRemove the attribution from the message and commit again.\nYour message is still in .git/COMMIT_EDITMSG; to reuse it: git commit -e -F .git/COMMIT_EDITMSG"
+        }
+      ],
+      "id": "commit-blocked",
+      "title": "Local hook blocks the commit"
+    },
+    {
+      "cwd": "~/northwind-api",
+      "steps": [
+        {
+          "command": "commitguard check HEAD~1..HEAD",
+          "exit": 1,
+          "output": "BLOCK\t7a70d93\tcoauthor\tai_coauthor\tClaude <noreply@anthropic.com>\nresult=BLOCK commits=1 block=1 warn=0 allow=0"
+        },
+        {
+          "command": "commitguard scan HEAD~1..HEAD",
+          "exit": 1,
+          "output": "CommitGuard\nRepository: ~/northwind-api\nTarget:     HEAD~1..HEAD (1 commit)\nConfig:     builtin < repository: ~/northwind-api/.commitguard.yaml\n\n\u2717 BLOCKED: policy violation detected\n\nAI coauthor detected\n  Commit:      7a70d93\n  Detector:    coauthor\n  Rule:        ai_coauthor\n  Severity:    high\n  Confidence:  high\n  Action:      block (policy ai_coauthor)\n  Message:     A co-author trailer names an identity associated with the AI agent Claude.\n  Evidence:    Claude <noreply@anthropic.com>\n  Source:      Co-authored-by trailer, line 3\n  Matched:     name \"claude\" (ai-identities.yaml#claude)\n               email \"noreply@anthropic.com\" (ai-identities.yaml#claude)\n               automation_email \"noreply@anthropic.com\" (ai-domains.yaml#anthropic.com)\n  Remediation: Remove the AI co-author attribution from the commit message before pushing (for example with `git commit --amend`). CommitGuard never rewrites commits itself.\n\nSummary: 1 commit(s), 1 blocking, 0 warning(s), 0 allowed finding(s)\nResult: BLOCK"
+        }
+      ],
+      "id": "scan-blocked",
+      "title": "The same engine scans a range, as CI does"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-09-15T17:33:03+00:00",
+  "commit": "1bcb40c+local changes",
+  "python": "3.13.15",
+  "platform": "linux",
+  "suites": [
+    {
+      "name": "pytest",
+      "label": "Python unit + integration",
+      "ok": true,
+      "passed": 1143,
+      "failed": 0,
+      "skipped": 1,
+      "seconds": 228.8,
+      "summary": "1143 passed, 1 skipped in 227.85s (0:03:47)"
+    },
+    {
+      "name": "vitest",
+      "label": "Dashboard components",
+      "ok": true,
+      "passed": 72,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 21.4,
+      "summary": "72 passed (21 suites)"
+    },
+    {
+      "name": "playwright",
+      "label": "Browser end-to-end + axe",
+      "ok": true,
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 183.1,
+      "summary": "16 passed against the full stack"
+    }
+  ],
+  "checks": [
+    {
+      "name": "ruff",
+      "label": "ruff lint",
+      "ok": true,
+      "seconds": 0.0,
+      "summary": "All checks passed!"
+    },
+    {
+      "name": "mypy",
+      "label": "mypy --strict",
+      "ok": true,
+      "seconds": 0.7,
+      "summary": "Success: no issues found in 152 source files"
+    },
+    {
+      "name": "tsc",
+      "label": "TypeScript",
+      "ok": false,
+      "seconds": 13.6,
+      "summary": "- Use yarn to avoid accidentally running code from un-installed packages"
+    },
+    {
+      "name": "eslint",
+      "label": "ESLint",
+      "ok": true,
+      "seconds": 12.3,
+      "summary": "no errors"
+    }
+  ]
+}
