@@ -387,17 +387,25 @@ def serve_command(
     host: Annotated[str, typer.Option("--host", help="Bind address.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", min=1, max=65535)] = 8080,
 ) -> None:
-    """Run the GitHub App webhook service (put TLS in front of it)."""
+    """Run the GitHub App service: webhooks, and the dashboard when configured.
+
+    Put a TLS-terminating reverse proxy in front of it.
+    """
     with handled_errors():
         _app_modules_available()
-        from commitguard.github.app import GitHubAppService, create_wsgi_app
+        from commitguard.api.hosting import build_dashboard, create_server_app
+        from commitguard.api.settings import dashboard_enabled, load_dashboard_settings
+        from commitguard.github.app import GitHubAppService
         from commitguard.github.server import serve
 
         configure_json_logging()
         service = GitHubAppService.from_settings(load_settings())
+        dashboard = (
+            build_dashboard(service, load_dashboard_settings()) if dashboard_enabled() else None
+        )
     service.start()
     try:
-        serve(create_wsgi_app(service), host=host, port=port)
+        serve(create_server_app(service, dashboard), host=host, port=port)
     except KeyboardInterrupt:
         pass
     finally:

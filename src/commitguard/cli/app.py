@@ -5,7 +5,18 @@ from typing import Annotated
 import typer
 
 from commitguard import __version__
-from commitguard.cli.commands import check, ci, doctor, github, hook, init, install, policy, scan
+from commitguard.cli.commands import (
+    check,
+    ci,
+    dashboard,
+    doctor,
+    github,
+    hook,
+    init,
+    install,
+    policy,
+    scan,
+)
 
 app = typer.Typer(
     name="commitguard",
@@ -49,6 +60,7 @@ app.add_typer(policy.policy_app, name="policy")
 app.add_typer(hook.hook_app, name="hook")
 app.add_typer(ci.ci_app, name="ci")
 app.add_typer(github.github_app, name="github")
+app.add_typer(dashboard.dashboard_app, name="dashboard")
 
 
 def main() -> None:
