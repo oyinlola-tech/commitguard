@@ -26,7 +26,7 @@ def blocked(dash, ops, hub):  # type: ignore[no-untyped-def]
     # Git refuses angle brackets in author names; commit messages carry anything.
     head = hub.dev.commit(
         f"feat: x\n\nCo-authored-by: Claude {XSS} <noreply@anthropic.com>\n",
-        author="Mallory \"onmouseover=alert(1) <attacker@example.com>",
+        author='Mallory "onmouseover=alert(1) <attacker@example.com>',
     )
     hub.dev.push("feature")
     ops.pull_request(base, head)
@@ -42,7 +42,9 @@ def test_writes_require_origin_and_csrf_token(dash) -> None:  # type: ignore[no-
     path = f"/api/v1/policies/{ORG}"
     cases = {
         "no token": ada.request("PUT", path, body=body, send_csrf=False),
-        "wrong token": ada.request("PUT", path, body=body, headers={"X-CSRF-Token": "0" * 64}, send_csrf=False),
+        "wrong token": ada.request(
+            "PUT", path, body=body, headers={"X-CSRF-Token": "0" * 64}, send_csrf=False
+        ),
         "foreign origin": ada.request("PUT", path, body=body, origin="https://evil.example"),
         "no origin": ada.request("PUT", path, body=body, origin=None),
         "null origin": ada.request("PUT", path, body=body, origin="null"),
@@ -73,7 +75,9 @@ def test_csrf_token_is_bound_to_the_session(dash) -> None:  # type: ignore[no-un
 def test_cors_uses_an_explicit_allow_list(make_dashboard) -> None:  # type: ignore[no-untyped-def]
     dash = make_dashboard(allowed_origins=("https://admin.commitguard.test",))
     alice = dash.sign_in(ALICE)
-    allowed = alice.request("GET", "/api/v1/rules", headers={"Origin": "https://admin.commitguard.test"})
+    allowed = alice.request(
+        "GET", "/api/v1/rules", headers={"Origin": "https://admin.commitguard.test"}
+    )
     assert allowed.header("Access-Control-Allow-Origin") == "https://admin.commitguard.test"
     assert allowed.header("Access-Control-Allow-Credentials") == "true"
     other = alice.request("GET", "/api/v1/rules", headers={"Origin": "https://evil.example"})
@@ -113,7 +117,13 @@ def test_wildcard_origins_are_refused_in_configuration() -> None:
     with pytest.raises(AppConfigurationError):
         load_dashboard_settings(env)
     with pytest.raises(AppConfigurationError):
-        load_dashboard_settings({**env, "COMMITGUARD_DASHBOARD_ALLOWED_ORIGINS": "", "COMMITGUARD_DASHBOARD_URL": "http://commitguard.example"})
+        load_dashboard_settings(
+            {
+                **env,
+                "COMMITGUARD_DASHBOARD_ALLOWED_ORIGINS": "",
+                "COMMITGUARD_DASHBOARD_URL": "http://commitguard.example",
+            }
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -150,7 +160,11 @@ INJECTIONS = [
     ("/api/v1/scans", {"result": "blocked OR 1"}, 400),
     ("/api/v1/audit", {"type": "x' OR 1=1"}, 400),
     ("/api/v1/audit", {"from": "2026-01-01' OR '1'='1"}, 400),
-    ("/api/v1/scans", {"cursor": base64.urlsafe_b64encode(b'["1 OR 1=1"]').decode().rstrip("=")}, 400),
+    (
+        "/api/v1/scans",
+        {"cursor": base64.urlsafe_b64encode(b'["1 OR 1=1"]').decode().rstrip("=")},
+        400,
+    ),
     ("/api/v1/violations", {"cursor": "../../etc/passwd"}, 400),
     ("/api/v1/scans", {"limit": "1000"}, 400),
     ("/api/v1/scans", {"limit": "-1"}, 400),
@@ -200,7 +214,9 @@ def test_request_parsing_limits(dash) -> None:  # type: ignore[no-untyped-def]
     ada = dash.sign_in(ADA)
     path = f"/api/v1/policies/{ORG}"
     assert ada.request("PUT", path, raw_body=b"{not json").status == 400
-    duplicate = ada.request("PUT", path, raw_body=b'{"expected_version":0,"expected_version":1,"floors":{}}')
+    duplicate = ada.request(
+        "PUT", path, raw_body=b'{"expected_version":0,"expected_version":1,"floors":{}}'
+    )
     assert duplicate.status == 400
     deep = b'{"floors":' + b'{"a":' * 40 + b"1" + b"}" * 40 + b"}"
     assert ada.request("PUT", path, raw_body=deep).status == 400
@@ -292,10 +308,9 @@ def test_rate_limits(dash) -> None:  # type: ignore[no-untyped-def]
     anonymous = dash.anonymous()
     statuses = [anonymous.get("/api/v1/auth/login").status for _ in range(19)]
     # 20 sign-in requests per minute per address; Ada's login and callback used two.
-    assert statuses[:18] == [302] * 18 and statuses[18] == 429
-    writes = [
-        ada.post(f"/api/v1/policies/{ORG}/preview", {"floors": {}}).status for _ in range(3)
-    ]
+    assert statuses[:18] == [302] * 18
+    assert statuses[18] == 429
+    writes = [ada.post(f"/api/v1/policies/{ORG}/preview", {"floors": {}}).status for _ in range(3)]
     assert writes == [200, 200, 200]
     github_calls = [ada.post("/api/v1/github/installations/42/sync").status for _ in range(11)]
     assert github_calls[:10] == [200] * 10
@@ -387,15 +402,19 @@ def _serve(site, path, method="GET"):  # type: ignore[no-untyped-def]
 def test_static_site_path_traversal(site, path) -> None:  # type: ignore[no-untyped-def]
     status, _, body = _serve(site, path)
     assert status == 404 or b"CommitGuard" in body
-    assert b"do not serve" not in body and b"SECRET" not in body
+    assert b"do not serve" not in body
+    assert b"SECRET" not in body
     assert b"root:" not in body
 
 
 def test_static_site_routes_and_headers(site) -> None:  # type: ignore[no-untyped-def]
     status, headers, body = _serve(site, "/violations/0123")
-    assert status == 200 and b"CommitGuard" in body  # deep links load the application
+    assert status == 200
+    assert b"CommitGuard" in body
     csp = headers["Content-Security-Policy"]
-    assert "script-src 'self'" in csp and "unsafe-inline" not in csp and "unsafe-eval" not in csp
+    assert "script-src 'self'" in csp
+    assert "unsafe-inline" not in csp
+    assert "unsafe-eval" not in csp
     assert "frame-ancestors 'none'" in csp
     assert headers["Cache-Control"] == "no-cache"
     status, headers, _ = _serve(site, "/assets/app-1234.js")

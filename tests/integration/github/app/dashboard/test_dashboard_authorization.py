@@ -1,5 +1,7 @@
 """Authentication, authorization, tenant isolation and IDOR protection."""
 
+import itertools
+
 import pytest
 
 from commitguard.controlplane.access import ROLE_PERMISSIONS, Permission, Role
@@ -148,7 +150,8 @@ def test_sign_in_flow_is_bound_to_the_browser(dash) -> None:  # type: ignore[no-
         ALICE[0], victim.get("/api/v1/auth/login").header("Location") or ""
     )
     done = victim.get("/api/v1/auth/callback", code=victim_code, state=victim_state)
-    assert done.status == 302 and done.header("Location") == "/dashboard"
+    assert done.status == 302
+    assert done.header("Location") == "/dashboard"
     session_cookie = next(c for c in done.all("Set-Cookie") if "commitguard_session=" in c)
     assert all(flag in session_cookie for flag in ("HttpOnly", "Secure", "SameSite=Lax", "Path=/"))
     replayed = dash.anonymous()
@@ -159,7 +162,13 @@ def test_sign_in_flow_is_bound_to_the_browser(dash) -> None:  # type: ignore[no-
 
 @pytest.mark.parametrize(
     "return_to",
-    ["//evil.example/x", "https://evil.example", "/\\evil.example", "/api/v1/auth/logout", "javascript:alert(1)"],
+    [
+        "//evil.example/x",
+        "https://evil.example",
+        "/\\evil.example",
+        "/api/v1/auth/logout",
+        "javascript:alert(1)",
+    ],
 )
 def test_sign_in_never_redirects_off_site(dash, return_to) -> None:  # type: ignore[no-untyped-def]
     dash.github.add_user(*ALICE, {INSTALLATION_A: {REPO_A}})
@@ -189,7 +198,7 @@ def test_github_user_token_is_never_stored_or_returned(dash) -> None:  # type: i
 # --------------------------------------------------------------------------- #
 def test_roles_have_practical_differences() -> None:
     ranks = list(Role)
-    for lower, higher in zip(ranks, ranks[1:], strict=False):
+    for lower, higher in itertools.pairwise(ranks):
         assert ROLE_PERMISSIONS[lower] < ROLE_PERMISSIONS[higher]
     assert Permission.AUDIT_READ not in ROLE_PERMISSIONS[Role.VIEWER]
     assert Permission.POLICIES_WRITE not in ROLE_PERMISSIONS[Role.SECURITY_MANAGER]
@@ -202,8 +211,7 @@ def test_every_permission_is_checked_somewhere() -> None:
     import commitguard
 
     source = "\n".join(
-        p.read_text()
-        for p in Path(commitguard.__file__).parent.joinpath("api").glob("*.py")
+        p.read_text() for p in Path(commitguard.__file__).parent.joinpath("api").glob("*.py")
     ) + "\n".join(
         p.read_text()
         for p in Path(commitguard.__file__).parent.joinpath("controlplane").glob("*.py")
@@ -234,10 +242,16 @@ def test_viewer_reads_but_cannot_change_anything(dash, tenants) -> None:  # type
     policy = victor.get(f"/api/v1/policies/{ORG_A}").data
     assert policy["can_write"] is False
     denied = [
-        victor.put(f"/api/v1/policies/{ORG_A}", {"expected_version": 0, "floors": {"bot_identity": "block"}}),
+        victor.put(
+            f"/api/v1/policies/{ORG_A}",
+            {"expected_version": 0, "floors": {"bot_identity": "block"}},
+        ),
         victor.put(f"/api/v1/violations/{tenants['a']['violation']}/acknowledgement", {}),
         victor.post(f"/api/v1/scans/{tenants['a']['scan']}/rescan"),
-        victor.put(f"/api/v1/repositories/{REPO_A}/monitoring", {"enabled": False, "confirm": True, "reason": "x"}),
+        victor.put(
+            f"/api/v1/repositories/{REPO_A}/monitoring",
+            {"enabled": False, "confirm": True, "reason": "x"},
+        ),
         victor.post(f"/api/v1/repositories/{REPO_A}/enforcement/refresh"),
         victor.post(f"/api/v1/github/installations/{INSTALLATION_A}/sync"),
         victor.put(f"/api/v1/organizations/{ORG_A}/members/999", {"role": "owner"}),
@@ -269,11 +283,17 @@ def test_admin_changes_policy_and_it_is_audited(dash) -> None:  # type: ignore[n
 
 def test_security_manager_triage_but_not_policy(dash, tenants) -> None:  # type: ignore[no-untyped-def]
     sam = dash.sign_in(SAM)
-    assert sam.put(f"/api/v1/violations/{tenants['a']['violation']}/acknowledgement", {}).status == 200
+    assert (
+        sam.put(f"/api/v1/violations/{tenants['a']['violation']}/acknowledgement", {}).status == 200
+    )
     assert sam.get("/api/v1/audit").status == 200
-    assert sam.put(
-        f"/api/v1/policies/{ORG_A}", {"expected_version": 0, "floors": {"bot_identity": "block"}}
-    ).status == 403
+    assert (
+        sam.put(
+            f"/api/v1/policies/{ORG_A}",
+            {"expected_version": 0, "floors": {"bot_identity": "block"}},
+        ).status
+        == 403
+    )
 
 
 def test_role_changes_apply_to_the_next_request(dash) -> None:  # type: ignore[no-untyped-def]
@@ -289,11 +309,17 @@ def test_role_changes_apply_to_the_next_request(dash) -> None:  # type: ignore[n
 
 def test_owner_rules_for_members(dash) -> None:  # type: ignore[no-untyped-def]
     alice = dash.sign_in(ALICE)
-    assert alice.put(f"/api/v1/organizations/{ORG_A}/members/{ALICE[0]}", {"role": "viewer"}).status == 403
+    assert (
+        alice.put(f"/api/v1/organizations/{ORG_A}/members/{ALICE[0]}", {"role": "viewer"}).status
+        == 403
+    )
     promoted = alice.put(f"/api/v1/organizations/{ORG_A}/members/{ADA[0]}", {"role": "owner"})
     assert promoted.status == 200, promoted.raw
     ada = dash.sign_in(ADA)
-    assert ada.put(f"/api/v1/organizations/{ORG_A}/members/{ALICE[0]}", {"role": "viewer"}).status == 200
+    assert (
+        ada.put(f"/api/v1/organizations/{ORG_A}/members/{ALICE[0]}", {"role": "viewer"}).status
+        == 200
+    )
     # The last owner cannot be removed.
     last = alice.delete(f"/api/v1/organizations/{ORG_A}/members/{ADA[0]}")
     assert last.status in (403, 404)  # alice is no longer an owner
@@ -308,8 +334,16 @@ def test_owner_rules_for_members(dash) -> None:  # type: ignore[no-untyped-def]
 def test_tenants_cannot_read_each_other(dash, tenants) -> None:  # type: ignore[no-untyped-def]
     alice, bob = dash.sign_in(ALICE), dash.sign_in(BOB)
     for browser, own, foreign in (
-        (alice, (tenants["a"], REPO_A, INSTALLATION_A, ORG_A), (tenants["b"], REPO_B, INSTALLATION_B, ORG_B)),
-        (bob, (tenants["b"], REPO_B, INSTALLATION_B, ORG_B), (tenants["a"], REPO_A, INSTALLATION_A, ORG_A)),
+        (
+            alice,
+            (tenants["a"], REPO_A, INSTALLATION_A, ORG_A),
+            (tenants["b"], REPO_B, INSTALLATION_B, ORG_B),
+        ),
+        (
+            bob,
+            (tenants["b"], REPO_B, INSTALLATION_B, ORG_B),
+            (tenants["a"], REPO_A, INSTALLATION_A, ORG_A),
+        ),
     ):
         for path in _reads(*own):
             assert browser.get(path).status == 200, path
@@ -350,7 +384,8 @@ def test_idor_on_every_write_is_rejected(dash, tenants) -> None:  # type: ignore
         "unacknowledge": bob.delete(f"/api/v1/violations/{a['violation']}/acknowledgement"),
         "rescan": bob.post(f"/api/v1/scans/{a['scan']}/rescan"),
         "monitoring": bob.put(
-            f"/api/v1/repositories/{REPO_A}/monitoring", {"enabled": False, "confirm": True, "reason": "x"}
+            f"/api/v1/repositories/{REPO_A}/monitoring",
+            {"enabled": False, "confirm": True, "reason": "x"},
         ),
         "refresh": bob.post(f"/api/v1/repositories/{REPO_A}/enforcement/refresh"),
         "sync": bob.post(f"/api/v1/github/installations/{INSTALLATION_A}/sync"),

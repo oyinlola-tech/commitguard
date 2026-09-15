@@ -92,9 +92,15 @@ def test_sorting(seeded) -> None:  # type: ignore[no-untyped-def]
     oldest = browser.get("/api/v1/scans", limit=100, sort="oldest").data
     assert [s["created_at"] for s in oldest] == sorted(s["created_at"] for s in oldest)
     ranks = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
-    severity = [ranks[v["severity"]] for v in browser.get("/api/v1/violations", limit=100, sort="severity").data]
+    severity = [
+        ranks[v["severity"]]
+        for v in browser.get("/api/v1/violations", limit=100, sort="severity").data
+    ]
     assert severity == sorted(severity, reverse=True)
-    names = [v["repository"]["full_name"] for v in browser.get("/api/v1/violations", limit=100, sort="repository").data]
+    names = [
+        v["repository"]["full_name"]
+        for v in browser.get("/api/v1/violations", limit=100, sort="repository").data
+    ]
     assert names == sorted(names)
     repositories = [r["full_name"] for r in browser.get("/api/v1/repositories", limit=100).data]
     assert repositories == sorted(repositories, key=str.lower)
@@ -103,22 +109,29 @@ def test_sorting(seeded) -> None:  # type: ignore[no-untyped-def]
 def test_filters_are_applied_on_the_server(seeded) -> None:  # type: ignore[no-untyped-def]
     browser, dataset = seeded
     blocked = browser.get("/api/v1/scans", result="blocked", limit=100).data
-    assert blocked and {s["result"] for s in blocked} == {"blocked"}
+    assert blocked
+    assert {s["result"] for s in blocked} == {"blocked"}
     errors = browser.get("/api/v1/scans", result="error", limit=100).data
-    assert errors and {s["result"] for s in errors} == {"error"}
+    assert errors
+    assert {s["result"] for s in errors} == {"error"}
     repository = dataset.repositories[3]
     in_repository = browser.get("/api/v1/scans", repository=repository.id, limit=100).data
-    assert in_repository and {s["repository"]["id"] for s in in_repository} == {repository.id}
+    assert in_repository
+    assert {s["repository"]["id"] for s in in_repository} == {repository.id}
     critical = browser.get("/api/v1/violations", severity="critical", status="open", limit=100).data
-    assert critical and {(v["severity"], v["status"]) for v in critical} == {("critical", "open")}
+    assert critical
+    assert {(v["severity"], v["status"]) for v in critical} == {("critical", "open")}
     resolved = browser.get("/api/v1/violations", status="resolved", limit=100).data
-    assert resolved and {v["status"] for v in resolved} == {"resolved"}
+    assert resolved
+    assert {v["status"] for v in resolved} == {"resolved"}
     by_name = browser.get("/api/v1/repositories", q="service-00", limit=100).data
     assert {r["name"] for r in by_name} == {f"service-00{i}" for i in range(10)}
     by_sha = browser.get("/api/v1/violations", q="0" * 39 + "5").data
     assert [v["commit_sha"] for v in by_sha] == ["0" * 39 + "5"]
     window = browser.get(
-        "/api/v1/scans", **{"from": "2026-09-01T10:00:00+00:00", "to": "2026-09-01T11:00:00Z"}, limit=100
+        "/api/v1/scans",
+        **{"from": "2026-09-01T10:00:00+00:00", "to": "2026-09-01T11:00:00Z"},
+        limit=100,
     ).data
     assert len(window) == 60
     events = browser.get("/api/v1/audit", type="scan_queued", limit=100).data

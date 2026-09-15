@@ -81,15 +81,18 @@ def test_default_orderings_use_indexes(large, dash) -> None:  # type: ignore[no-
         return " | ".join(r["detail"] for r in rows)
 
     audit = plan(
-        "SELECT rowid FROM audit_events a WHERE a.account_id = ? ORDER BY a.occurred_at DESC LIMIT 26",
+        "SELECT rowid FROM audit_events a WHERE a.account_id = ? "
+        "ORDER BY a.occurred_at DESC LIMIT 26",
         (1001,),
     )
-    assert "audit_account" in audit and "TEMP B-TREE" not in audit
+    assert "audit_account" in audit
+    assert "TEMP B-TREE" not in audit
     violations = plan(
         "SELECT violation_id FROM violations v WHERE v.installation_id = ? "
         "ORDER BY v.last_detected_at DESC LIMIT 26",
         (42,),
     )
-    assert "violations_detected" in violations and "TEMP B-TREE" not in violations
+    assert "violations_detected" in violations
+    assert "TEMP B-TREE" not in violations
     findings = plan("SELECT * FROM findings WHERE job_id = ?", ("0" * 32,))
     assert "findings_job" in findings

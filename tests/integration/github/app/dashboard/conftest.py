@@ -103,8 +103,10 @@ class Browser:
         origin: str | None = ORIGIN,
         send_csrf: bool = True,
     ) -> ApiResult:
-        payload = raw_body if raw_body is not None else (
-            json.dumps(body).encode() if body is not None else b""
+        payload = (
+            raw_body
+            if raw_body is not None
+            else (json.dumps(body).encode() if body is not None else b"")
         )
         environ: dict[str, Any] = {
             "REQUEST_METHOD": method,
@@ -213,9 +215,7 @@ def _second_remote(hub: Any) -> Path:
     """A second bare repository for the globex tenant, seeded from the octo-org one."""
     bare = hub.tmp / "globex.git"
     if not bare.exists():
-        subprocess.run(
-            ["git", "clone", "--quiet", "--bare", str(hub.bare), str(bare)], check=True
-        )
+        subprocess.run(["git", "clone", "--quiet", "--bare", str(hub.bare), str(bare)], check=True)
         for key in ("uploadpack.allowFilter", "uploadpack.allowAnySHA1InWant"):
             subprocess.run(["git", "-C", str(bare), "config", key, "true"], check=True)
     return bare
@@ -236,9 +236,7 @@ def make_dashboard(make_app, clock, payloads) -> Callable[..., DashboardEnv]:  #
     ) -> DashboardEnv:
         app = make_app(now=clock, **options)
         assert app.install().status == 200  # octo-org: installation 42, repository 5001
-        app.github.add_installation(
-            INSTALLATION_B, (REPO_B,), login="globex", account_id=ORG_B
-        )
+        app.github.add_installation(INSTALLATION_B, (REPO_B,), login="globex", account_id=ORG_B)
         app.github.default_branches[REPO_B.id] = "main"
         app.remotes.paths[REPO_B.id] = _second_remote(app.hub)
         created = app.deliver(
@@ -447,7 +445,8 @@ def _seed(
         )
         db.executemany(
             "INSERT INTO violations (violation_id, installation_id, repository_id, fingerprint, "
-            "rule_id, detector, severity, severity_rank, action, title, commit_sha, author, status, "
+            "rule_id, detector, severity, severity_rank, action, title, commit_sha, author, "
+            "status, "
             "first_detected_at, last_detected_at, first_job_id, last_job_id, detections, "
             "updated_at) VALUES (?, ?, ?, ?, 'ai_coauthor', 'coauthor', ?, ?, 'block', "
             "'AI coauthor detected', ?, 'Dev <dev@example.com>', ?, ?, ?, ?, ?, 5, ?)",

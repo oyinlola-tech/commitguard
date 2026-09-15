@@ -62,7 +62,8 @@ def test_rules_views_are_bundled_and_not_editable() -> None:
     assert [r.id for r in rules] == [e.rule_id for e in CATALOG]
     assert {(r.source, r.trusted, r.status) for r in rules} == {("bundled", True, "active")}
     detail = rule_detail("ai_coauthor")
-    assert detail is not None and detail.editable is False
+    assert detail is not None
+    assert detail.editable is False
     assert detail.remediation[-1].startswith("CommitGuard does not rewrite Git history")
     assert all(f.entries > 0 for f in detail.data_files)
     assert rule_detail("unknown") is None
@@ -80,7 +81,9 @@ def test_phase5_database_is_upgraded_in_place(tmp_path) -> None:  # type: ignore
         "INSERT INTO installations VALUES (42, 1001, 'octo-org', 'Organization', 'selected', "
         "'active', '{}', 1.0, 1.0)"
     )
-    db.execute("INSERT INTO installation_repositories VALUES (42, 5001, 'octo-org', 'project', 1.0)")
+    db.execute(
+        "INSERT INTO installation_repositories VALUES (42, 5001, 'octo-org', 'project', 1.0)"
+    )
     event = AuditEvent(type=AuditEventType.SCAN_PASSED, occurred_at=NOW, installation_id=42)
     db.execute(
         "INSERT INTO audit_events VALUES (?, ?, ?, 42, NULL, ?)",
@@ -127,7 +130,13 @@ def test_limits_and_cursors() -> None:
     cursor = encode_cursor([12.5, "abc"])
     assert decode_cursor(cursor, (float, str)) == [12.5, "abc"]
     assert decode_cursor(encode_cursor([3, 4]), (float, int)) == [3, 4]
-    for bad in ("!!!", encode_cursor(["x"]), encode_cursor([True]), "A" * 600, encode_cursor([1, 2])):
+    for bad in (
+        "!!!",
+        encode_cursor(["x"]),
+        encode_cursor([True]),
+        "A" * 600,
+        encode_cursor([1, 2]),
+    ):
         with pytest.raises(InputValidationError):
             decode_cursor(bad, (int,))
     assert offset_cursor(None) == 0
@@ -215,9 +224,18 @@ def test_protection_needs_evidence() -> None:
     assert status(branch_protection="required") is ProtectionStatus.PROTECTED
     assert status(branch_protection="not_required") is ProtectionStatus.UNPROTECTED
     assert status(branch_protection="unknown") is ProtectionStatus.UNKNOWN
-    assert status(branch_protection="required", monitoring_enabled=False) is ProtectionStatus.UNPROTECTED
-    assert status(branch_protection="required", app=AppConnection.SUSPENDED) is ProtectionStatus.UNPROTECTED
-    assert status(branch_protection="required", app=AppConnection.DISCONNECTED) is ProtectionStatus.UNPROTECTED
+    assert (
+        status(branch_protection="required", monitoring_enabled=False)
+        is ProtectionStatus.UNPROTECTED
+    )
+    assert (
+        status(branch_protection="required", app=AppConnection.SUSPENDED)
+        is ProtectionStatus.UNPROTECTED
+    )
+    assert (
+        status(branch_protection="required", app=AppConnection.DISCONNECTED)
+        is ProtectionStatus.UNPROTECTED
+    )
     assert (
         status(branch_protection="required", latest_failure_kind="configuration")
         is ProtectionStatus.CONFIGURATION_ERROR
@@ -244,13 +262,13 @@ def test_policy_changes_classify_weakening() -> None:
 
 def test_mandatory_floors_combine_with_the_service_policy(tmp_path) -> None:  # type: ignore[no-untyped-def]
     from commitguard.audit.models import Actor
+    from commitguard.config.schema import CommitGuardConfig, PolicyOverride
     from commitguard.config.sources import load_mandatory_policy
     from commitguard.controlplane.policies import OrganizationPolicyService
-    from commitguard.policies.loader import build_policy_set
-    from commitguard.policies.mandatory import apply_mandatory_policies
-    from commitguard.config.schema import CommitGuardConfig, PolicyOverride
     from commitguard.github.identifiers import AccountType
     from commitguard.github.storage import InstallationRecord, InstallationState
+    from commitguard.policies.loader import build_policy_set
+    from commitguard.policies.mandatory import apply_mandatory_policies
     from commitguard.services.audit import AuditService
 
     service_file = tmp_path / "mandatory.yaml"
@@ -269,10 +287,14 @@ def test_mandatory_floors_combine_with_the_service_policy(tmp_path) -> None:  # 
         )
     )
     service = OrganizationPolicyService(
-        store, AuditService([store]), service_policy=load_mandatory_policy(service_file), now=lambda: NOW
+        store,
+        AuditService([store]),
+        service_policy=load_mandatory_policy(service_file),
+        now=lambda: NOW,
     )
     mandatory, version = service.mandatory_for_installation(42)
-    assert version is None and mandatory is not None
+    assert version is None
+    assert mandatory is not None
     service.update(
         account_id=1001,
         actor=Actor.user(1, "alice"),
@@ -283,17 +305,25 @@ def test_mandatory_floors_combine_with_the_service_policy(tmp_path) -> None:  # 
         confirm_weakening=False,
     )
     mandatory, version = service.mandatory_for_installation(42)
-    assert version == 1 and mandatory is not None
+    assert version == 1
+    assert mandatory is not None
     assert "organization policy v1" in mandatory.description
     repository = CommitGuardConfig(
         version=1,
-        policies={"ai_coauthor": PolicyOverride(enabled=False), "bot_identity": PolicyOverride(action=Action.ALLOW)},
+        policies={
+            "ai_coauthor": PolicyOverride(enabled=False),
+            "bot_identity": PolicyOverride(action=Action.ALLOW),
+        },
     )
     effective = apply_mandatory_policies(build_policy_set(repository), mandatory.config)
-    assert (effective["ai_coauthor"].enabled, effective["ai_coauthor"].action) == (True, Action.BLOCK)
+    assert (effective["ai_coauthor"].enabled, effective["ai_coauthor"].action) == (
+        True,
+        Action.BLOCK,
+    )
     assert effective["bot_identity"].action is Action.WARN
     unknown, unknown_version = service.mandatory_for_installation(999)
-    assert unknown_version is None and unknown is not None
+    assert unknown_version is None
+    assert unknown is not None
     assert unknown.description == "service policy mandatory.yaml"
     assert set(unknown.config.policies) == {"ai_coauthor"}
 
@@ -318,7 +348,11 @@ def test_dashboard_settings(tmp_path) -> None:  # type: ignore[no-untyped-def]
     from_file = {**BASE_ENV, "COMMITGUARD_GITHUB_CLIENT_SECRET_FILE": str(secret_file)}
     del from_file["COMMITGUARD_GITHUB_CLIENT_SECRET"]
     assert load_dashboard_settings(from_file).client_secret.reveal() == "f" * 40
-    local = {**BASE_ENV, "COMMITGUARD_DASHBOARD_URL": "http://localhost:5173", "COMMITGUARD_ENV": "development"}
+    local = {
+        **BASE_ENV,
+        "COMMITGUARD_DASHBOARD_URL": "http://localhost:5173",
+        "COMMITGUARD_ENV": "development",
+    }
     assert load_dashboard_settings(local).origin == "http://localhost:5173"
 
 

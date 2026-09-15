@@ -27,9 +27,9 @@ import tempfile
 import threading
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from socketserver import ThreadingMixIn
 from typing import Any
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
-from socketserver import ThreadingMixIn
 from wsgiref.types import StartResponse, WSGIEnvironment
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
 
+import commitguard.api.app as dashboard_app  # noqa: E402
 from commitguard.api.hosting import build_dashboard, create_server_app  # noqa: E402
 from commitguard.api.settings import DashboardSettings, Environment  # noqa: E402
 from commitguard.audit.models import Actor, ActorType  # noqa: E402
@@ -50,7 +51,8 @@ from commitguard.security.secrets import Secret  # noqa: E402
 
 def _load(name: str, path: Path) -> Any:
     spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
+    assert spec
+    assert spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
@@ -88,16 +90,25 @@ class Repo:
     def __init__(self, base: Path, name: str) -> None:
         self.bare = base / f"{name}.git"
         self.dev = base / f"{name}-dev"
-        subprocess.run(["git", "init", "-q", "--bare", "--initial-branch=main", str(self.bare)], check=True)
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "--initial-branch=main", str(self.bare)], check=True
+        )
         for key in ("uploadpack.allowFilter", "uploadpack.allowAnySHA1InWant"):
             subprocess.run(["git", "-C", str(self.bare), "config", key, "true"], check=True)
-        subprocess.run(["git", "clone", "-q", str(self.bare), str(self.dev)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.bare), str(self.dev)], check=True, capture_output=True
+        )
         git(self.dev, "config", "commit.gpgsign", "false")
         git(self.dev, "checkout", "-q", "-B", "main")
-        self.commit("chore: initial import\n", {".commitguard.yaml": BLOCK_CONFIG, "README.md": "# service\n"})
+        self.commit(
+            "chore: initial import\n",
+            {".commitguard.yaml": BLOCK_CONFIG, "README.md": "# service\n"},
+        )
         git(self.dev, "push", "-q", "origin", "main")
 
-    def commit(self, message: str, files: dict[str, str] | None = None, author: str | None = None) -> str:
+    def commit(
+        self, message: str, files: dict[str, str] | None = None, author: str | None = None
+    ) -> str:
         for name, content in (files or {"CHANGES.md": message}).items():
             path = self.dev / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +131,11 @@ class Stack:
         self.origin = f"http://localhost:{port}"
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         pem = Secret(
-            key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ).decode()
         )
         self.github = fake.FakeGitHub(key.public_key())
         self.remotes = fake.LocalRemotes()
@@ -145,12 +160,19 @@ class Stack:
             environment=Environment.DEVELOPMENT,
             static_dir=static_dir,
         )
+        # Every browser test signs in from 127.0.0.1; the sign-in limit (20/min per
+        # address) is exercised by the API tests, so it is raised for this harness only.
+        dashboard_app.RATE_LIMITS["auth"] = 10_000
         self.dashboard = build_dashboard(self.service, settings)
         self.app = create_server_app(self.service, self.dashboard)
-        self.env = fake.AppEnv(self.service, self.github, None, self.remotes, pem, self.tmp / "data")
+        self.env = fake.AppEnv(
+            self.service, self.github, None, self.remotes, pem, self.tmp / "data"
+        )
 
     # -- GitHub events ------------------------------------------------------ #
-    def pull_request(self, repository: RepositoryRef, number: int, base: str, head: str, action: str) -> None:
+    def pull_request(
+        self, repository: RepositoryRef, number: int, base: str, head: str, action: str
+    ) -> None:
         self.github.pulls[(repository.id, number)] = {
             "number": number,
             "state": "open",
@@ -158,18 +180,37 @@ class Stack:
             "head": {"sha": head, "ref": f"feature-{number}", "repo": {"id": repository.id}},
             "base": {"sha": base, "ref": "main", "repo": {"id": repository.id}},
         }
-        self.env.deliver("pull_request", fake.pr_payload(base, head, number=number, action=action, repository=repository))
+        self.env.deliver(
+            "pull_request",
+            fake.pr_payload(base, head, number=number, action=action, repository=repository),
+        )
 
     def seed(self) -> dict[str, Any]:
         repositories = (PROJECT, WEB, DOCS)
         self.github.add_installation(fake.INSTALLATION_ID, repositories, account_id=ORG)
-        self.env.deliver("installation", fake.installation_payload("created", fake.INSTALLATION_ID, repositories, account_id=ORG))
+        self.env.deliver(
+            "installation",
+            fake.installation_payload(
+                "created", fake.INSTALLATION_ID, repositories, account_id=ORG
+            ),
+        )
         members = MembershipService(self.service.store, self.service.audit)
         for user, role in ((OWNER, Role.OWNER), (VIEWER, Role.VIEWER)):
-            members.grant(account_id=ORG, user_id=user[0], role=role, actor=Actor(type=ActorType.SYSTEM, login="e2e"), login=user[1])
-            self.github.add_user(user[0], user[1], {fake.INSTALLATION_ID: {r.id for r in repositories}})
+            members.grant(
+                account_id=ORG,
+                user_id=user[0],
+                role=role,
+                actor=Actor(type=ActorType.SYSTEM, login="e2e"),
+                login=user[1],
+            )
+            self.github.add_user(
+                user[0], user[1], {fake.INSTALLATION_ID: {r.id for r in repositories}}
+            )
         self.github.rulesets[WEB.id] = [
-            {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "commitguard-app"}]}}
+            {
+                "type": "required_status_checks",
+                "parameters": {"required_status_checks": [{"context": "commitguard-app"}]},
+            }
         ]
 
         project = self.repos[PROJECT.id]
@@ -182,7 +223,10 @@ class Stack:
         web = self.repos[WEB.id]
         web_base = web.head()
         git(web.dev, "checkout", "-q", "-b", "deps")
-        bot = web.commit("chore(deps): bump vite\n", author="dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>")
+        bot = web.commit(
+            "chore(deps): bump vite\n",
+            author="dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+        )
         git(web.dev, "push", "-q", "origin", "deps")
         self.pull_request(WEB, 12, web_base, bot, "opened")
         self.service.process_pending()
@@ -217,11 +261,19 @@ class Stack:
         length = int(environ.get("CONTENT_LENGTH") or 0)
         body = json.loads(environ["wsgi.input"].read(length) or b"{}")
         routes: dict[str, Callable[[], Any]] = {
-            "/__e2e/authorize": lambda: dict(zip(("code", "state"), self.github.authorize(int(body["user_id"]), body["url"]), strict=True)),
+            "/__e2e/authorize": lambda: dict(
+                zip(
+                    ("code", "state"),
+                    self.github.authorize(int(body["user_id"]), body["url"]),
+                    strict=True,
+                )
+            ),
             "/__e2e/seed": self.seed,
             "/__e2e/ai-commit": self.ai_commit,
             "/__e2e/fix-commit": self.fix_commit,
-            "/__e2e/check": lambda: {"conclusion": (self.github.runs_for(body["sha"]) or [{}])[-1].get("conclusion")},
+            "/__e2e/check": lambda: {
+                "conclusion": (self.github.runs_for(body["sha"]) or [{}])[-1].get("conclusion")
+            },
             "/__e2e/drain": lambda: {"processed": self.service.process_pending()},
         }
         handler = routes.get(path)
@@ -229,7 +281,9 @@ class Stack:
             start_response("404 Not Found", [("Content-Type", "application/json")])
             return [b"{}"]
         payload = json.dumps(handler()).encode()
-        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(payload)))])
+        start_response(
+            "200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(payload)))]
+        )
         return [payload]
 
 
@@ -253,7 +307,9 @@ def main() -> None:
     if args.seed:
         stack.seed()
     stack.service.start()
-    server = make_server("127.0.0.1", args.port, stack.wsgi, server_class=_Server, handler_class=_Quiet)
+    server = make_server(
+        "127.0.0.1", args.port, stack.wsgi, server_class=_Server, handler_class=_Quiet
+    )
     print(f"CommitGuard e2e stack on {stack.origin} (data: {stack.tmp})", flush=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

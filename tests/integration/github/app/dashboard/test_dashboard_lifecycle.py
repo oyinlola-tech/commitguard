@@ -53,7 +53,9 @@ def test_primary_end_to_end_scenario(dash, ops, hub) -> None:  # type: ignore[no
     detail = alice.get(f"/api/v1/scans/{blocked['id']}").data
     assert detail["scan"]["result"] == "blocked"
     assert detail["conclusion"] == "failure"
-    assert detail["rules_version"] and detail["policy_version"] and detail["tool_version"]
+    assert detail["rules_version"]
+    assert detail["policy_version"]
+    assert detail["tool_version"]
     [finding] = detail["findings"]
     assert (finding["rule_id"], finding["action"], finding["severity"]) == (
         "ai_coauthor",

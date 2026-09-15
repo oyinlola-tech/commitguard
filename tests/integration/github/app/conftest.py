@@ -431,7 +431,6 @@ class FakeGitHub:
                     )
         return _json(404, {"message": "Not Found"})
 
-
     def _repository_content(
         self, credential: str, owner: str, name: str, kind: str, rest: str, query: str
     ) -> HttpResponse:

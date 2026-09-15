@@ -43,7 +43,9 @@ def test_policy_versions_drive_scans_and_history_is_preserved(
     assert first["result"] == "pass"
     first_detail = alice.get(f"/api/v1/scans/{first['id']}").data
     assert first_detail["organization_policy_version"] is None
-    assert {p["id"]: p["action"] for p in first_detail["effective_policies"]}["ai_coauthor"] == "allow"
+    assert {p["id"]: p["action"] for p in first_detail["effective_policies"]}[
+        "ai_coauthor"
+    ] == "allow"
     [finding] = first_detail["findings"]
     assert finding["action"] == "allow"  # recorded, not hidden
     assert alice.get("/api/v1/violations").data == []
@@ -119,7 +121,8 @@ def test_weakening_needs_confirmation_reason_and_recent_sign_in(dash, clock) -> 
     ]
     [event] = alice.get("/api/v1/audit", type="organization_policy_changed", limit=1).data
     assert event["data"]["weakening"] is True
-    assert event["data"]["old_version"] == 2 and event["data"]["new_version"] == 3
+    assert event["data"]["old_version"] == 2
+    assert event["data"]["new_version"] == 3
     assert event["summary"].startswith("Changed organization policy v2 → v3")
 
 
@@ -132,7 +135,9 @@ def test_concurrent_edits_conflict_instead_of_overwriting(dash) -> None:  # type
     assert "version 1" in conflict.error["message"]
     policy = _policy(ada)
     assert policy["version"] == 1
-    assert {r["policy_id"]: r["organization_floor"] for r in policy["rules"]}["bot_identity"] is None
+    assert {r["policy_id"]: r["organization_floor"] for r in policy["rules"]}[
+        "bot_identity"
+    ] is None
 
 
 def test_policy_update_is_atomic(dash, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -175,7 +180,8 @@ def test_warn_block_and_allow_outcomes_are_reported_exactly(dash, ops, hub) -> N
     base = hub.dev.git("rev-parse", "HEAD")
     hub.dev.git("checkout", "-q", "-b", "bots")
     bot = hub.dev.commit(
-        "chore(deps): bump\n", author="dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>"
+        "chore(deps): bump\n",
+        author="dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
     )
     hub.dev.push("bots")
     ops.pull_request(base, bot, number=11)
@@ -183,6 +189,10 @@ def test_warn_block_and_allow_outcomes_are_reported_exactly(dash, ops, hub) -> N
     assert scan["result"] == "warning"  # PASSED_WITH_WARNINGS, not "pass" and not "blocked"
     assert dash.github.runs_for(bot)[-1]["conclusion"] == "success"
     [warning] = alice.get("/api/v1/violations", action="warn").data
-    assert (warning["rule_id"], warning["action"], warning["severity"]) == ("bot_identity", "warn", "low")
+    assert (warning["rule_id"], warning["action"], warning["severity"]) == (
+        "bot_identity",
+        "warn",
+        "low",
+    )
     overview = alice.get("/api/v1/dashboard/overview").data["summary"]
     assert (overview["open_violations"], overview["open_warnings"]) == (0, 1)
