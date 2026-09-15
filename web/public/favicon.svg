@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="CommitGuard">
-  <rect width="32" height="32" rx="7" fill="#11141b"/>
-  <path d="M16 5.5 7.5 8.8v6.4c0 5.5 3.6 10 8.5 11.3 4.9-1.3 8.5-5.8 8.5-11.3V8.8L16 5.5Z" fill="none" stroke="#8b9cff" stroke-width="2" stroke-linejoin="round"/>
-  <circle cx="16" cy="15.5" r="2.6" fill="#8b9cff"/>
-  <path d="M16 9.4v3.5M16 18.1v3.6" stroke="#8b9cff" stroke-width="2" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>path,circle{stroke:#101816}@media (prefers-color-scheme:dark){path,circle{stroke:#e6ece9}}</style>
+  <path d="M16 2.5v8M16 21.5v8" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="16" cy="16" r="5" fill="none" stroke-width="2.6"/>
+  <path d="M8.5 7.5H4.5v17h4M23.5 7.5h4v17h-4" fill="none" stroke-width="2.6"/>
 </svg>

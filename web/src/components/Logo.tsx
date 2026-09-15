@@ -1,18 +1,24 @@
-export function LogoMark({ size = 24 }: { size?: number }) {
+/**
+ * The CommitGuard mark: a commit node on its branch line, held between
+ * inspection brackets - a commit passing a checkpoint.
+ */
+export function LogoMark({ size = 22, title }: { size?: number; title?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="logo-mark">
-      <path d="M16 3.5 6 7.4v7.4c0 6.4 4.2 11.7 10 13.2 5.8-1.5 10-6.8 10-13.2V7.4L16 3.5Z" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
-      <circle cx="16" cy="15.5" r="3" fill="currentColor" />
-      <path d="M16 8.5v4M16 18.5v4.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    <svg width={size} height={size} viewBox="0 0 32 32" className="logo-mark" role={title ? "img" : undefined} aria-hidden={title ? undefined : true} aria-label={title}>
+      <path d="M16 2.5v8M16 21.5v8" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+      <circle cx="16" cy="16" r="5" fill="none" stroke="currentColor" strokeWidth="2.6" />
+      <path d="M8.5 7.5H4.5v17h4M23.5 7.5h4v17h-4" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="square" strokeLinejoin="miter" />
     </svg>
   );
 }
 
-export function Logo() {
+export function Logo({ size = 22 }: { size?: number }) {
   return (
     <span className="logo">
-      <LogoMark />
-      <span className="logo__word">CommitGuard</span>
+      <LogoMark size={size} />
+      <span className="logo__word">
+        Commit<span className="logo__guard">Guard</span>
+      </span>
     </span>
   );
 }
