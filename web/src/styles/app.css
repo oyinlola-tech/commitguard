@@ -829,6 +829,7 @@ kbd {
 
 .grid-2 {
   display: grid;
+  align-items: start;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-5);
   margin-bottom: var(--space-5);
@@ -944,6 +945,10 @@ kbd {
   display: flex;
   flex-direction: column;
   list-style: none;
+}
+
+.health__item .badge {
+  justify-self: start;
 }
 
 .health__item {
@@ -1565,7 +1570,7 @@ kbd {
 }
 
 .not-found__fatal {
-  color: var(--blocked);
+  color: var(--terminal-alert);
   font-weight: 600;
 }
 

@@ -15,6 +15,7 @@
 
 /* Navbar: sticky, translucent, brand / centered links / action ------------ */
 .public-nav {
+  padding: 0 var(--gutter);
   position: sticky;
   top: 0;
   z-index: 30;
@@ -31,7 +32,6 @@
   max-width: var(--content-max);
   height: 3.75rem;
   margin: 0 auto;
-  padding: 0 var(--gutter);
 }
 
 .public-nav__brand {
@@ -75,6 +75,7 @@
 
 /* Hero ------------------------------------------------------------------ */
 .hero {
+  overflow-x: clip;
   padding: clamp(3rem, 7vw, 6rem) var(--gutter) clamp(3rem, 6vw, 5rem);
   border-bottom: 1px solid var(--rule);
 }
@@ -700,7 +701,7 @@
   margin: var(--space-7) auto -0.2em;
   color: var(--ink);
   font-family: var(--font-display);
-  font-size: clamp(3.5rem, 1rem + 12.5vw, 13rem);
+  font-size: clamp(3rem, 0.4rem + 10.6vw, 11.25rem);
   font-weight: 800;
   line-height: 0.9;
   letter-spacing: -0.06em;
@@ -773,6 +774,7 @@
     top: 100%;
     left: 0;
     right: 0;
+    margin: 0;
     display: none;
     flex-direction: column;
     padding: var(--space-3) var(--gutter) var(--space-4);
@@ -812,7 +814,8 @@
     right: auto;
     align-self: flex-end;
     width: max-content;
-    margin: -1.2rem 0.75rem 0 auto;
+    max-width: calc(100% - 2rem);
+    margin: -1.2rem 1.25rem 0 auto;
   }
 
   .specimen__caption {
@@ -835,8 +838,19 @@
   }
 }
 
+/* Without motion the specimen shows its final, inspected state at once. */
 @media (prefers-reduced-motion: reduce) {
   .specimen__scan {
     display: none;
+  }
+
+  .specimen__line--trailer {
+    animation: none;
+    background: rgb(255 123 115 / 0.16);
+    box-shadow: inset 3px 0 0 #ff7b73;
+  }
+
+  .stamp {
+    animation: none;
   }
 }

@@ -28,6 +28,7 @@
   --terminal-ink: #dfe7e3;
   --terminal-dim: #8e9b96;
   --terminal-rule: #26302c;
+  --terminal-alert: #ff8a82; /* red that stays legible on the terminal surface */
 
   /* Verdicts: text / tint */
   --pass: #147a4b;
