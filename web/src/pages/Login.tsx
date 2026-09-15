@@ -38,6 +38,12 @@ export default function Login() {
       <aside className="login__brand" aria-hidden="true">
         <Logo />
         <p className="login__tagline">The core makes the decision. GitHub enforces it. The dashboard explains it.</p>
+        <p className="login__trace">
+          {"commitguard-app  pull_request #128\n"}
+          {"  scanned   3 commits  base 3a91f02..8e71c2a\n"}
+          {"  policy    organization v4 + trusted .commitguard.yaml\n"}
+          {"  verdict   BLOCKED  ai_coauthor  (Co-authored-by, line 9)"}
+        </p>
       </aside>
       <main id="main" className="login__main" tabIndex={-1}>
         <div className="login__card">
