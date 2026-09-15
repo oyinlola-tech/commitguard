@@ -253,4 +253,4 @@ def test_stale_scan_does_not_reopen_resolved_violation(dash, ops, hub) -> None: 
     assert worker.process(jobs[0].job_id).value == "cancelled"
     assert _violations(alice) == []
     results = {s["head_sha"]: s["result"] for s in alice.get("/api/v1/scans").data}
-    assert results == {good: "pass", bad: "cancelled"}
+    assert results == {good: "pass", bad: "stale"}  # superseded: never the current result

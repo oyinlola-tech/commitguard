@@ -23,6 +23,7 @@ const Audit = lazy(() => import("./pages/Audit"));
 const Installations = lazy(() => import("./pages/Installations"));
 const InstallationDetail = lazy(() => import("./pages/InstallationDetail"));
 const Settings = lazy(() => import("./pages/Settings"));
+const Notifications = lazy(() => import("./pages/Notifications"));
 
 export function AppRoutes() {
   return (
@@ -41,6 +42,8 @@ export function AppRoutes() {
               <Route path="/violations" element={<Violations />} />
               <Route path="/violations/:violationId" element={<ViolationDetail />} />
               <Route path="/policies" element={<Policies />} />
+              <Route path="/policies/:organizationId" element={<Policies />} />
+              <Route path="/notifications" element={<Notifications />} />
               <Route path="/rules" element={<Rules />} />
               <Route path="/rules/:ruleId" element={<RuleDetail />} />
               <Route path="/audit" element={<Audit />} />

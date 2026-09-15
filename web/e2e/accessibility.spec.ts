@@ -2,7 +2,22 @@ import AxeBuilder from "@axe-core/playwright";
 
 import { expect, signIn, test } from "./fixtures";
 
-const PAGES = ["/dashboard", "/repositories", "/scans", "/violations", "/policies", "/rules", "/rules/ai_coauthor", "/audit", "/github/installations", "/settings", "/missing"];
+const PAGES = [
+  "/dashboard",
+  "/repositories",
+  "/repositories/5001",
+  "/scans",
+  "/violations",
+  "/policies",
+  "/policies/1001",
+  "/rules",
+  "/rules/ai_coauthor",
+  "/audit",
+  "/github/installations",
+  "/notifications",
+  "/settings",
+  "/missing",
+];
 
 async function audit(page: import("@playwright/test").Page, label: string) {
   await page.waitForTimeout(600);

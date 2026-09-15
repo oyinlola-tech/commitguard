@@ -7,8 +7,8 @@ organisation or user account - ``installation_id``, ``repository_id``),
 correlation IDs and a small, validated ``data`` mapping. Values are bounded
 and sanitised on creation, and events are never updated after they are stored.
 
-Future notification channels (e-mail, Slack, webhooks) subscribe to the same
-stream: :data:`SECURITY_ALERT_TYPES` lists the events that warrant one.
+Notifications are a separate, typed stream (:mod:`commitguard.notifications`);
+each notification records the audit correlation IDs of the change that caused it.
 """
 
 import re
@@ -89,19 +89,43 @@ class AuditEventType(StrEnum):
     REPOSITORIES_SYNCED = "repositories_synced"
     ENFORCEMENT_STATUS_CHECKED = "enforcement_status_checked"
     SCAN_REQUESTED = "scan_requested"
+    # Phase 7: executions, re-runs, merge queue, policy recovery, notifications.
+    SCAN_STARTED = "scan_started"
+    SCAN_RETRY_SCHEDULED = "scan_retry_scheduled"
+    CHECK_RERUN_REQUESTED = "check_rerun_requested"
+    CHECK_RERUN_REJECTED = "check_rerun_rejected"
+    MERGE_GROUP_CREATED = "merge_group_created"
+    MERGE_GROUP_PASSED = "merge_group_passed"
+    MERGE_GROUP_BLOCKED = "merge_group_blocked"
+    MERGE_GROUP_SCAN_FAILED = "merge_group_scan_failed"
+    MERGE_GROUP_DESTROYED = "merge_group_destroyed"
+    ORGANIZATION_POLICY_ROLLED_BACK = "organization_policy_rolled_back"
+    NOTIFICATION_CREATED = "notification_created"
+    NOTIFICATION_DELIVERED = "notification_delivered"
+    NOTIFICATION_DELIVERY_FAILED = "notification_delivery_failed"
+    NOTIFICATION_READ = "notification_read"
+    NOTIFICATION_SETTINGS_CHANGED = "notification_settings_changed"
+    NOTIFICATION_PREFERENCES_CHANGED = "notification_preferences_changed"
+    NOTIFICATION_WEBHOOK_ADDED = "notification_webhook_added"
+    NOTIFICATION_WEBHOOK_REMOVED = "notification_webhook_removed"
 
 
-#: Events a future notification channel should deliver (not implemented yet).
+#: Security-relevant events. Notifications are not generated from this list: the
+#: domain services emit typed notification events (:mod:`commitguard.notifications`)
+#: in the same transaction as the state change.
 SECURITY_ALERT_TYPES = frozenset(
     {
         AuditEventType.POLICY_VIOLATION,
         AuditEventType.POLICY_MODIFICATION,
         AuditEventType.ORGANIZATION_POLICY_CHANGED,
+        AuditEventType.ORGANIZATION_POLICY_ROLLED_BACK,
         AuditEventType.INSTALLATION_REMOVED,
         AuditEventType.INSTALLATION_SUSPENDED,
         AuditEventType.REPOSITORY_MONITORING_DISABLED,
         AuditEventType.MEMBER_ROLE_GRANTED,
         AuditEventType.MEMBER_ROLE_CHANGED,
+        AuditEventType.MERGE_GROUP_BLOCKED,
+        AuditEventType.NOTIFICATION_SETTINGS_CHANGED,
     }
 )
 
@@ -113,6 +137,7 @@ class AuditEvent(BaseModel):
     type: AuditEventType
     occurred_at: datetime
     delivery_id: str | None = None
+    request_id: str | None = None  # dashboard API request
     job_id: str | None = None
     scan_id: str | None = None
     actor_type: ActorType = ActorType.SYSTEM

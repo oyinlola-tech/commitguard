@@ -46,6 +46,13 @@ class ConflictError(ControlPlaneError):
     status = 409
 
 
+class PolicyIntegrityError(ControlPlaneError):
+    """A stored policy version does not match its fingerprint or is not a valid policy."""
+
+    code = "POLICY_VERSION_INVALID"
+    status = 422
+
+
 class ConfirmationRequiredError(ControlPlaneError):
     """A change weakens enforcement and was not explicitly confirmed."""
 

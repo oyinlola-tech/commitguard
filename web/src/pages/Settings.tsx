@@ -3,10 +3,12 @@ import { useState } from "react";
 
 import { listSessions, revokeSession } from "../api/auth";
 import { ApiError } from "../api/client";
+import { listNotificationPreferences } from "../api/notifications";
 import { listMembers, removeMember, setMemberRole } from "../api/organizations";
 import type { OrganizationAccess, Role } from "../api/types";
 import { useSession } from "../auth/session";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { NotificationSettingsPanel } from "../components/NotificationSettingsPanel";
 import { KeyValueList, Notice, PageHeader, Panel, Time } from "../components/Primitives";
 import { QueryBoundary, SkeletonRows } from "../components/States";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
@@ -142,6 +144,24 @@ function Members({ access, userId }: { access: OrganizationAccess; userId: numbe
   );
 }
 
+function Notifications() {
+  const query = useQuery({ queryKey: ["notification-preferences"], queryFn: listNotificationPreferences });
+  return (
+    <QueryBoundary query={query} errorTitle="We could not load notification settings." loading={<SkeletonRows rows={3} />} isEmpty={(d) => d.length === 0} empty={<p className="muted">No organization notifications are available to your account.</p>}>
+      {(organizations) => (
+        <div className="stack-lg">
+          {organizations.map((settings) => (
+            <section key={`${settings.organization.id}-${settings.version}`} aria-labelledby={`notifications-${settings.organization.id}`}>
+              <h3 className="subheading" id={`notifications-${settings.organization.id}`}>{settings.organization.login}</h3>
+              <NotificationSettingsPanel settings={settings} />
+            </section>
+          ))}
+        </div>
+      )}
+    </QueryBoundary>
+  );
+}
+
 function Appearance() {
   const [theme, setTheme] = useState<ThemePreference>(readTheme);
   return (
@@ -162,7 +182,7 @@ export default function Settings() {
   const { session, organizations } = useSession();
   return (
     <>
-      <PageHeader title="Settings" description="Your account, access, sessions and display preferences." />
+      <PageHeader title="Settings" description="Your account, access, notifications, sessions and display preferences." />
       <div className="grid-2">
         <Panel title="Profile" id="profile">
           <KeyValueList items={[["GitHub login", session.user.login], ["GitHub user ID", <code>{session.user.id}</code>], ["Session expires", <Time value={session.session.expires_at} absolute />]]} />
@@ -185,6 +205,9 @@ export default function Settings() {
             ))}
           </ul>
         )}
+      </Panel>
+      <Panel title="Notifications" id="notifications">
+        <Notifications />
       </Panel>
       <Panel title="Security · active sessions" id="sessions">
         <Sessions />

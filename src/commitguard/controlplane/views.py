@@ -13,9 +13,14 @@ Status vocabulary
 Field                  Values
 =====================  ================================================================
 scan ``result``        ``queued`` ``running`` ``pass`` ``warning`` ``blocked``
-                       ``error`` ``cancelled``
+                       ``error`` ``cancelled`` ``stale``
+scan ``trigger``       ``push`` ``pull_request`` ``merge_group`` ``manual`` ``rerun``
+                       ``retry``
 violation ``status``   ``open`` ``acknowledged`` ``resolved``
-``protection``         ``protected`` ``unprotected`` ``configuration_error`` ``unknown``
+``protection``         ``protected`` ``at_risk`` ``unprotected`` ``configuration_error``
+                       ``unknown``
+merge queue            ``enabled`` ``not_enabled`` ``unknown``
+notification ``state`` ``unread`` ``read`` ``archived``
 GitHub App             ``connected`` ``suspended`` ``disconnected``
 GitHub Actions         ``detected`` ``not_detected`` ``unknown``
 required check         ``required`` ``not_required`` ``unknown``
@@ -51,6 +56,7 @@ class ScanResultStatus(StrEnum):
     BLOCKED = "blocked"
     ERROR = "error"
     CANCELLED = "cancelled"
+    STALE = "stale"  # superseded before it could publish: a newer execution owns the check
 
 
 class ViolationStatus(StrEnum):
@@ -61,6 +67,7 @@ class ViolationStatus(StrEnum):
 
 class ProtectionStatus(StrEnum):
     PROTECTED = "protected"
+    AT_RISK = "at_risk"  # the GitHub App lost access: enforcement may no longer run
     UNPROTECTED = "unprotected"
     CONFIGURATION_ERROR = "configuration_error"
     UNKNOWN = "unknown"
@@ -81,6 +88,12 @@ class ActionsStatus(StrEnum):
 class RequiredCheckStatus(StrEnum):
     REQUIRED = "required"
     NOT_REQUIRED = "not_required"
+    UNKNOWN = "unknown"
+
+
+class MergeQueueStatus(StrEnum):
+    ENABLED = "enabled"
+    NOT_ENABLED = "not_enabled"
     UNKNOWN = "unknown"
 
 
@@ -147,6 +160,9 @@ class ScanSummary(_View):
     completed_at: datetime | None
     duration_ms: int | None
     requested_by: str | None
+    trigger: str
+    execution: int
+    failure_source: Literal["pull_request", "push", "merge_queue"]
 
 
 class MatchView(_View):
@@ -202,6 +218,39 @@ class ScanDetail(_View):
     findings: tuple[FindingView, ...]
     can_rescan: bool
     rescan_blocked_reason: str | None
+    executions: int
+    latest_execution: str
+    merge_group: "MergeGroupView | None" = None
+
+
+class ExecutionView(_View):
+    """One execution of a logical scan (same repository, commits and check)."""
+
+    id: str
+    execution: int
+    trigger: str
+    current: bool  # the newest execution: it determines the current status
+    result: ScanResultStatus
+    head_sha: str
+    base_sha: str | None
+    organization_policy_version: int | None
+    policy_version: str | None
+    rules_version: str | None
+    tool_version: str | None
+    conclusion: str | None
+    requested_by: str | None
+    failure: ScanFailure | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    duration_ms: int | None
+
+
+class ExecutionHistory(_View):
+    scan_id: str
+    items: tuple[ExecutionView, ...]
+    policy_changed: bool  # executions were evaluated under different policy versions
+    rules_changed: bool
 
 
 class ScanComparison(_View):
@@ -234,7 +283,7 @@ class ViolationSummary(_View):
 
 
 class ExposureView(_View):
-    kind: Literal["pull_request", "branch"]
+    kind: Literal["pull_request", "branch", "merge_group"]
     label: str
     active: bool
     opened_at: datetime
@@ -305,6 +354,7 @@ class EnforcementView(_View):
     required_check: RequiredCheckSignal
     latest_check: LatestCheckSignal
     local_hooks: EnforcementSignal
+    merge_queue: EnforcementSignal
     monitoring_enabled: bool
 
 
@@ -345,6 +395,30 @@ class RepositoryDetail(_View):
     permissions: RepositoryPermissions
 
 
+class MergeGroupView(_View):
+    head_sha: str
+    base_sha: str
+    base_ref: str
+    pull_requests: tuple[int, ...]
+    state: Literal["checks_requested", "destroyed"]
+    destroyed_reason: str | None
+    result: ScanResultStatus | None
+    scan: str | None
+    created_at: datetime
+    updated_at: datetime
+    validated_at: datetime | None
+
+
+class MergeQueueView(_View):
+    repository_id: int
+    status: MergeQueueStatus
+    detail: str
+    checked_at: datetime | None
+    permission: Literal["granted", "missing"]
+    current: MergeGroupView | None
+    recent: tuple[MergeGroupView, ...]
+
+
 # --------------------------------------------------------------------------- #
 # Policies and rules
 # --------------------------------------------------------------------------- #
@@ -377,6 +451,13 @@ class OrganizationPolicyView(_View):
     can_write: bool
 
 
+class PolicyChange(_View):
+    policy_id: str
+    old: Action | None
+    new: Action | None
+    weakening: bool
+
+
 class PolicyVersionView(_View):
     version: int
     fingerprint: str
@@ -384,12 +465,27 @@ class PolicyVersionView(_View):
     created_at: datetime
     created_by: PolicyAuthor
     reason: str | None
+    status: Literal["active", "archived"]
+    kind: Literal["change", "rollback"]
+    rollback_of: int | None  # rollback: the version that was active before
+    restored_version: int | None  # rollback: the version whose document was restored
+    changes: tuple[PolicyChange, ...]  # compared with the previous version
+    summary: str
 
 
-class PolicyChange(_View):
+class PolicyDiffEntry(_View):
     policy_id: str
-    old: Action | None
-    new: Action | None
+    old: Action | None = None
+    new: Action | None = None
+    weakening: bool = False
+
+
+class PolicyDiffView(_View):
+    from_version: int
+    to_version: int
+    added: tuple[PolicyDiffEntry, ...]
+    changed: tuple[PolicyDiffEntry, ...]
+    removed: tuple[PolicyDiffEntry, ...]
     weakening: bool
 
 
@@ -491,6 +587,7 @@ class OverviewPeriod(_View):
 class OverviewSummary(_View):
     repositories_monitored: int
     repositories_protected: int
+    repositories_at_risk: int
     repositories_unprotected: int
     repositories_unknown: int
     repositories_configuration_error: int
@@ -527,6 +624,96 @@ class OverviewView(_View):
     recent_scans: tuple[ScanSummary, ...]
     recent_violations: tuple[ViolationSummary, ...]
     repository_health: tuple[RepositorySummary, ...]
+
+
+# --------------------------------------------------------------------------- #
+# Notifications
+# --------------------------------------------------------------------------- #
+class NotificationView(_View):
+    id: str
+    type: str
+    category: str
+    severity: Severity
+    state: Literal["unread", "read", "archived"]
+    title: str
+    body: str
+    organization_id: int
+    repository: RepositoryLink | None
+    resource_type: str
+    resource_id: str
+    link: str | None
+    occurrences: int
+    created_at: datetime
+    last_occurred_at: datetime
+    read_at: datetime | None
+
+
+class NotificationCounts(_View):
+    unread: int  # at most 1000
+    unread_critical: int
+    capped: bool  # more unread notifications than counted
+
+
+class ChannelPreferenceView(_View):
+    in_app: bool
+    email: bool
+    webhook: bool
+
+
+class TypePreferenceView(_View):
+    type: str
+    label: str
+    description: str
+    category: str
+    mandatory_in_app: bool
+    organization: ChannelPreferenceView
+    personal_in_app: bool  # the member's own inbox (always true when mandatory)
+    receives_in_app: bool  # the member's role receives this type at all
+
+
+class NotificationChannelsView(_View):
+    in_app: bool
+    email: bool
+    webhook: bool
+    mode: Literal["off", "deliver", "test"]
+
+
+class WebhookEndpointView(_View):
+    id: str
+    url: str
+    created_at: datetime
+    created_by: str | None
+
+
+class NotificationDeliveryView(_View):
+    id: str
+    notification_type: str
+    title: str
+    channel: str
+    destination: str
+    status: Literal["pending", "sent", "failed", "cancelled"]
+    attempts: int
+    failure_code: str | None
+    last_attempt_at: datetime | None
+    next_retry_at: datetime | None
+    created_at: datetime
+
+
+class OrganizationNotificationSettingsView(_View):
+    organization: OrganizationRef
+    version: int
+    updated_at: datetime | None
+    updated_by: str | None
+    channels: NotificationChannelsView
+    types: tuple[TypePreferenceView, ...]
+    email_recipients: tuple[str, ...]  # only for notifications:manage
+    webhooks: tuple[WebhookEndpointView, ...]  # only for notifications:manage
+    can_manage: bool
+
+
+class CreatedWebhookView(_View):
+    endpoint: WebhookEndpointView
+    signing_secret: str  # shown once; CommitGuard does not store it
 
 
 # --------------------------------------------------------------------------- #
@@ -573,3 +760,4 @@ class SessionInfo(_View):
 
 
 RepositoryDetail.model_rebuild()
+ScanDetail.model_rebuild()

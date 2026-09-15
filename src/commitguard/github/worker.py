@@ -22,8 +22,16 @@ Failures are classified - authorization, configuration, infrastructure,
 timeout, internal - recorded as job state ``error`` (distinct from a policy
 ``failed``) and, whenever a Check Run exists, published as a failing check:
 CommitGuard never reports success for a commit it could not evaluate.
+
+Executions: a job is one *execution* of a logical scan. Re-runs (GitHub's
+"Re-run"), manual scans and automatic retries are new executions of the same
+scan that publish to the same (repository, SHA, check name) slot; earlier
+executions stay stored unchanged. Merge group jobs scan ``base..merge group``
+and publish to the merge group commit, which is the SHA the merge queue waits
+on; a merge group GitHub has already destroyed is not scanned.
 """
 
+import sqlite3
 import threading
 import zlib
 from collections.abc import Callable
@@ -33,8 +41,9 @@ from datetime import UTC, datetime
 from commitguard.audit.models import AuditEventType
 from commitguard.ci.context import CIEventKind
 from commitguard.config.sources import MandatoryPolicy
-from commitguard.controlplane.results import ScanResultRecorder
+from commitguard.controlplane.results import ScanResultRecorder, merge_queue_failure
 from commitguard.core.decision import Action
+from commitguard.core.result import Severity
 from commitguard.exceptions.base import CommitGuardError
 from commitguard.exceptions.configuration import ConfigurationError
 from commitguard.exceptions.git import GitError
@@ -62,9 +71,20 @@ from commitguard.github.errors import (
 )
 from commitguard.github.installations import AuthorizedRepository, InstallationService
 from commitguard.github.repositories import FetchTimeoutError, MirrorManager
-from commitguard.github.storage import JobState, ScanJob, SqliteStateStore
+from commitguard.github.storage import (
+    JobState,
+    MergeGroupState,
+    ScanJob,
+    ScanTrigger,
+    SqliteStateStore,
+)
+from commitguard.notifications.deduplication import domain_key
+from commitguard.notifications.models import NotificationEvent, NotificationType
+from commitguard.notifications.outbox import account_for_installation, emit
 from commitguard.observability.logging import correlation, get_logger
 from commitguard.observability.metrics import (
+    MERGE_GROUPS_FAILED,
+    MERGE_GROUPS_SCANNED,
     POLICY_VIOLATIONS,
     SCANS_CANCELLED,
     SCANS_COMPLETED,
@@ -82,6 +102,11 @@ log = get_logger(__name__)
 JOB_LEASE_SECONDS = 1800.0
 MAX_JOB_ATTEMPTS = 3
 _LOCK_STRIPES = 64
+#: Cancellation reasons meaning a newer execution superseded this one (result ``stale``).
+SUPERSEDED_NEWER_EVENT = "a newer event for this pull request is waiting to be scanned"
+SUPERSEDED_CHECK_OWNER = "a newer scan owns the check for this commit"
+MERGE_GROUP_GONE = "the merge queue no longer waits for this merge group"
+_SUPERSEDED = frozenset({SUPERSEDED_NEWER_EVENT, SUPERSEDED_CHECK_OWNER, MERGE_GROUP_GONE})
 
 
 type PolicyResolver = Callable[[int], tuple[MandatoryPolicy | None, int | None]]
@@ -129,7 +154,13 @@ class ScanWorker:
     # ------------------------------------------------------------------ #
     def process(self, job_id: str) -> JobState | None:
         """Run one job. Returns its final state, or None if it was not claimable."""
-        job = self._store.claim_job(job_id, self._now(), JOB_LEASE_SECONDS, MAX_JOB_ATTEMPTS)
+        outcome = self._store.claim_job_outcome(
+            job_id, self._now(), JOB_LEASE_SECONDS, MAX_JOB_ATTEMPTS
+        )
+        if outcome.exhausted is not None:
+            self._exhausted(outcome.exhausted)
+            return None
+        job = outcome.job
         if job is None:
             return None
         with correlation(
@@ -166,6 +197,20 @@ class ScanWorker:
     def _run(self, job: ScanJob, progress: _Progress) -> JobState:
         if not self._store.monitoring_enabled(job.installation_id, job.repository.id):
             raise StaleScanError("CommitGuard monitoring is paused for this repository")
+        if job.event == "merge_group":
+            group = self._store.get_merge_group(
+                job.installation_id, job.repository.id, job.head_sha
+            )
+            if group is None or group.state is MergeGroupState.DESTROYED:
+                raise StaleScanError(MERGE_GROUP_GONE)
+        if job.trigger in (ScanTrigger.MANUAL, ScanTrigger.RERUN, ScanTrigger.RETRY):
+            self._audit_job(
+                AuditEventType.SCAN_STARTED,
+                job,
+                trigger=job.trigger.value,
+                execution=job.execution,
+                requested_by=job.requested_by,
+            )
         auth = self._installations.authorize(job.installation_id, job.repository)
         progress.auth = auth
         repository = auth.repository
@@ -176,7 +221,7 @@ class ScanWorker:
                 job.installation_id, repository.id, job.group_key
             )
             if latest > job.sequence:
-                raise StaleScanError("a newer event for this pull request is waiting to be scanned")
+                raise StaleScanError(SUPERSEDED_NEWER_EVENT)
             pull_request = self._client.get_pull_request(token, repository, job.pull_request_number)
             if pull_request.state != "open":
                 raise StaleScanError("the pull request is no longer open")
@@ -190,7 +235,7 @@ class ScanWorker:
         with self._lock_for(slot):
             claim = self._store.claim_check(*slot, job.sequence, self._now())
             if not claim.owned:
-                raise StaleScanError("a newer scan owns the check for this commit")
+                raise StaleScanError(SUPERSEDED_CHECK_OWNER)
             queued = queued_output(self._describe(job))
             if claim.check_run_id is None:
                 created = self._client.create_check_run(
@@ -206,7 +251,7 @@ class ScanWorker:
                 if created.head_sha != job.head_sha:
                     raise ScanError("GitHub attached the check run to a different commit")
                 if not self._store.set_check_run_id(*slot, job.sequence, created.id):
-                    raise StaleScanError("a newer scan owns the check for this commit")
+                    raise StaleScanError(SUPERSEDED_CHECK_OWNER)
                 progress.check_run_id = created.id
             else:
                 progress.check_run_id = claim.check_run_id
@@ -219,7 +264,9 @@ class ScanWorker:
         self._store.update_job(job.job_id, self._now(), check_run_id=progress.check_run_id)
 
         context = job.context
-        if context.event is CIEventKind.PULL_REQUEST:
+        if context.event in (CIEventKind.PULL_REQUEST, CIEventKind.MERGE_GROUP):
+            # Merge groups: base..merge group commit, policy from the base (the trusted
+            # target branch), results on the merge group commit the queue waits on.
             required = [s for s in (context.base_sha, context.head_sha) if s]
             optional: list[str] = []
             branches: list[str] = []
@@ -261,6 +308,8 @@ class ScanWorker:
             return self._record_result(job, result, conclusion, mirror, organization_policy_version)
 
     def _describe(self, job: ScanJob) -> str:
+        if job.event == "merge_group":
+            return f"the merge queue's merge group at {job.head_sha[:12]}"
         if job.pull_request_number is not None:
             return f"pull request #{job.pull_request_number} at {job.head_sha[:12]}"
         return f"the push of {job.head_sha[:12]}"
@@ -278,7 +327,7 @@ class ScanWorker:
         slot = self._slot(job, progress.auth.repository.id)
         with self._lock_for(slot):
             if self._store.check_owner(*slot) != job.sequence:
-                raise StaleScanError("a newer scan owns the check for this commit")
+                raise StaleScanError(SUPERSEDED_CHECK_OWNER)
             self._client.update_check_run(
                 progress.auth.token.token,
                 progress.auth.repository,
@@ -312,6 +361,9 @@ class ScanWorker:
             commits_scanned=stats.commits_scanned,
             rules_version=result.metadata.rules_version[:16],
             policy_version=result.metadata.policy_version[:16],
+            organization_policy_version=organization_policy_version,
+            trigger=job.trigger.value,
+            execution=job.execution,
         )
         self._audit_job(
             AuditEventType.SCAN_PASSED if state is JobState.PASSED else AuditEventType.SCAN_FAILED,
@@ -320,7 +372,23 @@ class ScanWorker:
             violations=stats.violations,
             warnings=stats.warnings,
             conclusion=conclusion.value,
+            trigger=job.trigger.value,
+            execution=job.execution,
+            organization_policy_version=organization_policy_version,
         )
+        if job.event == "merge_group":
+            self._metrics.increment(MERGE_GROUPS_SCANNED, result=result.action.value)
+            self._audit_job(
+                AuditEventType.MERGE_GROUP_PASSED
+                if state is JobState.PASSED
+                else AuditEventType.MERGE_GROUP_BLOCKED,
+                job,
+                action=result.action,
+                violations=stats.violations,
+                pull_requests=self._merge_group_prs(job),
+            )
+            if state is JobState.FAILED:
+                self._metrics.increment(MERGE_GROUPS_FAILED, reason="blocked")
         blocked = [
             f
             for commit in result.report.commits
@@ -355,12 +423,19 @@ class ScanWorker:
         )
         return state
 
+    def _merge_group_prs(self, job: ScanJob) -> str | None:
+        group = self._store.get_merge_group(job.installation_id, job.repository.id, job.head_sha)
+        if group is None or not group.pull_requests:
+            return None
+        return ",".join(f"#{n}" for n in group.pull_requests)
+
     def _cancel(self, job: ScanJob, reason: str) -> JobState:
         self._store.update_job(
             job.job_id,
             self._now(),
             state=JobState.CANCELLED,
             message=safe_text(reason),
+            failure_kind="stale" if reason in _SUPERSEDED else None,
             lease_expires_at=None,
             completed_at=self._now().timestamp(),
         )
@@ -376,16 +451,29 @@ class ScanWorker:
             reason = safe_text(str(exc), 500)
         else:
             reason = f"unexpected error ({type(exc).__name__})"
-        self._store.update_job(
-            job.job_id,
-            self._now(),
-            state=JobState.ERROR,
-            failure_kind=kind.value,
-            message=reason,
-            lease_expires_at=None,
-            completed_at=self._now().timestamp(),
-        )
+        now = self._now()
+        with self._store.transaction() as db:
+            self._store.update_job_in(
+                db,
+                job.job_id,
+                now,
+                state=JobState.ERROR,
+                failure_kind=kind.value,
+                message=reason,
+                lease_expires_at=None,
+                completed_at=now.timestamp(),
+            )
+            self._emit_failure_notifications(db, job, reason, now)
         self._metrics.increment(SCANS_FAILED, kind=kind.value)
+        if job.event == "merge_group":
+            self._metrics.increment(MERGE_GROUPS_FAILED, reason="error")
+            self._audit_job(
+                AuditEventType.MERGE_GROUP_SCAN_FAILED,
+                job,
+                failure_kind=kind.value,
+                reason=reason,
+                pull_requests=self._merge_group_prs(job),
+            )
         log.warning(
             "scan_error",
             exc=exc if isinstance(exc, CommitGuardError) else None,
@@ -411,6 +499,76 @@ class ScanWorker:
                     commit=job.head_sha[:12],
                 )
         return JobState.ERROR
+
+    def _emit_failure_notifications(
+        self, db: sqlite3.Connection, job: ScanJob, reason: str, now: datetime
+    ) -> None:
+        """Operational failures that someone is waiting on (never a security decision)."""
+        account_id = account_for_installation(db, job.installation_id)
+        if account_id is None:
+            return
+        if job.event == "merge_group":
+            emit(
+                db,
+                merge_queue_failure(
+                    job,
+                    account_id,
+                    f"CommitGuard could not validate the merge group ({reason}). The check "
+                    "failed closed, so the merge queue cannot merge it.",
+                ),
+                now,
+            )
+        elif job.trigger is ScanTrigger.RERUN:
+            emit(
+                db,
+                NotificationEvent(
+                    type=NotificationType.CHECK_RERUN_FAILED,
+                    account_id=account_id,
+                    severity=Severity.MEDIUM,
+                    installation_id=job.installation_id,
+                    repository_id=job.repository.id,
+                    resource_type="scan",
+                    resource_id=job.job_id,
+                    dedup_key=domain_key(NotificationType.CHECK_RERUN_FAILED, job.job_id),
+                    title=f"Check re-run failed in {job.repository.full_name}",
+                    body=(
+                        f"The re-run of {job.check_name} at {job.head_sha[:12]} could not be "
+                        f"completed: {reason}. The check failed closed."
+                    ),
+                    metadata={"scan": job.job_id, "execution": job.execution},
+                ),
+                now,
+            )
+
+    def _exhausted(self, job: ScanJob) -> None:
+        """A job that crashed or timed out on every attempt: audit it and fail its check."""
+        reason = "scan abandoned after repeated attempts"
+        with correlation(
+            job_id=job.job_id,
+            installation_id=job.installation_id,
+            repository=job.repository.full_name,
+        ):
+            self._metrics.increment(SCANS_FAILED, kind=FailureKind.INTERNAL.value)
+            self._audit_job(
+                AuditEventType.SCAN_ERROR,
+                job,
+                failure_kind=FailureKind.INTERNAL.value,
+                reason=reason,
+                attempts=job.attempts,
+            )
+            with self._store.transaction() as db:
+                self._emit_failure_notifications(db, job, reason, self._now())
+            if job.check_run_id is None:
+                return
+            try:
+                auth = self._installations.authorize(job.installation_id, job.repository)
+                progress = _Progress(auth=auth, check_run_id=job.check_run_id)
+                conclusion, output = error_output(FailureKind.INTERNAL, reason)
+                self._publish(job, progress, CheckRunStatus.COMPLETED, output, conclusion)
+            except StaleScanError:
+                pass  # a newer execution owns the check
+            except Exception as exc:  # noqa: BLE001 - best effort; the job is already an error
+                log.error("check_run_failure_not_published", error_type=type(exc).__name__)
 
     def _audit_job(
         self,

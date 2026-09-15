@@ -350,6 +350,11 @@ def ops(dash, payloads) -> Ops:  # type: ignore[no-untyped-def]
     return Ops(dash, payloads)
 
 
+@pytest.fixture
+def make_ops(payloads) -> Callable[[DashboardEnv], Ops]:  # type: ignore[no-untyped-def]
+    return lambda env: Ops(env, payloads)
+
+
 @dataclass(frozen=True)
 class Dataset:
     repositories: list[RepositoryRef]

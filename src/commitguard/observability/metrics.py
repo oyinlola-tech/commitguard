@@ -21,6 +21,19 @@ SCANS_CANCELLED = "scans_cancelled"
 POLICY_VIOLATIONS = "policy_violations"
 GITHUB_API_ERRORS = "github_api_errors"
 GITHUB_RATE_LIMITS = "github_rate_limits"
+GITHUB_EVENTS_RECEIVED = "github_events_received"
+GITHUB_EVENTS_FAILED = "github_events_failed"
+GITHUB_EVENTS_REPLAYED = "github_events_replayed"
+MERGE_GROUPS_SCANNED = "merge_groups_scanned"
+MERGE_GROUPS_FAILED = "merge_groups_failed"
+CHECK_RERUNS = "check_reruns"
+SCAN_RETRIES = "scan_retries"
+POLICY_ROLLBACKS = "policy_rollbacks"
+POLICY_ROLLBACK_FAILURES = "policy_rollback_failures"
+NOTIFICATIONS_CREATED = "notifications_created"
+NOTIFICATIONS_SENT = "notifications_sent"
+NOTIFICATIONS_FAILED = "notifications_failed"
+NOTIFICATION_RETRIES = "notification_retries"
 
 KNOWN_METRICS = frozenset(
     {
@@ -35,6 +48,19 @@ KNOWN_METRICS = frozenset(
         POLICY_VIOLATIONS,
         GITHUB_API_ERRORS,
         GITHUB_RATE_LIMITS,
+        GITHUB_EVENTS_RECEIVED,
+        GITHUB_EVENTS_FAILED,
+        GITHUB_EVENTS_REPLAYED,
+        MERGE_GROUPS_SCANNED,
+        MERGE_GROUPS_FAILED,
+        CHECK_RERUNS,
+        SCAN_RETRIES,
+        POLICY_ROLLBACKS,
+        POLICY_ROLLBACK_FAILURES,
+        NOTIFICATIONS_CREATED,
+        NOTIFICATIONS_SENT,
+        NOTIFICATIONS_FAILED,
+        NOTIFICATION_RETRIES,
     }
 )
 

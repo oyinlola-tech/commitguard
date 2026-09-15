@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { LogOut, Menu, Monitor, Moon, Search, Sun, X } from "lucide-react";
+import { Bell, LogOut, Menu, Monitor, Moon, Search, Sun, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
 import { signOut } from "../../api/auth";
 import { getHealth } from "../../api/client";
 import { getOverview } from "../../api/dashboard";
+import { getNotificationCounts } from "../../api/notifications";
 import { useSession, useUnauthenticatedRedirect } from "../../auth/session";
 import { INTEGRATION } from "../../lib/labels";
 import { applyTheme, readTheme, writeTheme, type ThemePreference } from "../../lib/preferences";
@@ -15,6 +16,21 @@ import { ErrorBoundary } from "../ErrorBoundary";
 import { Logo } from "../Logo";
 import { NAV_ITEMS } from "./navigation";
 
+/** Unread notification counts for the bell and the navigation (bounded on the server). */
+function useNotificationCounts() {
+  return useQuery({
+    queryKey: ["notifications", "counts"],
+    queryFn: getNotificationCounts,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+function unreadLabel(unread: number, capped: boolean): string {
+  return capped || unread > 99 ? "99+" : String(unread);
+}
+
 function Navigation({ onNavigate }: { onNavigate?: () => void }) {
   const { can, organization } = useSession();
   const overview = useQuery({
@@ -23,7 +39,9 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
     enabled: can("repositories:read"),
     staleTime: 60_000,
   });
+  const counts = useNotificationCounts();
   const openViolations = overview.data?.summary.open_violations ?? 0;
+  const unread = counts.data?.unread ?? 0;
   const items = NAV_ITEMS.filter((item) => !item.permission || can(item.permission));
   return (
     <nav aria-label="Primary" className="nav">
@@ -40,6 +58,11 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
                 {item.to === routes.violations && openViolations > 0 ? (
                   <span className="nav__count" aria-label={`${openViolations} open`}>
                     {openViolations > 99 ? "99+" : openViolations}
+                  </span>
+                ) : null}
+                {item.to === routes.notifications && unread > 0 ? (
+                  <span className={`nav__count${counts.data?.unread_critical ? " nav__count--critical" : ""}`} aria-label={`${unread} unread`}>
+                    {unreadLabel(unread, counts.data?.capped ?? false)}
                   </span>
                 ) : null}
               </NavLink>
@@ -118,6 +141,23 @@ function GlobalSearch() {
         /
       </kbd>
     </form>
+  );
+}
+
+function NotificationBell() {
+  const counts = useNotificationCounts();
+  const unread = counts.data?.unread ?? 0;
+  const critical = counts.data?.unread_critical ?? 0;
+  const label = unread > 0 ? `Notifications: ${unread} unread${critical ? `, ${critical} critical` : ""}` : "Notifications";
+  return (
+    <NavLink to={routes.notifications} className="icon-button bell" aria-label={label} title={label}>
+      <Bell size={16} aria-hidden="true" />
+      {unread > 0 ? (
+        <span className={`bell__count${critical ? " bell__count--critical" : ""}`} aria-hidden="true">
+          {unreadLabel(unread, counts.data?.capped ?? false)}
+        </span>
+      ) : null}
+    </NavLink>
   );
 }
 
@@ -257,6 +297,7 @@ export function AppShell() {
           <OrganizationSwitcher />
           <GlobalSearch />
           <div className="topbar__end">
+            <NotificationBell />
             <ThemeToggle />
             <UserMenu />
           </div>

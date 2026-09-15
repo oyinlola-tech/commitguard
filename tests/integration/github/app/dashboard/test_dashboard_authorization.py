@@ -78,6 +78,8 @@ def test_unauthenticated_requests_are_rejected(dash, tenants) -> None:  # type: 
             .replace("{rule_id:ident}", "ai_coauthor")
             .replace("{session_id:session}", "0123456789abcdef")
             .replace("{version:version}", "1")
+            .replace("{notification_id:hex}", "0" * 32)
+            .replace("{endpoint_id:hex}", "0" * 32)
         )
         result = anonymous.request(route.method, path, body={} if route.method != "GET" else None)
         assert result.status == 401, (route.template, result.raw)

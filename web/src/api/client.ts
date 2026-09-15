@@ -21,6 +21,7 @@ export type ErrorCode =
   | "VALIDATION_ERROR"
   | "CONFLICT"
   | "CONFIRMATION_REQUIRED"
+  | "POLICY_VERSION_INVALID"
   | "RATE_LIMITED"
   | "CSRF_FAILED"
   | "GITHUB_UNAVAILABLE"
@@ -88,8 +89,10 @@ async function parseError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, code, message, field, requestId);
 }
 
+export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
 export interface RequestOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: Method;
   query?: Record<string, QueryValue>;
   body?: unknown;
   signal?: AbortSignal;
@@ -140,7 +143,7 @@ export async function getPage<T>(path: string, query?: Record<string, QueryValue
   };
 }
 
-export async function send<T>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<Envelope<T>> {
+export async function send<T>(method: Exclude<Method, "GET">, path: string, body?: unknown): Promise<Envelope<T>> {
   return request<T>(path, { method, body });
 }
 

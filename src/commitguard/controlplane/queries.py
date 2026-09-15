@@ -48,6 +48,8 @@ from commitguard.controlplane.views import (
     EnforcementSignal,
     EnforcementView,
     EvidenceView,
+    ExecutionHistory,
+    ExecutionView,
     ExposureView,
     FindingView,
     HealthCheck,
@@ -59,6 +61,9 @@ from commitguard.controlplane.views import (
     IntegrationView,
     LatestCheckSignal,
     MatchView,
+    MergeGroupView,
+    MergeQueueStatus,
+    MergeQueueView,
     OrganizationRef,
     OverviewPeriod,
     OverviewSummary,
@@ -85,9 +90,10 @@ from commitguard.core.result import Severity
 from commitguard.github.permissions import (
     REQUIRED_PERMISSIONS,
     excessive_permissions,
+    level_rank,
     missing_permissions,
 )
-from commitguard.github.storage import SqliteStateStore
+from commitguard.github.storage import MergeGroupRecord, SqliteStateStore
 
 SCOPE_JOBS = (
     "j.installation_id IN (SELECT value FROM json_each(?)) AND EXISTS (SELECT 1 FROM "
@@ -119,7 +125,8 @@ _SCAN_COLUMNS = (
     "j.created_at, j.started_at, j.completed_at, j.requested_by, j.sequence, j.group_key, "
     "j.conclusion, j.failure_kind, j.message, j.tool_version, j.rules_version, j.policy_version, "
     "j.policy_source, j.organization_policy_version, j.effective_policies, "
-    "j.detector_failures, j.notices, (SELECT account_id FROM installations i WHERE "
+    "j.detector_failures, j.notices, j.scan_key, j.execution, j.trigger_kind, "
+    "(SELECT account_id FROM installations i WHERE "
     "i.installation_id = j.installation_id) AS account_id"
 )
 _VIOLATION_COLUMNS = (
@@ -142,7 +149,8 @@ _RESULT_CLAUSES: Mapping[ScanResultStatus, str] = {
     ScanResultStatus.WARNING: "j.state = 'passed' AND j.result_action = 'warn'",
     ScanResultStatus.BLOCKED: "j.state = 'failed'",
     ScanResultStatus.ERROR: "j.state = 'error'",
-    ScanResultStatus.CANCELLED: "j.state = 'cancelled'",
+    ScanResultStatus.CANCELLED: "j.state = 'cancelled' AND COALESCE(j.failure_kind, '') != 'stale'",
+    ScanResultStatus.STALE: "j.state = 'cancelled' AND j.failure_kind = 'stale'",
 }
 SCAN_SORTS = ("newest", "oldest")
 VIOLATION_SORTS = ("newest", "oldest", "severity", "repository")
@@ -252,7 +260,9 @@ def scan_summary(row: Row) -> ScanSummary:
         base_sha=row["base_sha"],
         head_sha=row["head_sha"],
         check_name=row["check_name"],
-        result=ScanResultStatus(scan_result_label(row["state"], row["result_action"])),
+        result=ScanResultStatus(
+            scan_result_label(row["state"], row["result_action"], row["failure_kind"])
+        ),
         commits_scanned=row["commits_scanned"],
         violations=row["violations"],
         warnings=row["warnings"],
@@ -262,6 +272,41 @@ def scan_summary(row: Row) -> ScanSummary:
         completed_at=completed,
         duration_ms=duration,
         requested_by=row["requested_by"],
+        trigger=row["trigger_kind"] or row["event"],
+        execution=row["execution"] or 1,
+        failure_source=_failure_source(row["event"]),
+    )
+
+
+def _failure_source(event: str) -> Literal["pull_request", "push", "merge_queue"]:
+    if event == "merge_group":
+        return "merge_queue"
+    return "push" if event == "push" else "pull_request"
+
+
+def _duration_ms(started: datetime | None, completed: datetime | None) -> int | None:
+    if started is None or completed is None or completed < started:
+        return None
+    return int((completed - started).total_seconds() * 1000)
+
+
+def merge_group_view(record: MergeGroupRecord, job: Row | None) -> MergeGroupView:
+    return MergeGroupView(
+        head_sha=record.head_sha,
+        base_sha=record.base_sha,
+        base_ref=record.base_ref,
+        pull_requests=record.pull_requests,
+        state=record.state.value,
+        destroyed_reason=record.destroyed_reason,
+        result=ScanResultStatus(
+            scan_result_label(job["state"], job["result_action"], job["failure_kind"])
+        )
+        if job is not None
+        else None,
+        scan=job["job_id"] if job is not None else None,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        validated_at=_dt(job["completed_at"]) if job is not None else None,
     )
 
 
@@ -434,11 +479,15 @@ def protection_for(
 ) -> tuple[ProtectionStatus, str]:
     """Explicit rules; a repository is never 'protected' only because the App is installed."""
     if app is AppConnection.SUSPENDED:
-        return ProtectionStatus.UNPROTECTED, "The GitHub App installation is suspended."
+        return (
+            ProtectionStatus.AT_RISK,
+            "The GitHub App installation is suspended: CommitGuard checks no longer run.",
+        )
     if app is AppConnection.DISCONNECTED:
         return (
-            ProtectionStatus.UNPROTECTED,
-            "The GitHub App no longer has access to this repository.",
+            ProtectionStatus.AT_RISK,
+            "The GitHub App no longer has access to this repository: CommitGuard checks no "
+            "longer run.",
         )
     if not monitoring_enabled:
         return ProtectionStatus.UNPROTECTED, "CommitGuard monitoring is paused for this repository."
@@ -575,7 +624,31 @@ class DashboardQueries:
         failure = None
         if row["state"] in ("error", "cancelled"):
             failure = ScanFailure(kind=row["failure_kind"], message=row["message"] or "")
+        executions = self._store.query(
+            "SELECT COUNT(*) AS n, (SELECT job_id FROM scan_jobs o WHERE o.installation_id = ? "
+            "AND o.repository_id = ? AND o.scan_key = ? ORDER BY o.sequence DESC LIMIT 1) "
+            "AS latest FROM scan_jobs WHERE installation_id = ? AND repository_id = ? "
+            "AND scan_key = ?",
+            (
+                row["installation_id"],
+                row["repository_id"],
+                row["scan_key"],
+                row["installation_id"],
+                row["repository_id"],
+                row["scan_key"],
+            ),
+        )[0]
+        merge_group = None
+        if row["event"] == "merge_group":
+            record = self._store.get_merge_group(
+                row["installation_id"], row["repository_id"], row["head_sha"]
+            )
+            if record is not None:
+                merge_group = merge_group_view(record, row)
         return ScanDetail(
+            executions=int(executions["n"] or 1),
+            latest_execution=executions["latest"] or row["job_id"],
+            merge_group=merge_group,
             scan=summary,
             conclusion=row["conclusion"],
             tool_version=row["tool_version"],
@@ -590,6 +663,65 @@ class DashboardQueries:
             findings=tuple(finding_view(f) for f in findings),
             can_rescan=can_rescan,
             rescan_blocked_reason=blocked_reason,
+        )
+
+    def scan_executions(self, scope: AccessScope, scan_id: str) -> ExecutionHistory | None:
+        """Every execution of the logical scan ``scan_id`` belongs to, newest first."""
+        row = self._scan_row(scope, scan_id)
+        if row is None:
+            return None
+        rows = self._store.query(
+            " ".join(
+                (
+                    "SELECT",
+                    _SCAN_COLUMNS,
+                    "FROM scan_jobs j WHERE j.installation_id = ? AND j.repository_id = ? "
+                    "AND j.scan_key = ? ORDER BY j.sequence DESC LIMIT 100",
+                )
+            ),
+            (row["installation_id"], row["repository_id"], row["scan_key"]),
+        )
+        items = []
+        for index, r in enumerate(rows):
+            started, completed = _dt(r["started_at"]), _dt(r["completed_at"])
+            failure = (
+                ScanFailure(kind=r["failure_kind"], message=r["message"] or "")
+                if r["state"] in ("error", "cancelled")
+                else None
+            )
+            items.append(
+                ExecutionView(
+                    id=r["job_id"],
+                    execution=r["execution"] or 1,
+                    trigger=r["trigger_kind"] or r["event"],
+                    current=index == 0,
+                    result=ScanResultStatus(
+                        scan_result_label(r["state"], r["result_action"], r["failure_kind"])
+                    ),
+                    head_sha=r["head_sha"],
+                    base_sha=r["base_sha"],
+                    organization_policy_version=r["organization_policy_version"],
+                    policy_version=r["policy_version"],
+                    rules_version=r["rules_version"],
+                    tool_version=r["tool_version"],
+                    conclusion=r["conclusion"],
+                    requested_by=r["requested_by"],
+                    failure=failure,
+                    created_at=_req_dt(r["created_at"]),
+                    started_at=started,
+                    completed_at=completed,
+                    duration_ms=_duration_ms(started, completed),
+                )
+            )
+        evaluated = [i for i in items if i.policy_version is not None]
+        return ExecutionHistory(
+            scan_id=scan_id,
+            items=tuple(items),
+            policy_changed=len(
+                {(i.policy_version, i.organization_policy_version) for i in evaluated}
+            )
+            > 1,
+            rules_changed=len({i.rules_version for i in evaluated}) > 1,
         )
 
     def rescan_eligibility(self, row: Row, principal: Principal) -> tuple[bool, str | None]:
@@ -910,7 +1042,7 @@ class DashboardQueries:
                 "v.installation_id = r.installation_id AND v.repository_id = r.repository_id AND "
                 "v.status = 'open' AND v.severity = 'critical') AS critical_open, "
                 "e.branch_protection, e.branch_protection_detail, e.required_checks, e.branch, "
-                "e.actions, e.actions_detail, e.checked_at "
+                "e.actions, e.actions_detail, e.checked_at, e.merge_queue, e.merge_queue_detail "
                 "FROM known_repositories r JOIN installations i ON i.installation_id = "
                 "r.installation_id LEFT JOIN enforcement_status e ON e.installation_id = "
                 "r.installation_id AND e.repository_id = r.repository_id WHERE",
@@ -1102,6 +1234,11 @@ class DashboardQueries:
                 status="not_verifiable",
                 detail="A server cannot see whether developers installed the Git hooks.",
             ),
+            merge_queue=EnforcementSignal(
+                status=row["merge_queue"] or MergeQueueStatus.UNKNOWN.value,
+                detail=row["merge_queue_detail"] or "Not checked yet.",
+                checked_at=checked_at,
+            ),
             monitoring_enabled=summary.monitoring_enabled,
         )
         return RepositoryDetail(
@@ -1122,6 +1259,55 @@ class DashboardQueries:
                 trigger_scans=principal.can(Permission.SCANS_TRIGGER, account_id),
                 read_audit=can_audit,
             ),
+        )
+
+    def merge_queue(self, scope: AccessScope, repository_id: int) -> MergeQueueView | None:
+        rows = self._repository_rows(scope, repository_id=repository_id)
+        if not rows:
+            return None
+        rows.sort(
+            key=lambda r: (
+                r.summary.app_connection is AppConnection.CONNECTED,
+                r.row["latest_sequence"] or 0,
+            ),
+            reverse=True,
+        )
+        row = rows[0].row
+        installation_id = int(row["installation_id"])
+        records = self._store.list_merge_groups(installation_id, repository_id, limit=10)
+        jobs: dict[str, Row] = {}
+        ids = [r.job_id for r in records if r.job_id]
+        if ids:
+            for job in self._store.query(
+                " ".join(
+                    (
+                        "SELECT",
+                        _SCAN_COLUMNS,
+                        "FROM scan_jobs j WHERE j.job_id IN (SELECT value FROM json_each(?))",
+                    )
+                ),
+                (json.dumps(ids),),
+            ):
+                jobs[job["job_id"]] = job
+        views = [merge_group_view(r, jobs.get(r.job_id or "")) for r in records]
+        current = next((v for v in views if v.state == "checks_requested"), None)
+        installation = self._store.get_installation(installation_id)
+        permission: Literal["granted", "missing"] = (
+            "granted"
+            if installation is not None
+            and level_rank(installation.permissions.get("merge_queues")) >= level_rank("read")
+            else "missing"
+        )
+        status = MergeQueueStatus(row["merge_queue"] or MergeQueueStatus.UNKNOWN.value)
+        return MergeQueueView(
+            repository_id=repository_id,
+            status=status,
+            detail=row["merge_queue_detail"]
+            or "Merge queue settings have not been checked. Refresh the enforcement status.",
+            checked_at=_dt(row["checked_at"]),
+            permission=permission,
+            current=current,
+            recent=tuple(views),
         )
 
     # ------------------------------------------------------------------ #
@@ -1395,6 +1581,10 @@ class DashboardQueries:
         summary = OverviewSummary(
             repositories_monitored=len(monitored),
             repositories_protected=by_protection[ProtectionStatus.PROTECTED],
+            # Not "monitored": the App lost access, which is exactly what puts them at risk.
+            repositories_at_risk=sum(
+                1 for r in repositories if r.protection is ProtectionStatus.AT_RISK
+            ),
             repositories_unprotected=by_protection[ProtectionStatus.UNPROTECTED],
             repositories_unknown=by_protection[ProtectionStatus.UNKNOWN],
             repositories_configuration_error=by_protection[ProtectionStatus.CONFIGURATION_ERROR],
@@ -1423,10 +1613,11 @@ def _is_hex_id(value: str) -> bool:
 
 
 _RISK_ORDER = {
-    ProtectionStatus.CONFIGURATION_ERROR: 0,
-    ProtectionStatus.UNPROTECTED: 1,
-    ProtectionStatus.UNKNOWN: 2,
-    ProtectionStatus.PROTECTED: 3,
+    ProtectionStatus.AT_RISK: 0,
+    ProtectionStatus.CONFIGURATION_ERROR: 1,
+    ProtectionStatus.UNPROTECTED: 2,
+    ProtectionStatus.UNKNOWN: 3,
+    ProtectionStatus.PROTECTED: 4,
 }
 
 
@@ -1514,7 +1705,11 @@ def _health_checks(
             )
         )
     else:
-        if summary.repositories_unprotected or summary.repositories_configuration_error:
+        if (
+            summary.repositories_at_risk
+            or summary.repositories_unprotected
+            or summary.repositories_configuration_error
+        ):
             status = HealthCheckStatus.ATTENTION
         elif summary.repositories_unknown:
             status = HealthCheckStatus.UNKNOWN
@@ -1528,7 +1723,12 @@ def _health_checks(
                 detail=(
                     f"{summary.repositories_protected} of {monitored} monitored repositories are "
                     "verified to require a CommitGuard check; "
-                    f"{summary.repositories_unknown} not verified."
+                    f"{summary.repositories_unknown} not verified"
+                    + (
+                        f"; {summary.repositories_at_risk} at risk (GitHub App access lost)."
+                        if summary.repositories_at_risk
+                        else "."
+                    )
                 ),
             )
         )

@@ -13,9 +13,14 @@ export type ScanResult =
   | "warning"
   | "blocked"
   | "error"
-  | "cancelled";
+  | "cancelled"
+  | "stale";
+export type ScanTrigger = "push" | "pull_request" | "merge_group" | "manual" | "rerun" | "retry";
 export type ViolationStatus = "open" | "acknowledged" | "resolved";
-export type ProtectionStatus = "protected" | "unprotected" | "configuration_error" | "unknown";
+export type ProtectionStatus = "protected" | "at_risk" | "unprotected" | "configuration_error" | "unknown";
+export type MergeQueueStatus = "enabled" | "not_enabled" | "unknown";
+export type NotificationState = "unread" | "read" | "archived";
+export type NotificationCategory = "violations" | "policy" | "github" | "scans";
 export type AppConnection = "connected" | "suspended" | "disconnected";
 export type ActionsStatus = "detected" | "not_detected" | "unknown";
 export type RequiredCheckStatus = "required" | "not_required" | "unknown";
@@ -35,7 +40,10 @@ export type Permission =
   | "audit:read"
   | "github:manage"
   | "members:read"
-  | "members:manage";
+  | "members:manage"
+  | "policies:rollback"
+  | "notifications:read"
+  | "notifications:manage";
 
 export interface Envelope<T> {
   data: T;
@@ -98,6 +106,9 @@ export interface ScanSummary {
   completed_at: string | null;
   duration_ms: number | null;
   requested_by: string | null;
+  trigger: ScanTrigger;
+  execution: number;
+  failure_source: "pull_request" | "push" | "merge_queue";
 }
 
 export interface Match {
@@ -148,6 +159,61 @@ export interface ScanDetail {
   findings: Finding[];
   can_rescan: boolean;
   rescan_blocked_reason: string | null;
+  executions: number;
+  latest_execution: string;
+  merge_group: MergeGroup | null;
+}
+
+export interface Execution {
+  id: string;
+  execution: number;
+  trigger: ScanTrigger;
+  current: boolean;
+  result: ScanResult;
+  head_sha: string;
+  base_sha: string | null;
+  organization_policy_version: number | null;
+  policy_version: string | null;
+  rules_version: string | null;
+  tool_version: string | null;
+  conclusion: string | null;
+  requested_by: string | null;
+  failure: { kind: string | null; message: string } | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface ExecutionHistory {
+  scan_id: string;
+  items: Execution[];
+  policy_changed: boolean;
+  rules_changed: boolean;
+}
+
+export interface MergeGroup {
+  head_sha: string;
+  base_sha: string;
+  base_ref: string;
+  pull_requests: number[];
+  state: "checks_requested" | "destroyed";
+  destroyed_reason: string | null;
+  result: ScanResult | null;
+  scan: string | null;
+  created_at: string;
+  updated_at: string;
+  validated_at: string | null;
+}
+
+export interface MergeQueue {
+  repository_id: number;
+  status: MergeQueueStatus;
+  detail: string;
+  checked_at: string | null;
+  permission: "granted" | "missing";
+  current: MergeGroup | null;
+  recent: MergeGroup[];
 }
 
 export interface ScanComparison {
@@ -177,7 +243,7 @@ export interface ViolationSummary {
 }
 
 export interface Exposure {
-  kind: "pull_request" | "branch";
+  kind: "pull_request" | "branch" | "merge_group";
   label: string;
   active: boolean;
   opened_at: string;
@@ -237,6 +303,7 @@ export interface Enforcement {
     completed_at: string | null;
   };
   local_hooks: EnforcementSignal;
+  merge_queue: EnforcementSignal;
   monitoring_enabled: boolean;
 }
 
@@ -295,6 +362,13 @@ export interface OrganizationPolicy {
   can_write: boolean;
 }
 
+export interface PolicyChange {
+  policy_id: string;
+  old: PolicyAction | null;
+  new: PolicyAction | null;
+  weakening: boolean;
+}
+
 export interface PolicyVersion {
   version: number;
   fingerprint: string;
@@ -302,12 +376,27 @@ export interface PolicyVersion {
   created_at: string;
   created_by: { id: number | null; login: string | null };
   reason: string | null;
+  status: "active" | "archived";
+  kind: "change" | "rollback";
+  rollback_of: number | null;
+  restored_version: number | null;
+  changes: PolicyChange[];
+  summary: string;
 }
 
-export interface PolicyChange {
+export interface PolicyDiffEntry {
   policy_id: string;
   old: PolicyAction | null;
   new: PolicyAction | null;
+  weakening: boolean;
+}
+
+export interface PolicyDiff {
+  from_version: number;
+  to_version: number;
+  added: PolicyDiffEntry[];
+  changed: PolicyDiffEntry[];
+  removed: PolicyDiffEntry[];
   weakening: boolean;
 }
 
@@ -397,6 +486,7 @@ export interface Overview {
   summary: {
     repositories_monitored: number;
     repositories_protected: number;
+    repositories_at_risk: number;
     repositories_unprotected: number;
     repositories_unknown: number;
     repositories_configuration_error: number;
@@ -455,4 +545,84 @@ export interface SessionInfo {
   csrf_token: string;
   organizations: OrganizationAccess[];
   reauthentication_required_after: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  type: string;
+  category: NotificationCategory;
+  severity: Severity;
+  state: NotificationState;
+  title: string;
+  body: string;
+  organization_id: number;
+  repository: RepositoryLink | null;
+  resource_type: string;
+  resource_id: string;
+  link: string | null;
+  occurrences: number;
+  created_at: string;
+  last_occurred_at: string;
+  read_at: string | null;
+}
+
+export interface NotificationCounts {
+  unread: number;
+  unread_critical: number;
+  capped: boolean;
+}
+
+export interface ChannelPreference {
+  in_app: boolean;
+  email: boolean;
+  webhook: boolean;
+}
+
+export interface TypePreference {
+  type: string;
+  label: string;
+  description: string;
+  category: NotificationCategory;
+  mandatory_in_app: boolean;
+  organization: ChannelPreference;
+  personal_in_app: boolean;
+  receives_in_app: boolean;
+}
+
+export interface WebhookEndpoint {
+  id: string;
+  url: string;
+  created_at: string;
+  created_by: string | null;
+}
+
+export interface NotificationSettings {
+  organization: OrganizationRef;
+  version: number;
+  updated_at: string | null;
+  updated_by: string | null;
+  channels: { in_app: boolean; email: boolean; webhook: boolean; mode: "off" | "deliver" | "test" };
+  types: TypePreference[];
+  email_recipients: string[];
+  webhooks: WebhookEndpoint[];
+  can_manage: boolean;
+}
+
+export interface NotificationDelivery {
+  id: string;
+  notification_type: string;
+  title: string;
+  channel: "email" | "webhook";
+  destination: string;
+  status: "pending" | "sent" | "failed" | "cancelled";
+  attempts: number;
+  failure_code: string | null;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
+  created_at: string;
+}
+
+export interface CreatedWebhook {
+  endpoint: WebhookEndpoint;
+  signing_secret: string;
 }

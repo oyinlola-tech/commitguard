@@ -669,6 +669,133 @@ def push_payload(
     }
 
 
+def merge_group_payload(
+    base: str,
+    head: str,
+    *,
+    action: str = "checks_requested",
+    number: int = 7,
+    reason: str | None = None,
+    base_branch: str = "main",
+    repository: RepositoryRef = REPO,
+    installation_id: int = INSTALLATION_ID,
+    head_ref: str | None = None,
+) -> dict[str, Any]:
+    """A ``merge_group`` webhook shaped like GitHub's (webhook-merge-group-* schemas)."""
+    payload: dict[str, Any] = {
+        "action": action,
+        "merge_group": {
+            "head_sha": head,
+            "head_ref": head_ref
+            or f"refs/heads/gh-readonly-queue/{base_branch}/pr-{number}-{'e' * 40}",
+            "base_sha": base,
+            "base_ref": f"refs/heads/{base_branch}",
+            "head_commit": {
+                "id": head,
+                "tree_id": "f" * 40,
+                "message": "Merge pull request",
+                "timestamp": "2026-09-01T12:00:00Z",
+                "author": {"name": "GitHub", "email": "noreply@github.com"},
+                "committer": {"name": "GitHub", "email": "noreply@github.com"},
+            },
+        },
+        "repository": _repository_json(repository),
+        "installation": {"id": installation_id},
+    }
+    if reason is not None:
+        payload["reason"] = reason
+    return payload
+
+
+def check_run_payload(
+    run: dict[str, Any],
+    *,
+    action: str = "rerequested",
+    app_id: int = APP_ID,
+    repository: RepositoryRef = REPO,
+    installation_id: int = INSTALLATION_ID,
+) -> dict[str, Any]:
+    """A ``check_run`` webhook for a run stored by FakeGitHub."""
+    return {
+        "action": action,
+        "check_run": {
+            "id": run["id"],
+            "name": run["name"],
+            "head_sha": run["head_sha"],
+            "external_id": run.get("external_id"),
+            "status": run["status"],
+            "conclusion": run["conclusion"],
+            "app": {"id": app_id, "slug": "commitguard"},
+            "check_suite": {"id": 77000, "head_sha": run["head_sha"]},
+            "pull_requests": [],
+        },
+        "repository": _repository_json(repository),
+        "installation": {"id": installation_id},
+        "sender": {"login": "octocat", "id": 1},
+    }
+
+
+def check_suite_payload(
+    head: str,
+    *,
+    action: str = "rerequested",
+    app_id: int = APP_ID,
+    repository: RepositoryRef = REPO,
+    installation_id: int = INSTALLATION_ID,
+) -> dict[str, Any]:
+    return {
+        "action": action,
+        "check_suite": {
+            "id": 77000,
+            "head_sha": head,
+            "head_branch": "feature",
+            "before": "0" * 40,
+            "after": head,
+            "app": {"id": app_id, "slug": "commitguard"},
+            "pull_requests": [],
+            "status": "queued",
+            "conclusion": None,
+        },
+        "repository": _repository_json(repository),
+        "installation": {"id": installation_id},
+        "sender": {"login": "octocat", "id": 1},
+    }
+
+
+def push_merge_group(hub: Any, base_branch: str, feature: str, number: int = 7) -> tuple[str, str]:
+    """Create the merge queue's temporary merge commit on GitHub (the bare repository).
+
+    Returns ``(base_sha, merge_group_sha)``; the commit lives on
+    ``gh-readonly-queue/<base>/pr-<number>-<feature head>`` like GitHub's.
+    """
+    dev = hub.dev
+    current = dev.git("rev-parse", "--abbrev-ref", "HEAD")
+    feature_head = dev.git("rev-parse", feature)
+    dev.git("checkout", "-q", "--detach", base_branch)
+    base = dev.git("rev-parse", "HEAD")
+    dev.git(
+        "merge",
+        "-q",
+        "--no-ff",
+        "--no-verify",
+        "-m",
+        f"Merge pull request #{number}",
+        feature_head,
+        env={
+            "GIT_AUTHOR_NAME": "GitHub",
+            "GIT_AUTHOR_EMAIL": "noreply@github.com",
+            "GIT_COMMITTER_NAME": "GitHub",
+            "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        },
+    )
+    group = dev.git("rev-parse", "HEAD")
+    dev.push(
+        "--force", f"HEAD:refs/heads/gh-readonly-queue/{base_branch}/pr-{number}-{feature_head}"
+    )
+    dev.git("checkout", "-q", current)
+    return base, group
+
+
 @pytest.fixture(scope="session")
 def app_private_key() -> rsa.RSAPrivateKey:
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -728,6 +855,10 @@ def payloads():  # type: ignore[no-untyped-def]
         push=push_payload,
         installation=installation_payload,
         repositories=repositories_payload,
+        merge_group=merge_group_payload,
+        check_run=check_run_payload,
+        check_suite=check_suite_payload,
+        push_merge_group=push_merge_group,
         REPO=REPO,
         INSTALLATION_ID=INSTALLATION_ID,
         WEBHOOK_SECRET=WEBHOOK_SECRET,

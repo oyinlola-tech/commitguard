@@ -200,12 +200,17 @@ NETWORK_IMPORTS = (
     "socket",
     "socketserver",
     "wsgiref.simple_server",
+    "smtplib",
 )
 NETWORK_ALLOWED = {
     # The only outbound HTTP client (fixed https API base, no redirects).
     "commitguard.github.client": {"urllib.request", "urllib.error", "http.client", "ssl"},
     # The only inbound HTTP server (development / single host).
     "commitguard.github.server": {"socketserver", "wsgiref.simple_server"},
+    # Phase 7 notification channels: SMTP relay, and signed webhooks to registered
+    # HTTPS endpoints (address pinned after the public-address check, no redirects).
+    "commitguard.notifications.channels.email": {"smtplib", "ssl"},
+    "commitguard.notifications.channels.webhook": {"http.client", "ssl", "socket"},
 }
 
 

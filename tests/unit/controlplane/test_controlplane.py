@@ -228,13 +228,14 @@ def test_protection_needs_evidence() -> None:
         status(branch_protection="required", monitoring_enabled=False)
         is ProtectionStatus.UNPROTECTED
     )
+    # A lost installation is "at risk" even if the last scan passed and a check is required.
     assert (
         status(branch_protection="required", app=AppConnection.SUSPENDED)
-        is ProtectionStatus.UNPROTECTED
+        is ProtectionStatus.AT_RISK
     )
     assert (
         status(branch_protection="required", app=AppConnection.DISCONNECTED)
-        is ProtectionStatus.UNPROTECTED
+        is ProtectionStatus.AT_RISK
     )
     assert (
         status(branch_protection="required", latest_failure_kind="configuration")

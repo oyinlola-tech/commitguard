@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   OctagonAlert,
   Plug,
+  ShieldAlert,
   ShieldCheck,
   ShieldQuestion,
   ShieldX,
@@ -42,6 +43,7 @@ export const SCAN_RESULT: Record<string, StatusStyle> = {
   running: style("RUNNING", "info", LoaderCircle),
   queued: style("QUEUED", "neutral", Clock),
   cancelled: style("CANCELLED", "neutral", CircleSlash),
+  stale: style("STALE", "neutral", Clock),
 };
 
 export const VIOLATION_STATUS: Record<string, StatusStyle> = {
@@ -52,6 +54,7 @@ export const VIOLATION_STATUS: Record<string, StatusStyle> = {
 
 export const PROTECTION: Record<string, StatusStyle> = {
   protected: style("PROTECTED", "success", ShieldCheck),
+  at_risk: style("AT RISK", "critical", ShieldAlert),
   unprotected: style("UNPROTECTED", "danger", ShieldX),
   configuration_error: style("CONFIGURATION ERROR", "danger", TriangleAlert),
   unknown: style("UNKNOWN", "neutral", ShieldQuestion),
@@ -83,6 +86,44 @@ export const REQUIRED_CHECK: Record<string, StatusStyle> = {
 
 export const LOCAL_HOOKS: Record<string, StatusStyle> = {
   not_verifiable: style("NOT VERIFIABLE", "neutral", CircleHelp),
+};
+
+export const MERGE_QUEUE: Record<string, StatusStyle> = {
+  enabled: style("ENABLED", "success", CircleCheck),
+  not_enabled: style("NOT ENABLED", "neutral", CircleSlash),
+  unknown: style("UNKNOWN", "neutral", CircleHelp),
+};
+
+export const MERGE_GROUP_STATE: Record<string, StatusStyle> = {
+  checks_requested: style("IN QUEUE", "info", LoaderCircle),
+  destroyed: style("ENDED", "neutral", CircleSlash),
+};
+
+export const NOTIFICATION_STATE: Record<string, StatusStyle> = {
+  unread: style("UNREAD", "info", CircleDashed),
+  read: style("READ", "neutral", CircleCheck),
+  archived: style("ARCHIVED", "neutral", CircleSlash),
+};
+
+export const DELIVERY_STATUS: Record<string, StatusStyle> = {
+  pending: style("PENDING", "warning", Clock),
+  sent: style("SENT", "success", CircleCheck),
+  failed: style("FAILED", "danger", CircleX),
+  cancelled: style("CANCELLED", "neutral", CircleSlash),
+};
+
+export const POLICY_VERSION_STATUS: Record<string, StatusStyle> = {
+  active: style("ACTIVE", "success", CircleCheck),
+  archived: style("ARCHIVED", "neutral", CircleSlash),
+};
+
+export const TRIGGER_LABEL: Record<string, string> = {
+  push: "Push",
+  pull_request: "Pull request",
+  merge_group: "Merge queue",
+  manual: "Manual",
+  rerun: "Re-run",
+  retry: "Automatic retry",
 };
 
 export const HEALTH: Record<string, StatusStyle> = {
@@ -118,6 +159,6 @@ export function statusStyle(map: Record<string, StatusStyle>, value: string | nu
   return (value && map[value]) || UNKNOWN_STYLE;
 }
 
-export const RESULT_OPTIONS = ["pass", "warning", "blocked", "error", "running", "queued", "cancelled"] as const;
+export const RESULT_OPTIONS = ["pass", "warning", "blocked", "error", "running", "queued", "cancelled", "stale"] as const;
 export const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"] as const;
 export const RULE_OPTIONS = ["ai_coauthor", "ai_identity", "ai_trailer", "malformed_trailer", "bot_identity"] as const;

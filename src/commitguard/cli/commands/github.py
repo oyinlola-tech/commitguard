@@ -24,14 +24,19 @@ from commitguard.exceptions.base import CommitGuardError
 from commitguard.git.repository import Repository
 from commitguard.github.errors import WebhookValidationError, safe_text
 from commitguard.github.events import (
+    CheckRunRerequestedEvent,
+    CheckSuiteRerequestedEvent,
     IgnoredEvent,
     InstallationEvent,
     InstallationRepositoriesEvent,
+    MergeGroupEvent,
     PullRequestEvent,
     PushEvent,
     normalize_webhook,
 )
 from commitguard.github.permissions import (
+    OPTIONAL_PERMISSIONS,
+    OPTIONAL_WEBHOOK_EVENTS,
     REQUIRED_PERMISSIONS,
     WEBHOOK_EVENTS,
     excessive_permissions,
@@ -278,6 +283,20 @@ def _validate_online(
         check.fail("Webhook events", "not subscribed: " + ", ".join(missing_events))
     else:
         check.passed("Webhook events")
+    optional_events = sorted(set(OPTIONAL_WEBHOOK_EVENTS) - set(app.events))
+    optional_permissions = missing_permissions(app.permissions, OPTIONAL_PERMISSIONS)
+    if optional_events or optional_permissions:
+        details = []
+        if optional_events:
+            details.append("not subscribed: " + ", ".join(optional_events))
+        if optional_permissions:
+            details.append(
+                "missing " + ", ".join(f"{k}: {v}" for k, v in optional_permissions.items())
+            )
+        check.warn(
+            "Re-runs and merge queue",
+            "; ".join(details) + " (GitHub re-run requests and merge queue validation are off)",
+        )
 
     try:
         installations = client.list_app_installations(credentials.create_jwt())
@@ -362,6 +381,20 @@ def webhook_test_command(
     elif isinstance(normalized, InstallationRepositoriesEvent):
         info(f"  Installation: {normalized.installation_id} ({normalized.account.login})")
         info(f"  Repositories added: {len(normalized.added)}, removed: {len(normalized.removed)}")
+    elif isinstance(normalized, CheckRunRerequestedEvent | CheckSuiteRerequestedEvent):
+        info(f"  Installation: {normalized.installation_id}")
+        info(f"  Repository: {normalized.repository.full_name} (id {normalized.repository.id})")
+        info(f"  Commit: {normalized.head_sha[:12]}")
+        info("  Result: re-run of the stored CommitGuard scan for this commit (if one exists)")
+    elif isinstance(normalized, MergeGroupEvent):
+        info(f"  Installation: {normalized.installation_id}")
+        info(f"  Repository: {normalized.repository.full_name} (id {normalized.repository.id})")
+        info(f"  Merge group: {normalized.base_sha[:12]}..{normalized.head_sha[:12]}")
+        info(f"  Action: {normalized.action.value}")
+        info(
+            "  Result: "
+            + ("scan the merge group commit" if normalized.reason is None else "merge group ended")
+        )
     else:
         info(f"  Installation: {normalized.installation_id}")
         info(f"  Repository: {normalized.repository.full_name} (id {normalized.repository.id})")

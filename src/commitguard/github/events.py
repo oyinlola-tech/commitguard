@@ -23,6 +23,7 @@ context of the base repository, and CommitGuard never needs that.
 """
 
 import json
+import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -33,6 +34,7 @@ from commitguard.ci.context import CIContext, CIEventKind, CIProvider
 from commitguard.exceptions.base import CommitGuardError, UnsafeInputError
 from commitguard.github.errors import WebhookValidationError
 from commitguard.github.identifiers import MAX_GITHUB_ID, GitHubAccount, RepositoryRef
+from commitguard.security.validation import validate_git_sha
 from commitguard.utils.filesystem import read_bytes_limited
 
 MAX_EVENT_BYTES = 64 * 1024 * 1024
@@ -199,10 +201,24 @@ def load_github_event(event_name: str | None, event_path: Path | None) -> CICont
 # made by the same parser for both the GitHub Action and the GitHub App.
 
 SUPPORTED_WEBHOOK_EVENTS = frozenset(
-    {"installation", "installation_repositories", "pull_request", "push"}
+    {
+        "installation",
+        "installation_repositories",
+        "pull_request",
+        "push",
+        "merge_group",
+        "check_run",
+        "check_suite",
+    }
 )
 PULL_REQUEST_SCAN_ACTIONS = frozenset({"opened", "synchronize", "reopened"})
 MAX_EVENT_REPOSITORIES = 50_000
+MAX_EVENT_PULL_REQUESTS = 100
+#: GitHub creates merge group commits on refs under this prefix
+#: (``refs/heads/gh-readonly-queue/{base_branch}/pr-{number}-{sha}``).
+MERGE_QUEUE_REF_PREFIX = "refs/heads/gh-readonly-queue/"
+_MERGE_QUEUE_PR_RE = re.compile(r"/pr-([1-9][0-9]{0,9})-[0-9a-f]{40,64}\Z")
+_HEX_ID_RE = re.compile(r"\A[0-9a-f]{32}\Z")
 
 
 class InstallationAction(StrEnum):
@@ -260,6 +276,56 @@ class PullRequestEvent(_Strict):
     context: CIContext
 
 
+class MergeGroupAction(StrEnum):
+    CHECKS_REQUESTED = "checks_requested"
+    DESTROYED = "destroyed"
+
+
+class MergeGroupEvent(_Strict):
+    """A merge queue candidate commit (``merge_group`` webhook).
+
+    ``head_sha`` is the temporary merge group commit GitHub expects required checks
+    on; ``base_sha`` is its parent on the target branch. ``pull_requests`` is parsed
+    from GitHub's ref naming for display only and never used for authorization.
+    """
+
+    kind: Literal["merge_group"] = "merge_group"
+    action: MergeGroupAction
+    installation_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    repository: RepositoryRef
+    head_sha: str
+    head_ref: str
+    base_sha: str
+    base_ref: str
+    reason: Literal["merged", "invalidated", "dequeued"] | None = None
+    pull_requests: tuple[int, ...] = ()
+    context: CIContext
+
+
+class CheckRunRerequestedEvent(_Strict):
+    """Someone chose "Re-run" on a check run (``check_run`` ``rerequested``)."""
+
+    kind: Literal["check_run_rerequested"] = "check_run_rerequested"
+    installation_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    repository: RepositoryRef
+    check_run_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    name: str = Field(min_length=1, max_length=200)
+    head_sha: str
+    external_id: str | None
+    app_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+
+
+class CheckSuiteRerequestedEvent(_Strict):
+    """Someone chose "Re-run all checks" (``check_suite`` ``rerequested``)."""
+
+    kind: Literal["check_suite_rerequested"] = "check_suite_rerequested"
+    installation_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    repository: RepositoryRef
+    check_suite_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    head_sha: str
+    app_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+
+
 class IgnoredEvent(_Strict):
     kind: Literal["ignored"] = "ignored"
     event: str
@@ -268,7 +334,14 @@ class IgnoredEvent(_Strict):
 
 
 GitHubWebhookEvent = (
-    InstallationEvent | InstallationRepositoriesEvent | PushEvent | PullRequestEvent | IgnoredEvent
+    InstallationEvent
+    | InstallationRepositoriesEvent
+    | PushEvent
+    | PullRequestEvent
+    | MergeGroupEvent
+    | CheckRunRerequestedEvent
+    | CheckSuiteRerequestedEvent
+    | IgnoredEvent
 )
 
 
@@ -376,11 +449,17 @@ def normalize_webhook(event_name: str, payload: object) -> GitHubWebhookEvent:
                 added=_repository_list(payload, "repositories_added"),
                 removed=_repository_list(payload, "repositories_removed"),
             )
+        if event_name in ("check_run", "check_suite"):
+            return _normalize_rerun(event_name, action, payload)
         installation_id = _installation_id(payload)
         repository = _event_repository(payload)
+        if event_name == "merge_group" and action not in set(MergeGroupAction):
+            return IgnoredEvent(event=event_name, action=action, reason="action not used")
         context = parse_github_event(event_name, payload)
         if context.repository != repository.full_name:
             raise WebhookValidationError("webhook repository fields are inconsistent")
+        if event_name == "merge_group":
+            return _merge_group_event(action, installation_id, repository, payload, context)
         if event_name == "push":
             return PushEvent(
                 installation_id=installation_id, repository=repository, context=context
@@ -403,3 +482,82 @@ def normalize_webhook(event_name: str, payload: object) -> GitHubWebhookEvent:
     except (ValidationError, UnsafeInputError, ValueError) as exc:
         detail = "invalid identifiers" if isinstance(exc, UnsafeInputError) else "invalid fields"
         raise WebhookValidationError(f"malformed {event_name} webhook payload ({detail})") from None
+
+
+def _sha(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        raise WebhookValidationError(f"webhook payload field {field} is missing or invalid")
+    try:
+        return validate_git_sha(value)
+    except (UnsafeInputError, ValueError):
+        raise WebhookValidationError(f"webhook payload field {field} is invalid") from None
+
+
+def _merge_group_event(
+    action: str | None,
+    installation_id: int,
+    repository: RepositoryRef,
+    payload: dict[str, Any],
+    context: CIContext,
+) -> MergeGroupEvent:
+    group = _require(payload, "merge_group", dict, "merge_group")
+    head_ref = _clean_ref(_require(group, "head_ref", str, "merge_group.head_ref"), "head_ref")
+    base_ref = _clean_ref(_require(group, "base_ref", str, "merge_group.base_ref"), "base_ref")
+    if head_ref is None or base_ref is None:  # pragma: no cover - _require checked the type
+        raise WebhookValidationError("merge group refs are missing")
+    base_branch = base_ref.removeprefix("refs/heads/")
+    # A merge group commit lives on GitHub's read-only queue ref for its base branch.
+    if not base_ref.startswith("refs/heads/") or not head_ref.startswith(
+        f"{MERGE_QUEUE_REF_PREFIX}{base_branch}/"
+    ):
+        raise WebhookValidationError("merge group refs do not describe a merge queue")
+    head_commit = group.get("head_commit")
+    if isinstance(head_commit, dict) and head_commit.get("id") not in (None, context.head_sha):
+        raise WebhookValidationError("merge group head commit is inconsistent")
+    match = _MERGE_QUEUE_PR_RE.search(head_ref)
+    reason = payload.get("reason")
+    return MergeGroupEvent(
+        action=MergeGroupAction(action or ""),
+        installation_id=installation_id,
+        repository=repository,
+        head_sha=context.head_sha or "",
+        head_ref=head_ref,
+        base_sha=context.base_sha or "",
+        base_ref=base_ref,
+        reason=reason if reason in ("merged", "invalidated", "dequeued") else None,
+        pull_requests=(int(match.group(1)),) if match else (),
+        context=context.model_copy(update={"ref": base_ref}),
+    )
+
+
+def _normalize_rerun(
+    event_name: str, action: str | None, payload: dict[str, Any]
+) -> GitHubWebhookEvent:
+    if action != "rerequested":
+        return IgnoredEvent(event=event_name, action=action, reason="action not used")
+    installation_id = _installation_id(payload)
+    repository = _event_repository(payload)
+    if event_name == "check_run":
+        run = _require(payload, "check_run", dict, "check_run")
+        app = _require(run, "app", dict, "check_run.app")
+        external_id = run.get("external_id")
+        return CheckRunRerequestedEvent(
+            installation_id=installation_id,
+            repository=repository,
+            check_run_id=_require(run, "id", int, "check_run.id"),
+            name=_require(run, "name", str, "check_run.name"),
+            head_sha=_sha(run.get("head_sha"), "check_run.head_sha"),
+            external_id=external_id
+            if isinstance(external_id, str) and _HEX_ID_RE.match(external_id)
+            else None,
+            app_id=_require(app, "id", int, "check_run.app.id"),
+        )
+    suite = _require(payload, "check_suite", dict, "check_suite")
+    app = _require(suite, "app", dict, "check_suite.app")
+    return CheckSuiteRerequestedEvent(
+        installation_id=installation_id,
+        repository=repository,
+        check_suite_id=_require(suite, "id", int, "check_suite.id"),
+        head_sha=_sha(suite.get("head_sha"), "check_suite.head_sha"),
+        app_id=_require(app, "id", int, "check_suite.app.id"),
+    )

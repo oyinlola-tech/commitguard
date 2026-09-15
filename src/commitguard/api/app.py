@@ -53,6 +53,11 @@ from commitguard.controlplane.identity import (
     csrf_token_for,
 )
 from commitguard.controlplane.members import MembershipService
+from commitguard.controlplane.notifications import (
+    NotificationCenter,
+    parse_category_filter,
+    parse_state_filter,
+)
 from commitguard.controlplane.pagination import (
     encode_cursor,
     offset_cursor,
@@ -92,7 +97,8 @@ from commitguard.controlplane.views import (
 )
 from commitguard.core.decision import Action
 from commitguard.core.result import Severity
-from commitguard.observability.logging import get_logger
+from commitguard.notifications.models import NotificationState
+from commitguard.observability.logging import correlation, get_logger
 from commitguard.policies.defaults import KNOWN_POLICY_IDS
 from commitguard.security.rate_limit import RequestRateLimiter
 
@@ -118,6 +124,8 @@ RATE_LIMITS = {
     "search": 120,
     "write": 30,
     "github": 10,
+    # policy rollback, organization notification settings, webhook endpoints
+    "sensitive": 10,
 }
 
 
@@ -164,6 +172,7 @@ class DashboardApi:
         commands: ControlPlaneCommands,
         policies: OrganizationPolicyService,
         members: MembershipService,
+        notifications: NotificationCenter,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -173,6 +182,7 @@ class DashboardApi:
         self._commands = commands
         self._policies = policies
         self._members = members
+        self._notifications = notifications
         self._now = now
         self._limiters = {k: RequestRateLimiter(v, clock) for k, v in RATE_LIMITS.items()}
         self._routes = self._build_routes()
@@ -192,7 +202,8 @@ class DashboardApi:
                 response = self._preflight(origin, environ)
             else:
                 request = self._parse(environ, method, path, request_id)
-                response = self._dispatch(request)
+                with correlation(request_id=request_id):
+                    response = self._dispatch(request)
         except ApiError as exc:
             response = error_response(exc, request_id)
         except ControlPlaneError as exc:
@@ -342,7 +353,7 @@ class DashboardApi:
             204,
             b"",
             [
-                ("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE"),
+                ("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE"),
                 ("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token"),
                 ("Access-Control-Max-Age", "600"),
             ],
@@ -558,6 +569,12 @@ class DashboardApi:
             raise ApiError(404, "NOT_FOUND", NOT_FOUND)
         return ok(detail)
 
+    def repository_merge_queue(self, request: Request) -> Response:
+        view = self._queries.merge_queue(self._scope(request), request.params["repository_id"])
+        if view is None:
+            raise ApiError(404, "NOT_FOUND", NOT_FOUND)
+        return ok(view)
+
     def put_monitoring(self, request: Request) -> Response:
         body = request.json()
         self._commands.set_monitoring(
@@ -617,6 +634,12 @@ class DashboardApi:
         if comparison is None:
             raise ApiError(404, "NOT_FOUND", NOT_FOUND)
         return ok(comparison)
+
+    def scan_executions(self, request: Request) -> Response:
+        history = self._queries.scan_executions(self._scope(request), request.params["scan_id"])
+        if history is None:
+            raise ApiError(404, "NOT_FOUND", NOT_FOUND)
+        return ok(history)
 
     def rescan(self, request: Request) -> Response:
         job_id = self._commands.request_rescan(self._principal(request), request.params["scan_id"])
@@ -769,6 +792,63 @@ class DashboardApi:
             raise ApiError(404, "NOT_FOUND", NOT_FOUND)
         return ok(self._policies.version_view(version))
 
+    def policy_diff(self, request: Request) -> Response:
+        principal = self._principal(request)
+        organization = self._organization(
+            principal, request.params["organization_id"], Permission.POLICIES_READ
+        )
+        from_version = self._version_arg(request, "from")
+        to_version = self._version_arg(request, "to")
+        diff = self._policies.diff(organization.id, from_version, to_version)
+        if diff is None:
+            raise ApiError(404, "NOT_FOUND", NOT_FOUND)
+        return ok(diff)
+
+    @staticmethod
+    def _version_arg(request: Request, name: str) -> int:
+        raw = request.arg(name)
+        if raw is None or not raw.isascii() or not raw.isdigit() or len(raw) > 9:
+            raise bad_request(f"{name} must be a policy version number", field=name)
+        return int(raw)
+
+    def rollback_policy(self, request: Request) -> Response:
+        principal = self._principal(request)
+        organization = self._organization(
+            principal, request.params["organization_id"], Permission.POLICIES_ROLLBACK
+        )
+        body = request.json()
+        target = body.get("target_version")
+        expected = body.get("expected_current_version")
+        for name, value in (("target_version", target), ("expected_current_version", expected)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise bad_request(f"{name} must be a non-negative integer", field=name)
+        reason = body.get("reason")
+        if reason is not None and (not isinstance(reason, str) or len(reason) > 500):
+            raise bad_request("reason must be text of at most 500 characters", "reason")
+        created, diff = self._policies.rollback(
+            account_id=organization.id,
+            actor=Actor.user(principal.user_id, principal.login),
+            authenticated_at=principal.authenticated_at,
+            target_version=int(target),  # type: ignore[arg-type]
+            expected_current_version=int(expected),  # type: ignore[arg-type]
+            reason=reason,
+            confirm=self._bool(body.get("confirm", False), "confirm"),
+        )
+        view = self._policies.view(
+            organization, can_write=principal.can(Permission.POLICIES_WRITE, organization.id)
+        )
+        return ok(
+            view,
+            {
+                "rollback": {
+                    "new_version": created.version,
+                    "restored_version": created.restored_version,
+                    "rollback_of": created.rollback_of,
+                    "diff": diff.model_dump(mode="json"),
+                }
+            },
+        )
+
     def list_rules(self, request: Request) -> Response:
         return ok(list_rules())
 
@@ -838,6 +918,116 @@ class DashboardApi:
         return ok(result)
 
     # ------------------------------------------------------------------ #
+    # Notifications
+    # ------------------------------------------------------------------ #
+    def list_notifications(self, request: Request) -> Response:
+        principal = self._principal(request)
+        limit = parse_limit(request.arg("limit"))
+        page = self._notifications.list_notifications(
+            principal,
+            state=parse_state_filter(request.arg("state")),
+            category=parse_category_filter(request.arg("category")),
+            organization_id=parse_int_id(request.arg("organization"), "organization"),
+            cursor=request.arg("cursor"),
+            limit=limit,
+        )
+        counts = self._notifications.counts(principal)
+        return ok(page.items, _page_meta(page.next_cursor, page.limit, counts=counts.model_dump()))
+
+    def notification_counts(self, request: Request) -> Response:
+        return ok(self._notifications.counts(self._principal(request)))
+
+    def get_notification(self, request: Request) -> Response:
+        view = self._notifications.get(self._principal(request), request.params["notification_id"])
+        if view is None:
+            raise ApiError(404, "NOT_FOUND", NOT_FOUND)
+        return ok(view)
+
+    def read_notification(self, request: Request) -> Response:
+        return ok(
+            self._notifications.set_state(
+                self._principal(request), request.params["notification_id"], NotificationState.READ
+            )
+        )
+
+    def unread_notification(self, request: Request) -> Response:
+        return ok(
+            self._notifications.set_state(
+                self._principal(request),
+                request.params["notification_id"],
+                NotificationState.UNREAD,
+            )
+        )
+
+    def archive_notification(self, request: Request) -> Response:
+        return ok(
+            self._notifications.set_state(
+                self._principal(request),
+                request.params["notification_id"],
+                NotificationState.ARCHIVED,
+            )
+        )
+
+    def read_all_notifications(self, request: Request) -> Response:
+        body = request.json()
+        organization = body.get("organization_id")
+        if organization is not None and (
+            not isinstance(organization, int) or isinstance(organization, bool)
+        ):
+            raise bad_request("organization_id must be an integer", field="organization_id")
+        updated = self._notifications.mark_all_read(self._principal(request), organization)
+        return ok({"updated": updated})
+
+    def notification_preferences(self, request: Request) -> Response:
+        return ok(self._notifications.preferences(self._principal(request)))
+
+    def patch_notification_preferences(self, request: Request) -> Response:
+        body = request.json()
+        return ok(
+            self._notifications.update_personal(
+                self._principal(request), body.get("organization_id"), body.get("in_app")
+            )
+        )
+
+    def notification_settings(self, request: Request) -> Response:
+        return ok(
+            self._notifications.organization_settings(
+                self._principal(request), request.params["organization_id"]
+            )
+        )
+
+    def put_notification_settings(self, request: Request) -> Response:
+        return ok(
+            self._notifications.update_organization(
+                self._principal(request), request.params["organization_id"], request.json()
+            )
+        )
+
+    def add_notification_webhook(self, request: Request) -> Response:
+        created = self._notifications.add_webhook(
+            self._principal(request), request.params["organization_id"], request.json()
+        )
+        return ok(created, status=201)
+
+    def delete_notification_webhook(self, request: Request) -> Response:
+        self._notifications.remove_webhook(
+            self._principal(request),
+            request.params["organization_id"],
+            request.params["endpoint_id"],
+        )
+        return ok({"removed": True})
+
+    def notification_deliveries(self, request: Request) -> Response:
+        limit = parse_limit(request.arg("limit"))
+        page = self._notifications.deliveries(
+            self._principal(request),
+            request.params["organization_id"],
+            cursor=request.arg("cursor"),
+            limit=limit,
+        )
+        return ok(page.items, _page_meta(page.next_cursor, page.limit))
+
+    # ------------------------------------------------------------------ #
     # Route table
     # ------------------------------------------------------------------ #
     def _build_routes(self) -> tuple[Route, ...]:
@@ -894,6 +1084,14 @@ class DashboardApi:
                 "read",
             ),
             (
+                "GET",
+                "/repositories/{repository_id:int}/merge-queue",
+                self.repository_merge_queue,
+                p.REPOSITORIES_READ,
+                False,
+                "read",
+            ),
+            (
                 "PUT",
                 "/repositories/{repository_id:int}/monitoring",
                 self.put_monitoring,
@@ -915,6 +1113,14 @@ class DashboardApi:
                 "GET",
                 "/scans/{scan_id:hex}/comparison",
                 self.compare_scan,
+                p.SCANS_READ,
+                False,
+                "read",
+            ),
+            (
+                "GET",
+                "/scans/{scan_id:hex}/executions",
+                self.scan_executions,
                 p.SCANS_READ,
                 False,
                 "read",
@@ -972,6 +1178,22 @@ class DashboardApi:
                 False,
                 "read",
             ),
+            (
+                "GET",
+                "/policies/{organization_id:int}/diff",
+                self.policy_diff,
+                None,
+                False,
+                "read",
+            ),
+            (
+                "POST",
+                "/policies/{organization_id:int}/rollback",
+                self.rollback_policy,
+                None,
+                False,
+                "sensitive",
+            ),
             ("GET", "/rules", self.list_rules, p.RULES_READ, False, "read"),
             ("GET", "/rules/{rule_id:ident}", self.get_rule, p.RULES_READ, False, "read"),
             ("GET", "/audit", self.list_audit, p.AUDIT_READ, False, "read"),
@@ -1007,6 +1229,105 @@ class DashboardApi:
                 p.REPOSITORIES_READ,
                 False,
                 "github",
+            ),
+            # Notifications are scoped per user inside the notification center.
+            ("GET", "/notifications", self.list_notifications, None, False, "read"),
+            ("GET", "/notifications/counts", self.notification_counts, None, False, "read"),
+            (
+                "POST",
+                "/notifications/read-all",
+                self.read_all_notifications,
+                None,
+                False,
+                "write",
+            ),
+            (
+                "GET",
+                "/notifications/{notification_id:hex}",
+                self.get_notification,
+                None,
+                False,
+                "read",
+            ),
+            (
+                "POST",
+                "/notifications/{notification_id:hex}/read",
+                self.read_notification,
+                None,
+                False,
+                "write",
+            ),
+            (
+                "POST",
+                "/notifications/{notification_id:hex}/unread",
+                self.unread_notification,
+                None,
+                False,
+                "write",
+            ),
+            (
+                "POST",
+                "/notifications/{notification_id:hex}/archive",
+                self.archive_notification,
+                None,
+                False,
+                "write",
+            ),
+            (
+                "GET",
+                "/notification-preferences",
+                self.notification_preferences,
+                None,
+                False,
+                "read",
+            ),
+            (
+                "PATCH",
+                "/notification-preferences",
+                self.patch_notification_preferences,
+                None,
+                False,
+                "write",
+            ),
+            (
+                "GET",
+                "/organizations/{organization_id:int}/notification-settings",
+                self.notification_settings,
+                None,
+                False,
+                "read",
+            ),
+            (
+                "PUT",
+                "/organizations/{organization_id:int}/notification-settings",
+                self.put_notification_settings,
+                None,
+                False,
+                "sensitive",
+            ),
+            (
+                "POST",
+                "/organizations/{organization_id:int}/notification-webhooks",
+                self.add_notification_webhook,
+                None,
+                False,
+                "sensitive",
+            ),
+            (
+                "DELETE",
+                "/organizations/{organization_id:int}/notification-webhooks/{endpoint_id:hex}",
+                self.delete_notification_webhook,
+                None,
+                False,
+                "sensitive",
+            ),
+            (
+                "GET",
+                "/organizations/{organization_id:int}/notification-deliveries",
+                self.notification_deliveries,
+                None,
+                False,
+                "read",
             ),
         ]
         routes = []

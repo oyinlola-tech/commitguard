@@ -46,6 +46,10 @@ from commitguard.controlplane.access import Role  # noqa: E402
 from commitguard.controlplane.members import MembershipService  # noqa: E402
 from commitguard.github.app import GitHubAppService  # noqa: E402
 from commitguard.github.identifiers import RepositoryRef  # noqa: E402
+from commitguard.notifications.settings import (  # noqa: E402
+    NotificationMode,
+    NotificationSettings,
+)
 from commitguard.security.secrets import Secret  # noqa: E402
 
 
@@ -152,6 +156,13 @@ class Stack:
             allowed_git_protocols=("file",),
             sleep=lambda _seconds: None,
             workers=2,
+            # E-mail and webhooks go through the whole pipeline but are only recorded.
+            notification_settings=NotificationSettings(
+                mode=NotificationMode.TEST,
+                signing_key=Secret("e2e-notification-signing-key-0123456789"),
+                dashboard_origin=self.origin,
+                production=False,
+            ),
         )
         settings = DashboardSettings(
             origin=self.origin,
@@ -253,6 +264,69 @@ class Stack:
         self.pull_request(PROJECT, 9, base, fixed, "synchronize")
         return {"head": fixed}
 
+    # -- Phase 7 ------------------------------------------------------------ #
+    def phase7_commit(self) -> dict[str, str]:
+        """Pull request #21: an AI-attributed commit (its own branch, independent of #9)."""
+        project = self.repos[PROJECT.id]
+        git(project.dev, "checkout", "-q", "main")
+        base = project.head("main")
+        git(project.dev, "checkout", "-q", "-B", "feature-21")
+        bad = project.commit(f"feat(invoices): add PDF export\n\n{AI_TRAILER}\n")
+        git(project.dev, "push", "-q", "-f", "origin", "feature-21")
+        self.pull_request(PROJECT, 21, base, bad, "opened")
+        return {"base": base, "head": bad}
+
+    def phase7_fix(self) -> dict[str, str]:
+        project = self.repos[PROJECT.id]
+        base = project.head("main")
+        git(project.dev, "checkout", "-q", "feature-21")
+        git(project.dev, "reset", "-q", "--hard", base)
+        fixed = project.commit("feat(invoices): add PDF export\n")
+        git(project.dev, "push", "-q", "-f", "origin", "feature-21")
+        self.pull_request(PROJECT, 21, base, fixed, "synchronize")
+        return {"head": fixed}
+
+    def rerun(self, sha: str) -> dict[str, Any]:
+        """GitHub "Re-run" on the newest CommitGuard check run for ``sha``."""
+        run = self.github.runs_for(sha)[-1]
+        result = self.env.deliver("check_run", fake.check_run_payload(run, repository=PROJECT))
+        return {"status": result.body.get("status")}
+
+    def merge_group(self) -> dict[str, str]:
+        """The merge queue builds a merge group for pull request #21 and requests checks."""
+        project = self.repos[PROJECT.id]
+        feature = project.head("feature-21")
+        git(project.dev, "checkout", "-q", "--detach", "main")
+        base = project.head("HEAD")
+        git(
+            project.dev,
+            "merge",
+            "-q",
+            "--no-ff",
+            "--no-verify",
+            "-m",
+            "Merge pull request #21",
+            feature,
+        )
+        group = project.head("HEAD")
+        git(
+            project.dev,
+            "push",
+            "-q",
+            "-f",
+            "origin",
+            f"HEAD:refs/heads/gh-readonly-queue/main/pr-21-{feature}",
+        )
+        git(project.dev, "checkout", "-q", "feature-21")
+        result = self.env.deliver(
+            "merge_group", fake.merge_group_payload(base, group, number=21, repository=PROJECT)
+        )
+        return {"base": base, "head": group, "status": str(result.body.get("status"))}
+
+    def notify(self) -> dict[str, int]:
+        result = self.service.notifications.run_once()
+        return {"dispatched": result.dispatched, "attempted": result.attempted}
+
     # -- WSGI -------------------------------------------------------------- #
     def wsgi(self, environ: WSGIEnvironment, start_response: StartResponse) -> Iterable[bytes]:
         path = environ.get("PATH_INFO", "")
@@ -275,6 +349,11 @@ class Stack:
                 "conclusion": (self.github.runs_for(body["sha"]) or [{}])[-1].get("conclusion")
             },
             "/__e2e/drain": lambda: {"processed": self.service.process_pending()},
+            "/__e2e/phase7-commit": self.phase7_commit,
+            "/__e2e/phase7-fix": self.phase7_fix,
+            "/__e2e/rerun": lambda: self.rerun(str(body["sha"])),
+            "/__e2e/merge-group": self.merge_group,
+            "/__e2e/notify": self.notify,
         }
         handler = routes.get(path)
         if handler is None:

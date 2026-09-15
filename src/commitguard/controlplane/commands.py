@@ -36,9 +36,8 @@ from commitguard.github.enforcement_status import EnforcementProbe
 from commitguard.github.errors import AuthorizationError, GitHubAPIError
 from commitguard.github.identifiers import RepositoryRef
 from commitguard.github.installations import InstallationService
-from commitguard.github.storage import NewScanJob, SqliteStateStore
+from commitguard.github.storage import ScanTrigger, SqliteStateStore
 from commitguard.observability.logging import get_logger
-from commitguard.security.hashing import fingerprint
 from commitguard.services.audit import AuditService
 
 log = get_logger(__name__)
@@ -247,13 +246,16 @@ class ControlPlaneCommands:
             db.execute(
                 "INSERT INTO enforcement_status (installation_id, repository_id, checked_at, "
                 "branch, actions, actions_detail, branch_protection, required_checks, "
-                "branch_protection_detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "branch_protection_detail, merge_queue, merge_queue_detail) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (installation_id, repository_id) DO UPDATE SET "
                 "checked_at = excluded.checked_at, branch = excluded.branch, "
                 "actions = excluded.actions, actions_detail = excluded.actions_detail, "
                 "branch_protection = excluded.branch_protection, "
                 "required_checks = excluded.required_checks, "
-                "branch_protection_detail = excluded.branch_protection_detail",
+                "branch_protection_detail = excluded.branch_protection_detail, "
+                "merge_queue = excluded.merge_queue, "
+                "merge_queue_detail = excluded.merge_queue_detail",
                 (
                     installation_id,
                     repository_id,
@@ -264,6 +266,8 @@ class ControlPlaneCommands:
                     evidence.branch_protection,
                     json.dumps([clean_text(c, 200) for c in evidence.required_checks]),
                     clean_text(evidence.branch_protection_detail, 500),
+                    evidence.merge_queue,
+                    clean_text(evidence.merge_queue_detail, 500),
                 ),
             )
             event = self._store.insert_audit_event(
@@ -276,6 +280,7 @@ class ControlPlaneCommands:
                     repository=authorized.repository.full_name,
                     actions=evidence.actions,
                     branch_protection=evidence.branch_protection,
+                    merge_queue=evidence.merge_queue,
                 ),
             )
         self._audit.log_stored(event)
@@ -310,11 +315,14 @@ class ControlPlaneCommands:
     # Scans
     # ------------------------------------------------------------------ #
     def request_rescan(self, principal: Principal, scan_id: str) -> str:
-        """Queue a new scan of exactly the commits a stored scan covered.
+        """Queue a new execution of exactly the commits a stored scan covered.
 
         The repository, commits and event come from the stored scan - never from
-        the request - and the new job goes through the same worker path as a
-        webhook (authorization against GitHub, trusted policy, check ownership).
+        the request - and the new execution goes through the same worker path as a
+        webhook (authorization against GitHub, current effective policy, check
+        ownership). It is recorded as execution N+1 of the same scan with trigger
+        ``manual``; earlier executions are unchanged. Callers cannot choose a
+        historical policy version.
         """
         row = self._queries.scan_row_for_command(principal.scope(Permission.SCANS_READ), scan_id)
         if row is None:
@@ -327,25 +335,11 @@ class ControlPlaneCommands:
         job = self._store.get_job(scan_id)
         if job is None:  # pragma: no cover - the row was just read
             raise NotFoundError()
-        now = self._now()
-        new_job, created = self._store.create_job(
-            NewScanJob(
-                job_key=fingerprint(["rescan", job.job_key, now.isoformat()]),
-                installation_id=job.installation_id,
-                repository=job.repository,
-                delivery_id=None,
-                event=job.event,
-                group_key=job.group_key,
-                head_sha=job.head_sha,
-                check_name=job.check_name,
-                pull_request_number=job.pull_request_number,
-                context=job.context,
-                requested_by=principal.login,
-            ),
-            now,
+        new_job, created = self._store.create_execution(
+            job, trigger=ScanTrigger.MANUAL, now=self._now(), requested_by=principal.login
         )
-        if not created:  # pragma: no cover - the key includes a timestamp
-            raise ConflictError("A re-scan is already queued.")
+        if not created:
+            raise ConflictError("A scan of these commits is already queued or running.")
         self._audit.record(
             AuditEventType.SCAN_REQUESTED,
             actor=_actor(principal),
@@ -355,6 +349,8 @@ class ControlPlaneCommands:
             head_sha=job.head_sha,
             job=new_job.job_id,
             previous_scan=scan_id,
+            execution=new_job.execution,
+            trigger=ScanTrigger.MANUAL.value,
         )
         self._enqueue(new_job.job_id)  # if the queue is full, recovery picks it up
         return new_job.job_id

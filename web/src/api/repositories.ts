@@ -1,5 +1,5 @@
 import { getData, getPage, send } from "./client";
-import type { Page, RepositoryDetail, RepositorySummary } from "./types";
+import type { MergeQueue, Page, RepositoryDetail, RepositorySummary } from "./types";
 
 export interface RepositoryFilters {
   organization?: number | null;
@@ -21,3 +21,6 @@ export const setMonitoring = (id: number, enabled: boolean, reason: string | nul
 
 export const refreshEnforcement = (id: number) =>
   send<RepositoryDetail>("POST", `/repositories/${encodeURIComponent(String(id))}/enforcement/refresh`);
+
+export const getMergeQueue = (id: number): Promise<MergeQueue> =>
+  getData<MergeQueue>(`/repositories/${encodeURIComponent(String(id))}/merge-queue`);

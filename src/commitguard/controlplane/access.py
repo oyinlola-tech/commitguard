@@ -22,11 +22,13 @@ Roles
 ==================  =========================================================
 Role                Adds
 ==================  =========================================================
-``viewer``          read repositories, scans, violations, policies, rules
+``viewer``          read repositories, scans, violations, policies, rules;
+                    receive in-app notifications about them
 ``security_manager`` acknowledge violations, request re-scans, read the audit log
-``admin``           change organisation policy, stop/resume monitoring a
-                    repository, refresh enforcement status, sync
-                    installation repositories, list members
+``admin``           change and roll back organisation policy, stop/resume
+                    monitoring a repository, refresh enforcement status, sync
+                    installation repositories, list members, manage
+                    organisation notification settings and webhooks
 ``owner``           grant, change and remove member roles
 ==================  =========================================================
 
@@ -50,11 +52,14 @@ class Permission(StrEnum):
     VIOLATIONS_MANAGE = "violations:manage"
     POLICIES_READ = "policies:read"
     POLICIES_WRITE = "policies:write"
+    POLICIES_ROLLBACK = "policies:rollback"
     RULES_READ = "rules:read"
     AUDIT_READ = "audit:read"
     GITHUB_MANAGE = "github:manage"
     MEMBERS_READ = "members:read"
     MEMBERS_MANAGE = "members:manage"
+    NOTIFICATIONS_READ = "notifications:read"
+    NOTIFICATIONS_MANAGE = "notifications:manage"
 
 
 class Role(StrEnum):
@@ -79,6 +84,7 @@ _VIEWER = frozenset(
         Permission.VIOLATIONS_READ,
         Permission.POLICIES_READ,
         Permission.RULES_READ,
+        Permission.NOTIFICATIONS_READ,
     }
 )
 _SECURITY_MANAGER = _VIEWER | {
@@ -88,6 +94,8 @@ _SECURITY_MANAGER = _VIEWER | {
 }
 _ADMIN = _SECURITY_MANAGER | {
     Permission.POLICIES_WRITE,
+    Permission.POLICIES_ROLLBACK,
+    Permission.NOTIFICATIONS_MANAGE,
     Permission.REPOSITORIES_MANAGE,
     Permission.GITHUB_MANAGE,
     Permission.MEMBERS_READ,

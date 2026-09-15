@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { OctagonAlert } from "lucide-react";
+import { OctagonAlert, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -63,6 +63,13 @@ export default function Overview() {
           const periodLabel = PERIODS.find(([key]) => key === data.period.key)?.[1] ?? "";
           return (
             <div className="stack-lg">
+              {s.repositories_at_risk > 0 || data.integration.status !== "connected" ? (
+                <Notice tone="danger" title={<><ShieldAlert size={16} aria-hidden="true" /> GitHub enforcement at risk</>}>
+                  {data.integration.detail}
+                  {s.repositories_at_risk > 0 ? ` ${count(s.repositories_at_risk)} repositor${s.repositories_at_risk === 1 ? "y is" : "ies are"} no longer checked by the GitHub App.` : ""}{" "}
+                  <Link to={routes.installations}>Review GitHub installations</Link>
+                </Notice>
+              ) : null}
               {s.critical_open > 0 ? (
                 <Notice tone="danger" title={<><OctagonAlert size={16} aria-hidden="true" /> CRITICAL: {count(s.critical_open)} open critical violation{s.critical_open === 1 ? "" : "s"}</>}>
                   <Link to={`${routes.violations}?severity=critical&status=open`}>Review critical violations</Link>

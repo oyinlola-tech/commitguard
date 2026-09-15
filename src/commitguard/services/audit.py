@@ -73,6 +73,7 @@ class AuditService:
             type=event_type,
             occurred_at=self._now(),
             delivery_id=_str("delivery_id"),
+            request_id=_str("request_id"),
             job_id=_str("job_id"),
             scan_id=_str("scan_id"),
             actor_type=actor.type,

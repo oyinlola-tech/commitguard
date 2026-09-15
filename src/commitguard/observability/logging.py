@@ -29,7 +29,15 @@ from commitguard.security.secrets import REDACTED, redact
 
 MAX_FIELD_CHARS = 1000
 MAX_FIELDS = 40
-CORRELATION_FIELDS = ("delivery_id", "job_id", "scan_id", "installation_id", "repository")
+CORRELATION_FIELDS = (
+    "request_id",
+    "delivery_id",
+    "job_id",
+    "scan_id",
+    "notification_event_id",
+    "installation_id",
+    "repository",
+)
 _SENSITIVE_KEY_PARTS = (
     "token",
     "secret",

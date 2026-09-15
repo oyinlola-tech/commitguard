@@ -46,3 +46,8 @@ def group_key(number: int) -> str:
 def branch_group_key(ref: str) -> str:
     """Scan group for pushes to one branch (hashed: ref names are untrusted text)."""
     return f"push:{sha256_hex(ref.encode('utf-8'))[:24]}"
+
+
+def merge_group_key(head_sha: str) -> str:
+    """Scan group for one merge queue candidate commit (each merge group has its own SHA)."""
+    return f"merge_group:{head_sha}"

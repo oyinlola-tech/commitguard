@@ -5,7 +5,7 @@ const VIEWPORTS = [
   { name: "tablet", width: 820, height: 1180 },
   { name: "desktop", width: 1440, height: 900 },
 ];
-const PAGES = ["/", "/login", "/dashboard", "/repositories", "/scans", "/violations", "/policies", "/rules", "/audit", "/github/installations", "/settings", "/missing"];
+const PAGES = ["/", "/login", "/dashboard", "/repositories", "/repositories/5001", "/scans", "/violations", "/policies", "/rules", "/audit", "/github/installations", "/notifications", "/settings", "/missing"];
 
 for (const viewport of VIEWPORTS) {
   test(`no horizontal overflow at ${viewport.name} (${viewport.width}px)`, async ({ context, page }) => {

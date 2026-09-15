@@ -140,7 +140,9 @@ def test_filters_are_applied_on_the_server(seeded) -> None:  # type: ignore[no-u
 
 def test_documented_routes_match_implemented_routes(dash) -> None:  # type: ignore[no-untyped-def]
     text = (PROJECT_ROOT / "docs" / "dashboard.md").read_text(encoding="utf-8")
-    documented = set(re.findall(r"^\| `(GET|POST|PUT|DELETE) (/api/v1/[^`]+)` \|", text, re.M))
+    documented = set(
+        re.findall(r"^\| `(GET|POST|PUT|PATCH|DELETE) (/api/v1/[^`]+)` \|", text, re.M)
+    )
     implemented = {
         (route.method, re.sub(r"\{([a-z_]+):[a-z]+\}", r"{\1}", route.template))
         for route in dash.api.routes

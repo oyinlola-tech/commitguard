@@ -4,12 +4,22 @@
 
     GitHub --HTTPS webhook--> WSGI endpoint (POST /webhooks/github)
              rate limit -> size/content-type -> signature -> headers -> JSON
-             -> normalise -> delivery-ID dedup -> installation events: apply
-                                              -> push / pull_request: store job, enqueue
+             -> normalise -> event record (delivery ID: new / duplicate / retry)
+             -> installation events: apply (state + audit + notification, one transaction)
+             -> push / pull_request / merge_group: store job, enqueue
+             -> check_run / check_suite "rerequested": new execution of the stored scan
              <- 2xx within milliseconds (no scanning on the request path)
 
-    worker threads: queue -> ScanWorker -> Check Run
-    maintenance:    re-enqueue abandoned jobs, retention purge
+    worker threads:      queue -> ScanWorker -> Check Run
+    notification thread: outbox -> inbox / deliveries -> e-mail, webhooks (retries)
+    maintenance:         re-enqueue abandoned jobs, recovery (failed deliveries,
+                         infrastructure retries), retention purge
+
+Event records: every verified delivery is stored with a processing status
+(``processing`` -> ``processed`` / ``ignored`` / ``failed``). GitHub reuses the
+delivery ID when a delivery is redelivered: a processed delivery is answered as
+a duplicate, while a failed or abandoned one is processed again, so an outage
+while handling an event does not lose it.
 
 The WSGI application has no framework dependency. ``commitguard github serve``
 runs it with a small threaded development server; production deployments put
@@ -27,7 +37,7 @@ from pathlib import Path
 from typing import Any
 from wsgiref.types import StartResponse, WSGIEnvironment
 
-from commitguard.audit.models import AuditEventType
+from commitguard.audit.models import GITHUB_ACTOR, AuditEventType
 from commitguard.config.sources import MandatoryPolicy, load_mandatory_policy
 from commitguard.controlplane.policies import OrganizationPolicyService
 from commitguard.controlplane.results import ScanResultRecorder
@@ -36,10 +46,14 @@ from commitguard.github.checks import APP_CHECK_NAME, APP_PUSH_CHECK_NAME
 from commitguard.github.client import API_URL, GitHubClient, Transport
 from commitguard.github.errors import WebhookValidationError
 from commitguard.github.events import (
+    CheckRunRerequestedEvent,
+    CheckSuiteRerequestedEvent,
     GitHubWebhookEvent,
     IgnoredEvent,
     InstallationEvent,
     InstallationRepositoriesEvent,
+    MergeGroupAction,
+    MergeGroupEvent,
     PullRequestEvent,
     PushEvent,
     normalize_webhook,
@@ -50,20 +64,32 @@ from commitguard.github.pull_requests import (
     branch_group_key,
     disposition,
     group_key,
+    merge_group_key,
 )
 from commitguard.github.queue import DEFAULT_QUEUE_SIZE, EventQueue, InProcessEventQueue
+from commitguard.github.recovery import RecoveryService
 from commitguard.github.repositories import GitHubRemoteLocator, MirrorManager, RemoteLocator
 from commitguard.github.settings import AppSettings, load_settings
 from commitguard.github.storage import (
     DATABASE_FILENAME,
     DeliveryStatus,
+    EventProcessingStatus,
+    MergeGroupState,
     NewScanJob,
+    ScanJob,
+    ScanTrigger,
     SqliteStateStore,
 )
 from commitguard.github.webhooks import MAX_WEBHOOK_BYTES, WebhookDelivery, parse_delivery
 from commitguard.github.worker import ScanWorker
+from commitguard.notifications.service import RUN_INTERVAL_SECONDS, NotificationService
+from commitguard.notifications.settings import NotificationSettings
 from commitguard.observability.logging import configure_json_logging, correlation, get_logger
 from commitguard.observability.metrics import (
+    CHECK_RERUNS,
+    GITHUB_EVENTS_FAILED,
+    GITHUB_EVENTS_RECEIVED,
+    GITHUB_EVENTS_REPLAYED,
     SCANS_QUEUED,
     WEBHOOKS_DUPLICATE,
     WEBHOOKS_RECEIVED,
@@ -82,6 +108,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 600
 RECOVERY_INTERVAL_SECONDS = 60.0
 RECOVER_QUEUED_AFTER = timedelta(minutes=5)
 RETENTION_INTERVAL_SECONDS = 3600.0
+APP_CHECK_NAMES = frozenset({APP_CHECK_NAME, APP_PUSH_CHECK_NAME})
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +133,8 @@ class GitHubAppService:
         queue: EventQueue | None = None,
         metrics: InMemoryMetrics | None = None,
         rate_limit_per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE,
+        notification_settings: NotificationSettings | None = None,
+        notifications: NotificationService | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.store = store
@@ -119,7 +148,14 @@ class GitHubAppService:
             store, self.tokens, client, mirrors, self.audit, now=now
         )
         self.policies = OrganizationPolicyService(
-            store, self.audit, service_policy=mandatory_policy, now=now
+            store, self.audit, service_policy=mandatory_policy, metrics=self.metrics, now=now
+        )
+        self.notifications = notifications or NotificationService(
+            store,
+            self.audit,
+            self.metrics,
+            notification_settings or NotificationSettings(),
+            now=now,
         )
         self.recorder = ScanResultRecorder(store, self.audit, now=now)
         self.worker = ScanWorker(
@@ -133,6 +169,9 @@ class GitHubAppService:
             recorder=self.recorder,
             max_commits=max_commits,
             now=now,
+        )
+        self.recovery = RecoveryService(
+            store, self.audit, self.metrics, enqueue=self.queue.put, now=now
         )
         self._credentials = credentials
         self._secret = webhook_secret
@@ -218,6 +257,7 @@ class GitHubAppService:
             return self._handle_verified(delivery)
 
     def _handle_verified(self, delivery: WebhookDelivery) -> WebhookResult:
+        self.metrics.increment(GITHUB_EVENTS_RECEIVED, event=delivery.event)
         try:
             event = normalize_webhook(delivery.event, delivery.payload)
         except WebhookValidationError as exc:
@@ -228,13 +268,21 @@ class GitHubAppService:
             )
             return WebhookResult(exc.status, {"error": str(exc)})
 
+        action = delivery.payload.get("action")
         status = self.store.record_delivery(
-            delivery.delivery_id, delivery.event, delivery.body_sha256, self._now()
+            delivery.delivery_id,
+            delivery.event,
+            delivery.body_sha256,
+            self._now(),
+            action=action if isinstance(action, str) and len(action) <= 64 else None,
         )
         if status is DeliveryStatus.DUPLICATE:
             self.metrics.increment(WEBHOOKS_DUPLICATE)
+            self.metrics.increment(GITHUB_EVENTS_REPLAYED, event=delivery.event)
             log.info("webhook_duplicate", event_name=delivery.event)
             return WebhookResult(200, {"status": "duplicate"})
+        if status is DeliveryStatus.RETRY:
+            log.info("webhook_redelivery_processed_again", event_name=delivery.event)
         if status is DeliveryStatus.CONFLICT:
             self.metrics.increment(WEBHOOKS_REJECTED, reason="delivery_conflict")
             log.warning("webhook_delivery_id_conflict", event_name=delivery.event)
@@ -246,7 +294,29 @@ class GitHubAppService:
             return WebhookResult(409, {"error": "delivery already received with different content"})
 
         log.info("webhook_accepted", event_name=delivery.event, kind=event.kind)
-        return self._dispatch(event, delivery)
+        try:
+            result = self._dispatch(event, delivery)
+        except Exception as exc:
+            # The event record stays "failed": GitHub's redelivery of this delivery ID is
+            # processed again instead of being dropped as a duplicate.
+            self.metrics.increment(GITHUB_EVENTS_FAILED, event=delivery.event)
+            self.store.finish_delivery(
+                delivery.delivery_id,
+                EventProcessingStatus.FAILED,
+                self._now(),
+                detail=f"processing failed ({type(exc).__name__})",
+            )
+            raise
+        ignored = result.body.get("status") in ("ignored", "duplicate")
+        self.store.finish_delivery(
+            delivery.delivery_id,
+            EventProcessingStatus.IGNORED if ignored else EventProcessingStatus.PROCESSED,
+            self._now(),
+            installation_id=getattr(event, "installation_id", None),
+            repository_id=getattr(getattr(event, "repository", None), "id", None),
+            detail=str(result.body.get("status", "")),
+        )
+        return result
 
     def _dispatch(self, event: GitHubWebhookEvent, delivery: WebhookDelivery) -> WebhookResult:
         if isinstance(event, IgnoredEvent):
@@ -273,6 +343,12 @@ class GitHubAppService:
                 return WebhookResult(202, {"status": "ignored"})
             if isinstance(event, PushEvent):
                 return self._push(event, delivery)
+            if isinstance(event, MergeGroupEvent):
+                return self._merge_group(event, delivery)
+            if isinstance(event, CheckRunRerequestedEvent):
+                return self._check_run_rerequested(event, delivery)
+            if isinstance(event, CheckSuiteRerequestedEvent):
+                return self._check_suite_rerequested(event, delivery)
             return self._pull_request(event, delivery)
 
     def _monitoring_paused(self, installation_id: int, repository_id: int) -> bool:
@@ -368,6 +444,208 @@ class GitHubAppService:
             )
         return result
 
+    # ------------------------------------------------------------------ #
+    # Merge queue
+    # ------------------------------------------------------------------ #
+    def _merge_group(self, event: MergeGroupEvent, delivery: WebhookDelivery) -> WebhookResult:
+        """Validate the exact merge group commit the merge queue waits on.
+
+        The pull request's own check is not reused: a merge group combines the pull
+        request with the latest base branch and the changes queued ahead of it, so it
+        is scanned as ``base_sha..head_sha`` and the result is published to
+        ``head_sha``. Every merge group SHA has its own scan; a recreated group is a
+        new SHA and gets a new scan.
+        """
+        common: dict[str, Any] = {
+            "installation_id": event.installation_id,
+            "repository_id": event.repository.id,
+            "head_sha": event.head_sha,
+            "head_ref": event.head_ref,
+            "base_sha": event.base_sha,
+            "base_ref": event.base_ref,
+            "pull_requests": event.pull_requests,
+        }
+        prs = ",".join(f"#{n}" for n in event.pull_requests) or None
+        if event.action is MergeGroupAction.DESTROYED:
+            record, changed = self.store.destroy_merge_group(
+                **common, reason=event.reason, now=self._now()
+            )
+            if not changed:
+                return WebhookResult(202, {"status": "duplicate"})
+            self.store.cancel_queued_group(
+                event.installation_id,
+                event.repository.id,
+                merge_group_key(event.head_sha),
+                self._now(),
+            )
+            self.recorder.merge_group_destroyed(
+                event.installation_id,
+                event.repository.id,
+                event.head_sha,
+                reason=event.reason,
+                base_ref=event.base_ref,
+            )
+            self.audit.record(
+                AuditEventType.MERGE_GROUP_DESTROYED,
+                installation_id=event.installation_id,
+                repository_id=event.repository.id,
+                repository=event.repository.full_name,
+                head_sha=event.head_sha,
+                reason=event.reason,
+                pull_requests=prs,
+                job=record.job_id,
+            )
+            return WebhookResult(200, {"status": "processed"})
+
+        if self._monitoring_paused(event.installation_id, event.repository.id):
+            return WebhookResult(202, {"status": "ignored"})
+        record, requested = self.store.record_merge_group(
+            **common, delivery_id=delivery.delivery_id, now=self._now()
+        )
+        if not requested:
+            reason = (
+                "merge group already destroyed"
+                if record.state is MergeGroupState.DESTROYED
+                else "merge group already requested"
+            )
+            log.info("merge_group_not_scanned", reason=reason)
+            return WebhookResult(202, {"status": "duplicate"})
+        self.audit.record(
+            AuditEventType.MERGE_GROUP_CREATED,
+            installation_id=event.installation_id,
+            repository_id=event.repository.id,
+            repository=event.repository.full_name,
+            head_sha=event.head_sha,
+            base_sha=event.base_sha,
+            base_ref=event.base_ref,
+            pull_requests=prs,
+        )
+        result = self._enqueue(
+            NewScanJob(
+                job_key=fingerprint(
+                    ["merge_group", event.head_ref, event.base_sha, event.head_sha]
+                ),
+                installation_id=event.installation_id,
+                repository=event.repository,
+                delivery_id=delivery.delivery_id,
+                event="merge_group",
+                group_key=merge_group_key(event.head_sha),
+                head_sha=event.head_sha,
+                check_name=APP_CHECK_NAME,  # the required check, on the merge group commit
+                pull_request_number=None,  # queued pull requests are listed on the merge group
+                context=event.context,
+            )
+        )
+        job = self.store.latest_group_job(
+            event.installation_id, event.repository.id, merge_group_key(event.head_sha)
+        )
+        if job is not None:
+            self.store.set_merge_group_job(
+                event.installation_id, event.repository.id, event.head_sha, job.job_id, self._now()
+            )
+        return result
+
+    # ------------------------------------------------------------------ #
+    # Check re-runs
+    # ------------------------------------------------------------------ #
+    def _reject_rerun(
+        self, event: CheckRunRerequestedEvent | CheckSuiteRerequestedEvent, reason: str
+    ) -> WebhookResult:
+        self.audit.record(
+            AuditEventType.CHECK_RERUN_REJECTED,
+            installation_id=event.installation_id,
+            repository_id=event.repository.id,
+            repository=event.repository.full_name,
+            head_sha=event.head_sha,
+            reason=reason,
+        )
+        log.info("check_rerun_rejected", reason=reason)
+        return WebhookResult(202, {"status": "ignored"})
+
+    def _check_run_rerequested(
+        self, event: CheckRunRerequestedEvent, delivery: WebhookDelivery
+    ) -> WebhookResult:
+        """GitHub "Re-run" on a CommitGuard check run: a new execution of the same scan.
+
+        The stored scan is found through the check run's ``external_id`` (the job ID
+        CommitGuard set when it created the run) and must match the event's
+        installation, repository, commit and check name exactly; nothing else in the
+        payload is used.
+        """
+        if event.app_id != self._credentials.app_id:
+            return WebhookResult(202, {"status": "ignored"})  # another App's check
+        job = self.store.get_job(event.external_id) if event.external_id else None
+        if (
+            job is None
+            or job.installation_id != event.installation_id
+            or job.repository.id != event.repository.id
+            or job.head_sha != event.head_sha
+            or job.check_name != event.name
+        ):
+            return self._reject_rerun(event, "the check run does not match a CommitGuard scan")
+        return self._request_rerun(event, job, delivery)
+
+    def _check_suite_rerequested(
+        self, event: CheckSuiteRerequestedEvent, delivery: WebhookDelivery
+    ) -> WebhookResult:
+        """GitHub "Re-run all checks": re-run CommitGuard's newest scan per check on the commit."""
+        if event.app_id != self._credentials.app_id:
+            return WebhookResult(202, {"status": "ignored"})
+        jobs = [
+            j
+            for j in self.store.latest_jobs_for_commit(
+                event.installation_id, event.repository.id, event.head_sha
+            )
+            if j.check_name in APP_CHECK_NAMES
+        ]
+        if not jobs:
+            return self._reject_rerun(event, "no CommitGuard scan exists for this commit")
+        results = [self._request_rerun(event, job, delivery) for job in jobs]
+        statuses = {r.body.get("status") for r in results}
+        status = "queued" if "queued" in statuses else sorted(str(x) for x in statuses)[0]
+        return WebhookResult(202, {"status": status})
+
+    def _request_rerun(
+        self,
+        event: CheckRunRerequestedEvent | CheckSuiteRerequestedEvent,
+        job: ScanJob,
+        delivery: WebhookDelivery,
+    ) -> WebhookResult:
+        if self._monitoring_paused(job.installation_id, job.repository.id):
+            return self._reject_rerun(event, "monitoring is paused for this repository")
+        latest = self.store.latest_group_job(job.installation_id, job.repository.id, job.group_key)
+        if latest is not None and latest.scan_key != job.scan_key:
+            # Re-running an outdated commit's check would record old commits as the
+            # current state of the pull request or branch.
+            return self._reject_rerun(
+                event, "a newer commit has been scanned for this pull request or branch"
+            )
+        if job.event == "merge_group":
+            group = self.store.get_merge_group(job.installation_id, job.repository.id, job.head_sha)
+            if group is None or group.state is MergeGroupState.DESTROYED:
+                return self._reject_rerun(event, "the merge group no longer exists")
+        execution, created = self.store.create_execution(
+            job, trigger=ScanTrigger.RERUN, now=self._now(), delivery_id=delivery.delivery_id
+        )
+        if not created:
+            self.metrics.increment(WEBHOOKS_DUPLICATE, reason="rerun")
+            return WebhookResult(202, {"status": "duplicate"})
+        self.metrics.increment(CHECK_RERUNS)
+        self.audit.record(
+            AuditEventType.CHECK_RERUN_REQUESTED,
+            actor=GITHUB_ACTOR,
+            installation_id=job.installation_id,
+            repository_id=job.repository.id,
+            repository=job.repository.full_name,
+            head_sha=job.head_sha,
+            job=execution.job_id,
+            previous_scan=job.job_id,
+            execution=execution.execution,
+            check=job.check_name,
+        )
+        self.queue.put(execution.job_id)
+        return WebhookResult(202, {"status": "queued"})
+
     def _enqueue(self, new_job: NewScanJob) -> WebhookResult:
         job, created = self.store.create_job(new_job, self._now())
         if not created:
@@ -416,6 +694,7 @@ class GitHubAppService:
         cutoff = self._now() - self._retention
         counts = self.store.purge_expired(cutoff)
         counts["mirrors"] = self.mirrors.purge_unused(self._retention.total_seconds())
+        counts["notifications"] = self.notifications.purge_expired()
         for task in self._maintenance_tasks:
             task()
         log.info("retention_purge", **counts)
@@ -431,11 +710,19 @@ class GitHubAppService:
             except Exception as exc:  # noqa: BLE001 - keep the worker alive
                 log.error("worker_crashed_on_job", error_type=type(exc).__name__)
 
+    def _notification_loop(self) -> None:
+        while not self._stop.wait(RUN_INTERVAL_SECONDS):
+            try:
+                self.notifications.run_once()
+            except Exception as exc:  # noqa: BLE001 - keep notifications alive
+                log.error("notifications_failed", error_type=type(exc).__name__)
+
     def _maintenance_loop(self) -> None:
         last_purge = 0.0
         while not self._stop.wait(RECOVERY_INTERVAL_SECONDS):
             try:
                 self.recover(queued_before=self._now() - RECOVER_QUEUED_AFTER)
+                self.recovery.run_once()
                 if time.monotonic() - last_purge > RETENTION_INTERVAL_SECONDS:
                     self.purge_expired()
                     last_purge = time.monotonic()
@@ -458,6 +745,11 @@ class GitHubAppService:
         )
         maintenance.start()
         self._threads.append(maintenance)
+        notifications = threading.Thread(
+            target=self._notification_loop, name="commitguard-notifications", daemon=True
+        )
+        notifications.start()
+        self._threads.append(notifications)
         log.info("service_started", workers=self._workers)
 
     def stop(self, timeout: float = 10.0) -> None:
@@ -601,9 +893,12 @@ def wsgi_app_from_environment() -> Callable[[WSGIEnvironment, StartResponse], It
     """
     from commitguard.api.hosting import build_dashboard, create_server_app
     from commitguard.api.settings import dashboard_enabled, load_dashboard_settings
+    from commitguard.notifications.settings import load_notification_settings
 
     configure_json_logging()
-    service = GitHubAppService.from_settings(load_settings())
+    service = GitHubAppService.from_settings(
+        load_settings(), notification_settings=load_notification_settings()
+    )
     dashboard = build_dashboard(service, load_dashboard_settings()) if dashboard_enabled() else None
     service.start()
     return create_server_app(service, dashboard)

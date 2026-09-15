@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Blocks, FolderGit2, LayoutDashboard, OctagonAlert, Plug, Scale, ScanLine, ScrollText, Settings } from "lucide-react";
+import { Bell, Blocks, FolderGit2, LayoutDashboard, OctagonAlert, Plug, Scale, ScanLine, ScrollText, Settings } from "lucide-react";
 
 import type { Permission } from "../../api/types";
 import { routes } from "../../lib/routes";
@@ -19,6 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: routes.violations, label: "Violations", icon: OctagonAlert, permission: "violations:read" },
   { to: routes.policies, label: "Policies", icon: Scale, permission: "policies:read" },
   { to: routes.rules, label: "Rules", icon: Blocks, permission: "rules:read" },
+  { to: routes.notifications, label: "Notifications", icon: Bell },
   { to: routes.audit, label: "Audit log", icon: ScrollText, permission: "audit:read" },
   { to: routes.installations, label: "Installations", icon: Plug, permission: "repositories:read", group: "GitHub" },
   { to: routes.settings, label: "Settings", icon: Settings },

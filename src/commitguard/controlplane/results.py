@@ -22,6 +22,10 @@ A violation is *exposed* wherever CommitGuard saw it:
   request (rewritten, removed, or the base now contains a fixed history). A
   closed pull request ends the exposure; a merged one moves it to the base
   branch.
+* **merge group exposure** - active while the merge queue's temporary merge
+  group commit that contained the finding exists; it ends when GitHub destroys
+  the merge group (merged into the base branch: the exposure moves to that
+  branch; invalidated or dequeued: it ends).
 * **branch exposure** - push scans are incremental (only new commits), so
   absence proves nothing. The exposure ends when a later push scan of that
   branch shows the commit is no longer reachable from the branch head (history
@@ -42,6 +46,12 @@ acknowledgement cleared, so a new occurrence is reviewed again.
 Stale results: if a newer scan of the same pull request or branch has already
 completed, an older scan's findings are stored as history but do not change
 exposures, so a slow scan cannot reopen or close anything behind a newer one.
+
+Notifications: newly opened (or reopened) violations that a scan *blocked* with
+severity ``high`` or ``critical`` produce one notification per rule per pull
+request, branch or merge group - not one per commit - written to the
+notification outbox in the same transaction as the violations. A blocked merge
+group additionally produces a ``merge_queue_failure`` notification.
 """
 
 import json
@@ -54,9 +64,13 @@ from typing import Any
 
 from commitguard.audit.models import AuditEvent, AuditEventType
 from commitguard.core.decision import Action
+from commitguard.core.result import Severity
 from commitguard.git.repository import Repository
-from commitguard.github.pull_requests import branch_group_key, group_key
+from commitguard.github.pull_requests import branch_group_key, group_key, merge_group_key
 from commitguard.github.storage import JobState, ScanJob, SqliteStateStore
+from commitguard.notifications.deduplication import domain_key
+from commitguard.notifications.models import NotificationEvent, NotificationType
+from commitguard.notifications.outbox import account_for_installation, emit
 from commitguard.observability.logging import get_logger
 from commitguard.security.sanitization import sanitize_for_terminal
 from commitguard.security.secrets import redact
@@ -71,6 +85,11 @@ MAX_TEXT_CHARS = 1000
 MAX_EVIDENCE_VALUE_CHARS = 512
 MAX_IDENTITY_LOOKUPS = 500
 TRACKED_ACTIONS = (Action.BLOCK, Action.WARN)
+NOTIFY_SEVERITIES = {
+    Severity.CRITICAL: NotificationType.CRITICAL_VIOLATION,
+    Severity.HIGH: NotificationType.HIGH_VIOLATION,
+}
+MAX_NOTIFIED_VIOLATIONS = 20
 
 
 def clean_text(value: str, limit: int = MAX_TEXT_CHARS) -> str:
@@ -85,11 +104,14 @@ def _ts(value: datetime) -> float:
 @dataclass(frozen=True, slots=True)
 class _Group:
     key: str
-    kind: str  # "pull_request" | "branch"
+    kind: str  # "pull_request" | "branch" | "merge_group"
     label: str
 
 
 def job_group(job: ScanJob) -> _Group:
+    if job.event == "merge_group":
+        base = (job.context.ref or "").removeprefix("refs/heads/")
+        return _Group(job.group_key, "merge_group", clean_text(f"merge queue ({base})", 256))
     if job.pull_request_number is not None:
         return _Group(
             group_key(job.pull_request_number), "pull_request", f"#{job.pull_request_number}"
@@ -203,6 +225,7 @@ class ScanResultRecorder:
             )
             stale = self._newer_scan_completed(db, job)
             touched: set[str] = set()
+            new_blocked: dict[tuple[NotificationType, str], list[str]] = {}
             for item in findings:
                 violation_id = None
                 if item.action in TRACKED_ACTIONS:
@@ -212,6 +235,14 @@ class ScanResultRecorder:
                     touched.add(violation_id)
                     if event is not None:
                         events.append(event)
+                        notification_type = NOTIFY_SEVERITIES.get(item.finding.severity)
+                        if (
+                            not stale
+                            and item.action is Action.BLOCK
+                            and notification_type is not None
+                        ):
+                            key = (notification_type, item.finding.rule_id)
+                            new_blocked.setdefault(key, []).append(violation_id)
                     if not stale:
                         self._activate_exposure(db, job, group, violation_id, now)
                 author, committer = identities.get(item.finding.commit_sha or "", (None, None))
@@ -220,6 +251,124 @@ class ScanResultRecorder:
                 closed = self._close_absent_exposures(db, job, group, current, unreachable, now)
                 touched.update(closed)
             events.extend(self._refresh_statuses(db, touched, now))
+            events = [self._store.insert_audit_event(db, e) for e in events]
+            account_id = account_for_installation(db, job.installation_id)
+            if account_id is not None:
+                for (notification_type, rule_id), ids in sorted(new_blocked.items()):
+                    emit(
+                        db,
+                        self._violation_notification(
+                            job, group, account_id, notification_type, rule_id, ids
+                        ),
+                        now,
+                    )
+                if job.event == "merge_group" and state is JobState.FAILED and not stale:
+                    emit(
+                        db,
+                        merge_queue_failure(
+                            job,
+                            account_id,
+                            f"CommitGuard blocked the merge group: {stats.violations} "
+                            "violation(s). The merge queue cannot merge it.",
+                        ),
+                        now,
+                    )
+        for event in events:
+            self._audit.log_stored(event)
+
+    @staticmethod
+    def _violation_notification(
+        job: ScanJob,
+        group: _Group,
+        account_id: int,
+        notification_type: NotificationType,
+        rule_id: str,
+        violation_ids: list[str],
+    ) -> NotificationEvent:
+        severity = (
+            Severity.CRITICAL
+            if notification_type is NotificationType.CRITICAL_VIOLATION
+            else Severity.HIGH
+        )
+        where = {
+            "pull_request": f"pull request {group.label}",
+            "merge_group": group.label,
+        }.get(group.kind, f"branch {group.label}")
+        count = len(violation_ids)
+        return NotificationEvent(
+            type=notification_type,
+            account_id=account_id,
+            severity=severity,
+            installation_id=job.installation_id,
+            repository_id=job.repository.id,
+            resource_type="violation",
+            resource_id=violation_ids[0],
+            dedup_key=domain_key(
+                notification_type,
+                job.installation_id,
+                job.repository.id,
+                group.key,
+                rule_id,
+            ),
+            title=f"Blocked: {rule_id} in {job.repository.full_name}",
+            body=(
+                f"CommitGuard blocked {count} commit(s) in {where} of "
+                f"{job.repository.full_name} ({rule_id}, {severity.value}) at "
+                f"{job.head_sha[:12]}. The GitHub check failed; remediation is shown on the "
+                "violation page."
+            ),
+            metadata={
+                "rule": rule_id,
+                "violations": count,
+                "violation_ids": ",".join(violation_ids[:MAX_NOTIFIED_VIOLATIONS]),
+                "scan": job.job_id,
+                "head_sha": job.head_sha,
+                "source": group.kind,
+                "location": where,
+            },
+        )
+
+    # ------------------------------------------------------------------ #
+    # Merge queue
+    # ------------------------------------------------------------------ #
+    def merge_group_destroyed(
+        self,
+        installation_id: int,
+        repository_id: int,
+        head_sha: str,
+        *,
+        reason: str | None,
+        base_ref: str,
+    ) -> None:
+        """End merge group exposures; a merged group's violations move to the base branch."""
+        now = self._now()
+        key = merge_group_key(head_sha)
+        merged = reason == "merged"
+        text = (
+            f"merge group {head_sha[:12]} was merged into {clean_text(base_ref, 200)}"
+            if merged
+            else f"merge group {head_sha[:12]} was {reason or 'removed'}"
+        )
+        events: list[AuditEvent] = []
+        with self._store.transaction() as db:
+            rows = db.execute(
+                "SELECT violation_id FROM violation_exposures WHERE installation_id = ? "
+                "AND repository_id = ? AND group_key = ? AND active = 1",
+                (installation_id, repository_id, key),
+            ).fetchall()
+            ids = {row["violation_id"] for row in rows}
+            db.execute(
+                "UPDATE violation_exposures SET active = 0, closed_at = ?, closed_reason = ? "
+                "WHERE installation_id = ? AND repository_id = ? AND group_key = ? AND active = 1",
+                (_ts(now), text, installation_id, repository_id, key),
+            )
+            if merged:
+                branch = _Group(branch_group_key(base_ref), "branch", clean_text(base_ref, 256))
+                for violation_id in ids:
+                    self._activate_exposure_row(
+                        db, installation_id, repository_id, branch, violation_id, None, now
+                    )
+            events.extend(self._refresh_statuses(db, ids, now))
             events = [self._store.insert_audit_event(db, e) for e in events]
         for event in events:
             self._audit.log_stored(event)
@@ -640,8 +789,33 @@ class ScanResultRecorder:
         )
 
 
-def scan_result_label(state: str, result_action: str | None) -> str:
+def merge_queue_failure(job: ScanJob, account_id: int, body: str) -> NotificationEvent:
+    return NotificationEvent(
+        type=NotificationType.MERGE_QUEUE_FAILURE,
+        account_id=account_id,
+        severity=Severity.HIGH,
+        installation_id=job.installation_id,
+        repository_id=job.repository.id,
+        resource_type="scan",
+        resource_id=job.job_id,
+        dedup_key=domain_key(
+            NotificationType.MERGE_QUEUE_FAILURE,
+            job.installation_id,
+            job.repository.id,
+            job.head_sha,
+        ),
+        title=f"Merge queue blocked in {job.repository.full_name}",
+        body=f"{body} Merge group commit {job.head_sha[:12]}.",
+        metadata={"scan": job.job_id, "head_sha": job.head_sha, "source": "merge_queue"},
+    )
+
+
+def scan_result_label(
+    state: str, result_action: str | None, failure_kind: str | None = None
+) -> str:
     """The dashboard's scan result for a stored job state (see ``views.ScanResultStatus``)."""
+    if state == JobState.CANCELLED.value and failure_kind == "stale":
+        return "stale"
     if state == JobState.PASSED.value:
         return "warning" if result_action == Action.WARN.value else "pass"
     return {

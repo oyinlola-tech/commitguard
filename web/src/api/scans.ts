@@ -1,5 +1,5 @@
 import { getData, getPage, send } from "./client";
-import type { Page, ScanComparison, ScanDetail, ScanSummary } from "./types";
+import type { ExecutionHistory, Page, ScanComparison, ScanDetail, ScanSummary } from "./types";
 
 export interface ScanFilters {
   organization?: number | null;
@@ -21,3 +21,5 @@ export const getScan = (id: string): Promise<ScanDetail> => getData<ScanDetail>(
 export const compareScan = (id: string): Promise<ScanComparison> =>
   getData<ScanComparison>(`/scans/${encodeURIComponent(id)}/comparison`);
 export const requestRescan = (id: string) => send<{ scan: string; result: "queued" }>("POST", `/scans/${encodeURIComponent(id)}/rescan`);
+export const listExecutions = (id: string): Promise<ExecutionHistory> =>
+  getData<ExecutionHistory>(`/scans/${encodeURIComponent(id)}/executions`);

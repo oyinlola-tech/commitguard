@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router";
 
 import { ApiError } from "../api/client";
-import { getRepository, refreshEnforcement, setMonitoring } from "../api/repositories";
+import { getMergeQueue, getRepository, refreshEnforcement, setMonitoring } from "../api/repositories";
 import type { RepositoryDetail as Detail } from "../api/types";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -14,7 +14,7 @@ import { EmptyState, ErrorState, SkeletonRows } from "../components/States";
 import { ScansTable, ViolationsTable } from "../components/Tables";
 import { ReauthenticateNotice } from "../components/Reauthenticate";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
-import { ACTIONS_STATUS, APP_CONNECTION, LOCAL_HOOKS, POLICY_ACTION, PROTECTION, REQUIRED_CHECK, SCAN_RESULT } from "../lib/labels";
+import { ACTIONS_STATUS, APP_CONNECTION, LOCAL_HOOKS, MERGE_GROUP_STATE, MERGE_QUEUE, POLICY_ACTION, PROTECTION, REQUIRED_CHECK, SCAN_RESULT } from "../lib/labels";
 import { routes } from "../lib/routes";
 import { NotFoundContent } from "./NotFound";
 
@@ -30,6 +30,7 @@ function Enforcement({ detail }: { detail: Detail }) {
       e.latest_check.head_sha ? `Latest completed scan of ${e.latest_check.head_sha.slice(0, 12)}` : "No scan has completed yet.",
       e.latest_check.completed_at,
     ],
+    ["Merge queue", <Badge map={MERGE_QUEUE} value={e.merge_queue.status} compact />, e.merge_queue.detail, e.merge_queue.checked_at],
     ["Local hooks", <Badge map={LOCAL_HOOKS} value={e.local_hooks.status} compact />, e.local_hooks.detail, null],
   ];
   return (
@@ -50,6 +51,54 @@ function Enforcement({ detail }: { detail: Detail }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function MergeQueuePanel({ repositoryId }: { repositoryId: number }) {
+  const query = useQuery({ queryKey: ["merge-queue", repositoryId], queryFn: () => getMergeQueue(repositoryId), refetchInterval: 30_000 });
+  if (query.isPending) return <SkeletonRows rows={2} label="Loading merge queue…" />;
+  if (query.error || !query.data) {
+    return <ErrorState title="Merge queue status unavailable." error={query.error} onRetry={() => void query.refetch()} />;
+  }
+  const queue = query.data;
+  const current = queue.current;
+  return (
+    <>
+      <KeyValueList
+        items={[
+          ["Status", <><Badge map={MERGE_QUEUE} value={queue.status} compact /> <span className="muted small">{queue.detail}</span></>],
+          ["Current merge group", current ? <Sha value={current.head_sha} copy /> : <span className="muted">None in the queue</span>],
+          ["CommitGuard result", current?.result ? <Badge map={SCAN_RESULT} value={current.result} compact /> : <span className="muted">—</span>],
+          ["Last validation", current?.validated_at ? <Time value={current.validated_at} /> : <span className="muted">—</span>],
+        ]}
+      />
+      {queue.permission === "missing" ? (
+        <Notice tone="warning" title="Merge queue events are not enabled">
+          The GitHub App needs the <code>merge_queues: read</code> permission and the <code>merge_group</code> event subscription to validate merge groups.
+        </Notice>
+      ) : null}
+      {queue.recent.length ? (
+        <table className="table table--simple">
+          <caption className="visually-hidden">Recent merge groups</caption>
+          <thead>
+            <tr><th scope="col">Merge group</th><th scope="col">State</th><th scope="col">Pull requests</th><th scope="col">Result</th><th scope="col">Created</th></tr>
+          </thead>
+          <tbody>
+            {queue.recent.map((group) => (
+              <tr key={group.head_sha}>
+                <td>{group.scan ? <Link to={routes.scan(group.scan)}><Sha value={group.head_sha} /></Link> : <Sha value={group.head_sha} />}</td>
+                <td><Badge map={MERGE_GROUP_STATE} value={group.state} compact />{group.destroyed_reason ? <span className="muted small"> {group.destroyed_reason}</span> : null}</td>
+                <td>{group.pull_requests.length ? group.pull_requests.map((n) => `#${n}`).join(", ") : "—"}</td>
+                <td>{group.result ? <Badge map={SCAN_RESULT} value={group.result} compact /> : <span className="muted">Not scanned</span>}</td>
+                <td><Time value={group.created_at} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted small">No merge groups have been received for this repository.</p>
+      )}
+    </>
   );
 }
 
@@ -159,6 +208,10 @@ export default function RepositoryDetail() {
           )}
         </Panel>
       </div>
+
+      <Panel title="Merge queue" id="merge-queue">
+        <MergeQueuePanel repositoryId={repo.id} />
+      </Panel>
 
       <Panel title="Details" id="details">
         <KeyValueList

@@ -52,6 +52,7 @@ export function plural(value: number, singular: string, pluralForm = `${singular
 }
 
 export function scanEvent(scan: { event: string; pull_request_number: number | null; ref: string | null }): string {
+  if (scan.event === "merge_group") return `Merge queue for ${scan.ref?.replace(/^refs\/heads\//, "") ?? "branch"}`;
   if (scan.pull_request_number !== null) return `Pull request #${scan.pull_request_number}`;
   if (scan.event === "push") return `Push to ${scan.ref?.replace(/^refs\/heads\//, "") ?? "branch"}`;
   return scan.event;

@@ -34,6 +34,7 @@ installation ID (and repository ID) as mandatory filters.
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -52,7 +53,7 @@ from commitguard.ci.context import CIContext
 from commitguard.exceptions.service import InfrastructureError
 from commitguard.github.identifiers import AccountType, RepositoryRef
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DATABASE_FILENAME = "commitguard-app.sqlite3"
 DEFAULT_MAX_ATTEMPTS = 3
 
@@ -76,6 +77,55 @@ class DeliveryStatus(StrEnum):
     NEW = "new"
     DUPLICATE = "duplicate"  # same delivery ID, same payload: already handled
     CONFLICT = "conflict"  # same delivery ID, different payload: never processed
+    RETRY = "retry"  # same delivery ID and payload, earlier processing failed: process again
+
+
+class EventProcessingStatus(StrEnum):
+    """Processing state of a received webhook delivery (the event record)."""
+
+    RECEIVED = "received"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    FAILED = "failed"
+    IGNORED = "ignored"
+
+
+#: A delivery still "processing" after this long is treated as abandoned (process crash).
+STUCK_DELIVERY_SECONDS = 600.0
+
+
+class ScanTrigger(StrEnum):
+    """Why a scan execution exists."""
+
+    PUSH = "push"
+    PULL_REQUEST = "pull_request"
+    MERGE_GROUP = "merge_group"
+    MANUAL = "manual"  # dashboard "Scan again"
+    RERUN = "rerun"  # GitHub "Re-run" on the CommitGuard check
+    RETRY = "retry"  # automatic recovery after an infrastructure failure
+
+
+class MergeGroupState(StrEnum):
+    CHECKS_REQUESTED = "checks_requested"
+    DESTROYED = "destroyed"
+
+
+class MergeGroupRecord(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    installation_id: int
+    repository_id: int
+    head_sha: str
+    head_ref: str
+    base_sha: str
+    base_ref: str
+    pull_requests: tuple[int, ...]
+    state: MergeGroupState
+    destroyed_reason: str | None
+    job_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    destroyed_at: datetime | None
 
 
 class InstallationState(StrEnum):
@@ -154,6 +204,10 @@ class ScanJob(BaseModel):
     detector_failures: int | None = None
     notices: tuple[str, ...] = ()
     requested_by: str | None = None
+    scan_key: str = ""
+    execution: int = 1
+    trigger: ScanTrigger = ScanTrigger.PUSH
+    previous_job_id: str | None = None
 
 
 class NewScanJob(BaseModel):
@@ -170,6 +224,19 @@ class NewScanJob(BaseModel):
     pull_request_number: int | None
     context: CIContext
     requested_by: str | None = None  # dashboard login for a manual re-scan
+
+    @property
+    def trigger(self) -> ScanTrigger:
+        return ScanTrigger(self.event)
+
+
+class ClaimOutcome(BaseModel):
+    """Result of claiming a job: the running job, or the job that ran out of attempts."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    job: ScanJob | None = None
+    exhausted: ScanJob | None = None
 
 
 class CheckClaim(BaseModel):
@@ -545,7 +612,168 @@ CREATE TABLE enforcement_status (
 );
 """
 
-_MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2)
+# Version 3: scan executions, event processing, merge queue, policy history, notifications.
+_SCHEMA_V3 = """
+ALTER TABLE scan_jobs ADD COLUMN scan_key TEXT;
+ALTER TABLE scan_jobs ADD COLUMN execution INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE scan_jobs ADD COLUMN trigger_kind TEXT;
+ALTER TABLE scan_jobs ADD COLUMN previous_job_id TEXT;
+UPDATE scan_jobs SET scan_key = job_key, trigger_kind = event;
+UPDATE scan_jobs SET trigger_kind = 'manual', scan_key = COALESCE((
+    SELECT o.job_key FROM scan_jobs o
+    WHERE o.installation_id = scan_jobs.installation_id
+      AND o.repository_id = scan_jobs.repository_id AND o.group_key = scan_jobs.group_key
+      AND o.head_sha = scan_jobs.head_sha AND o.check_name = scan_jobs.check_name
+      AND o.requested_by IS NULL
+    ORDER BY o.sequence LIMIT 1), job_key)
+    WHERE requested_by IS NOT NULL;
+UPDATE scan_jobs SET execution = (
+    SELECT COUNT(*) FROM scan_jobs o
+    WHERE o.installation_id = scan_jobs.installation_id
+      AND o.repository_id = scan_jobs.repository_id AND o.scan_key = scan_jobs.scan_key
+      AND o.sequence <= scan_jobs.sequence);
+CREATE INDEX scan_jobs_scan_key ON scan_jobs (installation_id, repository_id, scan_key, sequence);
+CREATE INDEX scan_jobs_head ON scan_jobs (installation_id, repository_id, head_sha);
+CREATE UNIQUE INDEX scan_jobs_rerun_event
+    ON scan_jobs (installation_id, repository_id, scan_key, delivery_id)
+    WHERE delivery_id IS NOT NULL AND trigger_kind = 'rerun';
+
+ALTER TABLE deliveries ADD COLUMN provider TEXT NOT NULL DEFAULT 'github';
+ALTER TABLE deliveries ADD COLUMN action TEXT;
+ALTER TABLE deliveries ADD COLUMN status TEXT NOT NULL DEFAULT 'processed';
+ALTER TABLE deliveries ADD COLUMN installation_id INTEGER;
+ALTER TABLE deliveries ADD COLUMN repository_id INTEGER;
+ALTER TABLE deliveries ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE deliveries ADD COLUMN updated_at REAL;
+ALTER TABLE deliveries ADD COLUMN detail TEXT;
+UPDATE deliveries SET updated_at = received_at;
+CREATE UNIQUE INDEX deliveries_provider_event ON deliveries (provider, delivery_id);
+CREATE INDEX deliveries_status ON deliveries (status, updated_at);
+
+CREATE TABLE merge_groups (
+    installation_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    head_sha TEXT NOT NULL,
+    head_ref TEXT NOT NULL,
+    base_sha TEXT NOT NULL,
+    base_ref TEXT NOT NULL,
+    pull_requests TEXT NOT NULL,
+    state TEXT NOT NULL,
+    destroyed_reason TEXT,
+    job_id TEXT,
+    delivery_id TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    destroyed_at REAL,
+    PRIMARY KEY (installation_id, repository_id, head_sha)
+);
+CREATE INDEX merge_groups_recent ON merge_groups (installation_id, repository_id, created_at);
+ALTER TABLE enforcement_status ADD COLUMN merge_queue TEXT;
+ALTER TABLE enforcement_status ADD COLUMN merge_queue_detail TEXT;
+
+ALTER TABLE organization_policy_versions ADD COLUMN kind TEXT NOT NULL DEFAULT 'change';
+ALTER TABLE organization_policy_versions ADD COLUMN rollback_of INTEGER;
+ALTER TABLE organization_policy_versions ADD COLUMN restored_version INTEGER;
+CREATE TRIGGER organization_policy_versions_immutable
+    BEFORE UPDATE ON organization_policy_versions
+    BEGIN SELECT RAISE(ABORT, 'policy versions are immutable'); END;
+CREATE TRIGGER organization_policy_versions_permanent
+    BEFORE DELETE ON organization_policy_versions
+    BEGIN SELECT RAISE(ABORT, 'policy versions are immutable'); END;
+
+CREATE TABLE notification_events (
+    event_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    installation_id INTEGER,
+    repository_id INTEGER,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    dedup_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    last_occurred_at REAL NOT NULL,
+    dispatched_at REAL,
+    request_id TEXT,
+    delivery_id TEXT,
+    job_id TEXT,
+    UNIQUE (account_id, dedup_key)
+);
+CREATE INDEX notification_events_outbox ON notification_events (dispatched_at, created_at);
+CREATE INDEX notification_events_created ON notification_events (created_at);
+
+CREATE TABLE notifications (
+    notification_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES notification_events (event_id) ON DELETE CASCADE,
+    account_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    sort_at REAL NOT NULL,
+    read_at REAL,
+    archived_at REAL,
+    UNIQUE (event_id, user_id)
+);
+CREATE INDEX notifications_user ON notifications (user_id, sort_at);
+CREATE INDEX notifications_user_state ON notifications (user_id, state, sort_at);
+CREATE INDEX notifications_event ON notifications (event_id);
+CREATE INDEX notifications_user_severity ON notifications (user_id, severity, state);
+
+CREATE TABLE notification_deliveries (
+    delivery_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES notification_events (event_id) ON DELETE CASCADE,
+    account_id INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    provider TEXT NOT NULL,
+    provider_message_id TEXT,
+    failure_code TEXT,
+    last_attempt_at REAL,
+    next_retry_at REAL,
+    lease_expires_at REAL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX notification_deliveries_due ON notification_deliveries (status, next_retry_at);
+CREATE INDEX notification_deliveries_account ON notification_deliveries (account_id, created_at);
+
+CREATE TABLE notification_settings (
+    account_id INTEGER PRIMARY KEY,
+    version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    email_recipients TEXT NOT NULL,
+    updated_at REAL NOT NULL,
+    updated_by_login TEXT
+);
+CREATE TABLE notification_user_preferences (
+    user_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    in_app INTEGER NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (user_id, account_id, type)
+);
+CREATE TABLE notification_webhooks (
+    endpoint_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    created_by_login TEXT,
+    removed_at REAL
+);
+CREATE INDEX notification_webhooks_account ON notification_webhooks (account_id, removed_at);
+"""
+
+_MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
 
 
 _ORPHAN_DELETES = (
@@ -562,8 +790,13 @@ _ORPHAN_DELETES = (
 
 
 def _statements(script: str) -> list[str]:
-    """Split a migration into statements (migrations contain no string literals with ';')."""
-    return [part.strip() for part in script.split(";") if part.strip()]
+    """Split a migration into statements.
+
+    A statement ends with ``;`` at the end of a line, so a trigger body whose
+    statements end mid-line (``BEGIN SELECT ...; END;``) stays one statement.
+    Migrations contain no string literals with a line-final ``;``.
+    """
+    return [part.strip() for part in re.split(r";[ \t]*(?:\n|\Z)", script) if part.strip()]
 
 
 # Static statements only: no SQL is ever assembled from field names at run time.
@@ -699,46 +932,116 @@ class SqliteStateStore(AuditStorage):
 
     # -- deliveries ----------------------------------------------------- #
     def record_delivery(
-        self, delivery_id: str, event: str, body_sha256: str, received_at: datetime
+        self,
+        delivery_id: str,
+        event: str,
+        body_sha256: str,
+        received_at: datetime,
+        *,
+        action: str | None = None,
     ) -> DeliveryStatus:
+        """Record a verified delivery (the event record) before it is processed.
+
+        The delivery ID is GitHub's unique event identifier; GitHub reuses it when a
+        delivery is redelivered. A known ID with the same payload is a duplicate,
+        unless its earlier processing failed or was abandoned - then it is processed
+        again (``RETRY``). A known ID with a different payload is never processed.
+        """
+        now = _ts(received_at)
         with self._transaction() as db:
             cursor = db.execute(
-                "INSERT OR IGNORE INTO deliveries (delivery_id, event, body_sha256, received_at) "
-                "VALUES (?, ?, ?, ?)",
-                (delivery_id, event, body_sha256, _ts(received_at)),
+                "INSERT OR IGNORE INTO deliveries (delivery_id, event, body_sha256, received_at, "
+                "provider, action, status, attempts, updated_at) "
+                "VALUES (?, ?, ?, ?, 'github', ?, 'processing', 1, ?)",
+                (delivery_id, event, body_sha256, now, action, now),
             )
             if cursor.rowcount == 1:
                 return DeliveryStatus.NEW
             row = db.execute(
-                "SELECT event, body_sha256 FROM deliveries WHERE delivery_id = ?", (delivery_id,)
+                "SELECT event, body_sha256, status, updated_at FROM deliveries "
+                "WHERE delivery_id = ?",
+                (delivery_id,),
             ).fetchone()
-        if row is not None and row["event"] == event and row["body_sha256"] == body_sha256:
-            return DeliveryStatus.DUPLICATE
-        return DeliveryStatus.CONFLICT
+            if row is None or row["event"] != event or row["body_sha256"] != body_sha256:
+                return DeliveryStatus.CONFLICT
+            stuck = (
+                row["status"] == EventProcessingStatus.PROCESSING.value
+                and (row["updated_at"] or 0) < now - STUCK_DELIVERY_SECONDS
+            )
+            if row["status"] == EventProcessingStatus.FAILED.value or stuck:
+                db.execute(
+                    "UPDATE deliveries SET status = 'processing', attempts = attempts + 1, "
+                    "updated_at = ?, detail = NULL WHERE delivery_id = ?",
+                    (now, delivery_id),
+                )
+                return DeliveryStatus.RETRY
+        return DeliveryStatus.DUPLICATE
+
+    def finish_delivery(
+        self,
+        delivery_id: str,
+        status: EventProcessingStatus,
+        now: datetime,
+        *,
+        installation_id: int | None = None,
+        repository_id: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        with self._transaction() as db:
+            db.execute(
+                "UPDATE deliveries SET status = ?, updated_at = ?, "
+                "installation_id = COALESCE(?, installation_id), "
+                "repository_id = COALESCE(?, repository_id), detail = ? WHERE delivery_id = ?",
+                (
+                    status.value,
+                    _ts(now),
+                    installation_id,
+                    repository_id,
+                    (detail or "")[:500] or None,
+                    delivery_id,
+                ),
+            )
+
+    def delivery_status(self, delivery_id: str) -> EventProcessingStatus | None:
+        rows = self._query("SELECT status FROM deliveries WHERE delivery_id = ?", (delivery_id,))
+        return EventProcessingStatus(rows[0]["status"]) if rows else None
+
+    def fail_stuck_deliveries(self, now: datetime) -> int:
+        """Mark deliveries abandoned mid-processing as failed, so a redelivery is processed."""
+        with self._transaction() as db:
+            return db.execute(
+                "UPDATE deliveries SET status = 'failed', detail = 'processing abandoned', "
+                "updated_at = ? WHERE status = 'processing' AND updated_at < ?",
+                (_ts(now), _ts(now) - STUCK_DELIVERY_SECONDS),
+            ).rowcount
 
     # -- installations -------------------------------------------------- #
     def upsert_installation(self, record: InstallationRecord) -> None:
         with self._transaction() as db:
-            db.execute(
-                "INSERT INTO installations (installation_id, account_id, account_login, "
-                "account_type, repository_selection, state, permissions, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT (installation_id) DO UPDATE SET account_id = excluded.account_id, "
-                "account_login = excluded.account_login, account_type = excluded.account_type, "
-                "repository_selection = excluded.repository_selection, state = excluded.state, "
-                "permissions = excluded.permissions, updated_at = excluded.updated_at",
-                (
-                    record.installation_id,
-                    record.account_id,
-                    record.account_login,
-                    record.account_type.value,
-                    record.repository_selection,
-                    record.state.value,
-                    json.dumps(record.permissions, sort_keys=True),
-                    _ts(record.created_at),
-                    _ts(record.updated_at),
-                ),
-            )
+            self.upsert_installation_in(db, record)
+
+    @staticmethod
+    def upsert_installation_in(db: sqlite3.Connection, record: InstallationRecord) -> None:
+        db.execute(
+            "INSERT INTO installations (installation_id, account_id, account_login, "
+            "account_type, repository_selection, state, permissions, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (installation_id) DO UPDATE SET account_id = excluded.account_id, "
+            "account_login = excluded.account_login, account_type = excluded.account_type, "
+            "repository_selection = excluded.repository_selection, state = excluded.state, "
+            "permissions = excluded.permissions, updated_at = excluded.updated_at",
+            (
+                record.installation_id,
+                record.account_id,
+                record.account_login,
+                record.account_type.value,
+                record.repository_selection,
+                record.state.value,
+                json.dumps(record.permissions, sort_keys=True),
+                _ts(record.created_at),
+                _ts(record.updated_at),
+            ),
+        )
 
     def get_installation(self, installation_id: int) -> InstallationRecord | None:
         rows = self._query(
@@ -763,26 +1066,32 @@ class SqliteStateStore(AuditStorage):
         self, installation_id: int, state: InstallationState, now: datetime
     ) -> None:
         with self._transaction() as db:
+            self.set_installation_state_in(db, installation_id, state, now)
+
+    @staticmethod
+    def set_installation_state_in(
+        db: sqlite3.Connection, installation_id: int, state: InstallationState, now: datetime
+    ) -> None:
+        db.execute(
+            "UPDATE installations SET state = ?, updated_at = ? WHERE installation_id = ?",
+            (state.value, _ts(now), int(installation_id)),
+        )
+        if state is InstallationState.DELETED:
             db.execute(
-                "UPDATE installations SET state = ?, updated_at = ? WHERE installation_id = ?",
-                (state.value, _ts(now), int(installation_id)),
+                "DELETE FROM installation_repositories WHERE installation_id = ?",
+                (int(installation_id),),
             )
-            if state is InstallationState.DELETED:
-                db.execute(
-                    "DELETE FROM installation_repositories WHERE installation_id = ?",
-                    (int(installation_id),),
-                )
-                db.execute(
-                    "UPDATE known_repositories SET removed_at = ? "
-                    "WHERE installation_id = ? AND removed_at IS NULL",
-                    (_ts(now), int(installation_id)),
-                )
-                db.execute(
-                    "UPDATE scan_jobs SET state = 'cancelled', message = 'installation removed', "
-                    "updated_at = ?, completed_at = ? WHERE installation_id = ? "
-                    "AND state IN ('queued', 'running')",
-                    (_ts(now), _ts(now), int(installation_id)),
-                )
+            db.execute(
+                "UPDATE known_repositories SET removed_at = ? "
+                "WHERE installation_id = ? AND removed_at IS NULL",
+                (_ts(now), int(installation_id)),
+            )
+            db.execute(
+                "UPDATE scan_jobs SET state = 'cancelled', message = 'installation removed', "
+                "updated_at = ?, completed_at = ? WHERE installation_id = ? "
+                "AND state IN ('queued', 'running')",
+                (_ts(now), _ts(now), int(installation_id)),
+            )
 
     def replace_repositories(
         self, installation_id: int, repositories: Sequence[RepositoryRef], now: datetime
@@ -932,13 +1241,18 @@ class SqliteStateStore(AuditStorage):
             detector_failures=row["detector_failures"],
             notices=tuple(json.loads(row["notices"] or "[]")),
             requested_by=row["requested_by"],
+            scan_key=row["scan_key"] or row["job_key"],
+            execution=row["execution"] or 1,
+            trigger=ScanTrigger(row["trigger_kind"] or row["event"]),
+            previous_job_id=row["previous_job_id"],
         )
 
     def create_job(self, job: NewScanJob, now: datetime) -> tuple[ScanJob, bool]:
         """Create a job unless an equivalent one is queued, running or completed.
 
         An equivalent job that ended in ``error`` or ``cancelled`` does not block a
-        new attempt (e.g. a pull request reopened after GitHub was unavailable).
+        new attempt (e.g. a pull request reopened after GitHub was unavailable): the
+        new job is the next *execution* of the same logical scan.
         """
         with self._transaction() as db:
             existing = db.execute(
@@ -948,50 +1262,178 @@ class SqliteStateStore(AuditStorage):
             ).fetchone()
             if existing is not None and existing["state"] not in ("error", "cancelled"):
                 return self._job(existing), False
-            db.execute(
-                "INSERT INTO known_repositories (installation_id, repository_id, owner, name, "
-                "first_seen_at, last_seen_at, removed_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT (installation_id, repository_id) DO UPDATE SET "
-                "last_seen_at = excluded.last_seen_at",
-                (
-                    job.installation_id,
-                    job.repository.id,
-                    job.repository.owner,
-                    job.repository.name,
-                    _ts(now),
-                    _ts(now),
-                    None,
-                ),
+            row = self._insert_job(
+                db,
+                job,
+                now,
+                scan_key=job.job_key,
+                trigger=job.trigger,
+                previous_job_id=existing["job_id"] if existing is not None else None,
             )
-            job_id = uuid.uuid4().hex
-            db.execute(
-                "INSERT INTO scan_jobs (job_id, job_key, installation_id, repository_id, owner, "
-                "name, delivery_id, event, group_key, head_sha, check_name, pull_request_number, "
-                "context, state, attempts, created_at, updated_at, base_sha, ref, requested_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?)",
-                (
-                    job_id,
-                    job.job_key,
-                    job.installation_id,
-                    job.repository.id,
-                    job.repository.owner,
-                    job.repository.name,
-                    job.delivery_id,
-                    job.event,
-                    job.group_key,
-                    job.head_sha,
-                    job.check_name,
-                    job.pull_request_number,
-                    job.context.model_dump_json(),
-                    _ts(now),
-                    _ts(now),
-                    job.context.base_sha or job.context.before_sha,
-                    job.context.ref,
-                    job.requested_by,
-                ),
-            )
-            row = db.execute("SELECT * FROM scan_jobs WHERE job_id = ?", (job_id,)).fetchone()
         return self._job(row), True
+
+    def create_execution(
+        self,
+        previous: ScanJob,
+        *,
+        trigger: ScanTrigger,
+        now: datetime,
+        delivery_id: str | None = None,
+        requested_by: str | None = None,
+    ) -> tuple[ScanJob, bool]:
+        """A new execution of the logical scan ``previous`` belongs to (re-run, manual, retry).
+
+        The repository, commits, event and check name are copied from the stored
+        execution - never taken from a request. If an execution of the same scan is
+        already queued or running, that execution is returned instead of starting
+        another one, so repeated requests cannot pile up duplicate scans.
+        """
+        with self._transaction() as db:
+            active = db.execute(
+                "SELECT * FROM scan_jobs WHERE installation_id = ? AND repository_id = ? "
+                "AND scan_key = ? AND state IN ('queued', 'running') ORDER BY sequence DESC "
+                "LIMIT 1",
+                (previous.installation_id, previous.repository.id, previous.scan_key),
+            ).fetchone()
+            if active is not None:
+                return self._job(active), False
+            if delivery_id is not None:
+                same_delivery = db.execute(
+                    "SELECT * FROM scan_jobs WHERE installation_id = ? AND repository_id = ? "
+                    "AND scan_key = ? AND delivery_id = ?",
+                    (
+                        previous.installation_id,
+                        previous.repository.id,
+                        previous.scan_key,
+                        delivery_id,
+                    ),
+                ).fetchone()
+                if same_delivery is not None:
+                    return self._job(same_delivery), False
+            new_job = NewScanJob(
+                job_key=f"{trigger.value}:{uuid.uuid4().hex}",
+                installation_id=previous.installation_id,
+                repository=previous.repository,
+                delivery_id=delivery_id,
+                event=previous.event,
+                group_key=previous.group_key,
+                head_sha=previous.head_sha,
+                check_name=previous.check_name,
+                pull_request_number=previous.pull_request_number,
+                context=previous.context,
+                requested_by=requested_by,
+            )
+            row = self._insert_job(
+                db,
+                new_job,
+                now,
+                scan_key=previous.scan_key,
+                trigger=trigger,
+                previous_job_id=previous.job_id,
+            )
+        return self._job(row), True
+
+    def _insert_job(
+        self,
+        db: sqlite3.Connection,
+        job: NewScanJob,
+        now: datetime,
+        *,
+        scan_key: str,
+        trigger: ScanTrigger,
+        previous_job_id: str | None,
+    ) -> sqlite3.Row:
+        db.execute(
+            "INSERT INTO known_repositories (installation_id, repository_id, owner, name, "
+            "first_seen_at, last_seen_at, removed_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (installation_id, repository_id) DO UPDATE SET "
+            "last_seen_at = excluded.last_seen_at",
+            (
+                job.installation_id,
+                job.repository.id,
+                job.repository.owner,
+                job.repository.name,
+                _ts(now),
+                _ts(now),
+                None,
+            ),
+        )
+        execution = db.execute(
+            "SELECT COALESCE(MAX(execution), 0) + 1 AS next FROM scan_jobs "
+            "WHERE installation_id = ? AND repository_id = ? AND scan_key = ?",
+            (job.installation_id, job.repository.id, scan_key),
+        ).fetchone()["next"]
+        job_id = uuid.uuid4().hex
+        db.execute(
+            "INSERT INTO scan_jobs (job_id, job_key, installation_id, repository_id, owner, "
+            "name, delivery_id, event, group_key, head_sha, check_name, pull_request_number, "
+            "context, state, attempts, created_at, updated_at, base_sha, ref, requested_by, "
+            "scan_key, execution, trigger_kind, previous_job_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, "
+            "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                job_id,
+                job.job_key,
+                job.installation_id,
+                job.repository.id,
+                job.repository.owner,
+                job.repository.name,
+                job.delivery_id,
+                job.event,
+                job.group_key,
+                job.head_sha,
+                job.check_name,
+                job.pull_request_number,
+                job.context.model_dump_json(),
+                _ts(now),
+                _ts(now),
+                job.context.base_sha or job.context.before_sha,
+                job.context.ref,
+                job.requested_by,
+                scan_key,
+                int(execution),
+                trigger.value,
+                previous_job_id,
+            ),
+        )
+        row: sqlite3.Row | None = db.execute(
+            "SELECT * FROM scan_jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        assert row is not None  # noqa: S101 - inserted above
+        return row
+
+    def list_executions(
+        self, installation_id: int, repository_id: int, scan_key: str, *, limit: int = 100
+    ) -> list[ScanJob]:
+        rows = self._query(
+            "SELECT * FROM scan_jobs WHERE installation_id = ? AND repository_id = ? "
+            "AND scan_key = ? ORDER BY sequence DESC LIMIT ?",
+            (int(installation_id), int(repository_id), scan_key, int(limit)),
+        )
+        return [self._job(r) for r in rows]
+
+    def latest_group_job(
+        self, installation_id: int, repository_id: int, group_key: str
+    ) -> ScanJob | None:
+        rows = self._query(
+            "SELECT * FROM scan_jobs WHERE installation_id = ? AND repository_id = ? "
+            "AND group_key = ? ORDER BY sequence DESC LIMIT 1",
+            (int(installation_id), int(repository_id), group_key),
+        )
+        return self._job(rows[0]) if rows else None
+
+    def latest_jobs_for_commit(
+        self, installation_id: int, repository_id: int, head_sha: str
+    ) -> list[ScanJob]:
+        """The newest execution per check name for one commit."""
+        rows = self._query(
+            "SELECT * FROM scan_jobs j WHERE installation_id = ? AND repository_id = ? "
+            "AND head_sha = ? AND sequence = (SELECT MAX(sequence) FROM scan_jobs o WHERE "
+            "o.installation_id = j.installation_id AND o.repository_id = j.repository_id "
+            "AND o.head_sha = j.head_sha AND o.check_name = j.check_name) ORDER BY check_name",
+            (int(installation_id), int(repository_id), head_sha),
+        )
+        return [self._job(r) for r in rows]
 
     def get_job(self, job_id: str) -> ScanJob | None:
         rows = self._query("SELECT * FROM scan_jobs WHERE job_id = ?", (job_id,))
@@ -1017,39 +1459,54 @@ class SqliteStateStore(AuditStorage):
         self, job_id: str, now: datetime, lease_seconds: float, max_attempts: int
     ) -> ScanJob | None:
         """Atomically move a queued (or abandoned running) job to running."""
+        return self.claim_job_outcome(job_id, now, lease_seconds, max_attempts).job
+
+    def claim_job_outcome(
+        self, job_id: str, now: datetime, lease_seconds: float, max_attempts: int
+    ) -> ClaimOutcome:
+        """Claim a job; a job that used up its attempts is ended as ``error`` and returned."""
         with self._transaction() as db:
             row = db.execute("SELECT * FROM scan_jobs WHERE job_id = ?", (job_id,)).fetchone()
             if row is None:
-                return None
+                return ClaimOutcome()
             state = row["state"]
             abandoned = state == "running" and (row["lease_expires_at"] or 0) < _ts(now)
             if state != "queued" and not abandoned:
-                return None
+                return ClaimOutcome()
             if row["attempts"] >= max_attempts:
                 db.execute(
                     "UPDATE scan_jobs SET state = 'error', failure_kind = 'internal', "
                     "message = 'scan abandoned after repeated attempts', updated_at = ?, "
-                    "completed_at = ? WHERE job_id = ?",
+                    "lease_expires_at = NULL, completed_at = ? WHERE job_id = ?",
                     (_ts(now), _ts(now), job_id),
                 )
-                return None
+                row = db.execute("SELECT * FROM scan_jobs WHERE job_id = ?", (job_id,)).fetchone()
+                return ClaimOutcome(exhausted=self._job(row))
             db.execute(
                 "UPDATE scan_jobs SET state = 'running', attempts = attempts + 1, "
                 "lease_expires_at = ?, updated_at = ?, started_at = ? WHERE job_id = ?",
                 (_ts(now) + lease_seconds, _ts(now), _ts(now), job_id),
             )
             row = db.execute("SELECT * FROM scan_jobs WHERE job_id = ?", (job_id,)).fetchone()
-        return self._job(row)
+        return ClaimOutcome(job=self._job(row))
 
     def update_job(self, job_id: str, now: datetime, **fields: Any) -> None:
         unknown = set(fields) - set(_JOB_UPDATES)
         if unknown:
             raise ValueError(f"cannot update job fields: {', '.join(sorted(unknown))}")
         with self._transaction() as db:
-            for name, value in fields.items():
-                if isinstance(value, StrEnum):
-                    value = value.value
-                db.execute(_JOB_UPDATES[name], (value, _ts(now), job_id))
+            self.update_job_in(db, job_id, now, **fields)
+
+    @staticmethod
+    def update_job_in(db: sqlite3.Connection, job_id: str, now: datetime, **fields: Any) -> None:
+        """:meth:`update_job` inside the caller's transaction."""
+        unknown = set(fields) - set(_JOB_UPDATES)
+        if unknown:
+            raise ValueError(f"cannot update job fields: {', '.join(sorted(unknown))}")
+        for name, value in fields.items():
+            if isinstance(value, StrEnum):
+                value = value.value
+            db.execute(_JOB_UPDATES[name], (value, _ts(now), job_id))
 
     def recoverable_jobs(
         self, now: datetime, *, queued_before: datetime, limit: int = 100
@@ -1158,6 +1615,146 @@ class SqliteStateStore(AuditStorage):
         )
         return int(rows[0]["owner_sequence"]) if rows else None
 
+    # -- merge queue ----------------------------------------------------- #
+    @staticmethod
+    def _merge_group(row: sqlite3.Row) -> MergeGroupRecord:
+        return MergeGroupRecord(
+            installation_id=row["installation_id"],
+            repository_id=row["repository_id"],
+            head_sha=row["head_sha"],
+            head_ref=row["head_ref"],
+            base_sha=row["base_sha"],
+            base_ref=row["base_ref"],
+            pull_requests=tuple(json.loads(row["pull_requests"] or "[]")),
+            state=MergeGroupState(row["state"]),
+            destroyed_reason=row["destroyed_reason"],
+            job_id=row["job_id"],
+            created_at=_dt(row["created_at"]),
+            updated_at=_dt(row["updated_at"]),
+            destroyed_at=_opt_dt(row["destroyed_at"]),
+        )
+
+    def record_merge_group(
+        self,
+        *,
+        installation_id: int,
+        repository_id: int,
+        head_sha: str,
+        head_ref: str,
+        base_sha: str,
+        base_ref: str,
+        pull_requests: Sequence[int],
+        delivery_id: str | None,
+        now: datetime,
+    ) -> tuple[MergeGroupRecord, bool]:
+        """Store a merge group GitHub requested checks for.
+
+        Returns ``(record, requested)``; ``requested`` is False when the group is
+        already known - in particular when its ``destroyed`` event arrived first, so
+        an out-of-order request can never revive a destroyed merge group.
+        """
+        with self._transaction() as db:
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO merge_groups (installation_id, repository_id, head_sha, "
+                "head_ref, base_sha, base_ref, pull_requests, state, delivery_id, created_at, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'checks_requested', ?, ?, ?)",
+                (
+                    int(installation_id),
+                    int(repository_id),
+                    head_sha,
+                    head_ref,
+                    base_sha,
+                    base_ref,
+                    json.dumps(sorted({int(n) for n in pull_requests})),
+                    delivery_id,
+                    _ts(now),
+                    _ts(now),
+                ),
+            )
+            row = db.execute(
+                "SELECT * FROM merge_groups WHERE installation_id = ? AND repository_id = ? "
+                "AND head_sha = ?",
+                (int(installation_id), int(repository_id), head_sha),
+            ).fetchone()
+        return self._merge_group(row), cursor.rowcount == 1
+
+    def destroy_merge_group(
+        self,
+        *,
+        installation_id: int,
+        repository_id: int,
+        head_sha: str,
+        head_ref: str,
+        base_sha: str,
+        base_ref: str,
+        pull_requests: Sequence[int],
+        reason: str | None,
+        now: datetime,
+    ) -> tuple[MergeGroupRecord, bool]:
+        """Mark a merge group destroyed (inserting it if its request was never seen).
+
+        Returns ``(record, changed)``; repeated ``destroyed`` events change nothing.
+        """
+        with self._transaction() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO merge_groups (installation_id, repository_id, head_sha, "
+                "head_ref, base_sha, base_ref, pull_requests, state, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'checks_requested', ?, ?)",
+                (
+                    int(installation_id),
+                    int(repository_id),
+                    head_sha,
+                    head_ref,
+                    base_sha,
+                    base_ref,
+                    json.dumps(sorted({int(n) for n in pull_requests})),
+                    _ts(now),
+                    _ts(now),
+                ),
+            )
+            cursor = db.execute(
+                "UPDATE merge_groups SET state = 'destroyed', destroyed_reason = ?, "
+                "destroyed_at = ?, updated_at = ? WHERE installation_id = ? "
+                "AND repository_id = ? AND head_sha = ? AND state != 'destroyed'",
+                (reason, _ts(now), _ts(now), int(installation_id), int(repository_id), head_sha),
+            )
+            row = db.execute(
+                "SELECT * FROM merge_groups WHERE installation_id = ? AND repository_id = ? "
+                "AND head_sha = ?",
+                (int(installation_id), int(repository_id), head_sha),
+            ).fetchone()
+        return self._merge_group(row), cursor.rowcount == 1
+
+    def set_merge_group_job(
+        self, installation_id: int, repository_id: int, head_sha: str, job_id: str, now: datetime
+    ) -> None:
+        with self._transaction() as db:
+            db.execute(
+                "UPDATE merge_groups SET job_id = ?, updated_at = ? WHERE installation_id = ? "
+                "AND repository_id = ? AND head_sha = ?",
+                (job_id, _ts(now), int(installation_id), int(repository_id), head_sha),
+            )
+
+    def get_merge_group(
+        self, installation_id: int, repository_id: int, head_sha: str
+    ) -> MergeGroupRecord | None:
+        rows = self._query(
+            "SELECT * FROM merge_groups WHERE installation_id = ? AND repository_id = ? "
+            "AND head_sha = ?",
+            (int(installation_id), int(repository_id), head_sha),
+        )
+        return self._merge_group(rows[0]) if rows else None
+
+    def list_merge_groups(
+        self, installation_id: int, repository_id: int, *, limit: int = 10
+    ) -> list[MergeGroupRecord]:
+        rows = self._query(
+            "SELECT * FROM merge_groups WHERE installation_id = ? AND repository_id = ? "
+            "ORDER BY created_at DESC, head_sha LIMIT ?",
+            (int(installation_id), int(repository_id), int(limit)),
+        )
+        return [self._merge_group(r) for r in rows]
+
     # -- audit ----------------------------------------------------------- #
     def append_audit_event(self, event: AuditEvent) -> None:
         with self._transaction() as db:
@@ -1239,6 +1836,10 @@ class SqliteStateStore(AuditStorage):
                 "DELETE FROM violations WHERE status = 'resolved' AND updated_at < ?", (cutoff,)
             ).rowcount
             counts = {
+                "merge_groups": db.execute(
+                    "DELETE FROM merge_groups WHERE updated_at < ? AND state = 'destroyed'",
+                    (cutoff,),
+                ).rowcount,
                 "findings": findings,
                 "violations": violations,
                 "deliveries": db.execute(

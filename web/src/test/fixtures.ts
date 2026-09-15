@@ -1,10 +1,14 @@
 import type {
   AuditEvent,
+  Execution,
   Finding,
+  NotificationItem,
+  NotificationSettings,
   OrganizationAccess,
   OrganizationPolicy,
   Overview,
   Permission,
+  PolicyVersion,
   RepositoryDetail,
   RepositorySummary,
   ScanDetail,
@@ -19,7 +23,19 @@ export const SHA = "8e71c2a4f09b1c2d3e4f5a6b7c8d9e0f1a2b3c4d";
 export const BASE_SHA = "3a91f02e7d5c1b86a4e0f9d2c7b3a1e8d6f40c21";
 
 const VIEWER: Permission[] = ["repositories:read", "scans:read", "violations:read", "policies:read", "rules:read"];
-const ADMIN: Permission[] = [...VIEWER, "violations:manage", "scans:trigger", "audit:read", "policies:write", "repositories:manage", "github:manage", "members:read"];
+const ADMIN: Permission[] = [
+  ...VIEWER,
+  "notifications:read",
+  "violations:manage",
+  "scans:trigger",
+  "audit:read",
+  "policies:write",
+  "policies:rollback",
+  "repositories:manage",
+  "github:manage",
+  "members:read",
+  "notifications:manage",
+];
 
 export function organization(role: "viewer" | "admin" | "owner" = "admin"): OrganizationAccess {
   const permissions = role === "viewer" ? VIEWER : role === "owner" ? [...ADMIN, "members:manage" as Permission] : ADMIN;
@@ -58,6 +74,9 @@ export function scan(overrides: Partial<ScanSummary> = {}): ScanSummary {
     completed_at: "2026-09-01T12:00:02Z",
     duration_ms: 2000,
     requested_by: null,
+    trigger: "pull_request",
+    execution: 1,
+    failure_source: "pull_request",
     ...overrides,
   };
 }
@@ -99,6 +118,9 @@ export function scanDetail(overrides: Partial<ScanDetail> = {}, summary: Partial
     findings: [finding()],
     can_rescan: true,
     rescan_blocked_reason: null,
+    executions: 1,
+    latest_execution: "a".repeat(32),
+    merge_group: null,
     ...overrides,
   };
 }
@@ -175,6 +197,7 @@ export function repositoryDetail(overrides: Partial<RepositoryDetail> = {}): Rep
       required_check: { status: "unknown", branch: "main", required_checks: [], detail: "branch protection could not be read", checked_at: NOW },
       latest_check: { result: "blocked", scan: "a".repeat(32), head_sha: SHA, completed_at: NOW },
       local_hooks: { status: "not_verifiable", detail: "A server cannot see whether developers installed the Git hooks.", checked_at: null },
+      merge_queue: { status: "unknown", detail: "merge queue settings could not be read", checked_at: NOW },
       monitoring_enabled: true,
     },
     organization_policy_version: 2,
@@ -194,6 +217,7 @@ export function overview(overrides: Partial<Overview["summary"]> = {}): Overview
     summary: {
       repositories_monitored: 3,
       repositories_protected: 1,
+      repositories_at_risk: 0,
       repositories_unprotected: 0,
       repositories_unknown: 2,
       repositories_configuration_error: 0,
@@ -254,6 +278,95 @@ export function auditEvent(overrides: Partial<AuditEvent> = {}): AuditEvent {
     summary: "Changed organization policy v2 → v3: ai_coauthor: warn -> block",
     data: {},
     scan: null,
+    ...overrides,
+  };
+}
+
+export function policyVersion(overrides: Partial<PolicyVersion> = {}): PolicyVersion {
+  return {
+    version: 2,
+    fingerprint: "e".repeat(64),
+    floors: { ai_coauthor: "block" },
+    created_at: NOW,
+    created_by: { id: 501, login: "alice" },
+    reason: "stable",
+    status: "archived",
+    kind: "change",
+    rollback_of: null,
+    restored_version: null,
+    changes: [],
+    summary: "ai_coauthor: repository -> block",
+    ...overrides,
+  };
+}
+
+export function notification(overrides: Partial<NotificationItem> = {}): NotificationItem {
+  return {
+    id: "c".repeat(32),
+    type: "high_violation",
+    category: "violations",
+    severity: "high",
+    state: "unread",
+    title: "Blocked: ai_coauthor in octo-org/payments-api",
+    body: "CommitGuard blocked 3 commit(s) in pull request #7 of octo-org/payments-api (ai_coauthor, high).",
+    organization_id: 1001,
+    repository: { id: 5001, installation_id: 42, full_name: "octo-org/payments-api" },
+    resource_type: "violation",
+    resource_id: "b".repeat(32),
+    link: `/violations/${"b".repeat(32)}`,
+    occurrences: 1,
+    created_at: NOW,
+    last_occurred_at: NOW,
+    read_at: null,
+    ...overrides,
+  };
+}
+
+export function execution(overrides: Partial<Execution> = {}): Execution {
+  return {
+    id: "a".repeat(32),
+    execution: 1,
+    trigger: "pull_request",
+    current: false,
+    result: "blocked",
+    head_sha: SHA,
+    base_sha: BASE_SHA,
+    organization_policy_version: 1,
+    policy_version: "ef334cbde9255add",
+    rules_version: "57b1df750182531f",
+    tool_version: "0.1.0.dev0",
+    conclusion: "failure",
+    requested_by: null,
+    failure: null,
+    created_at: NOW,
+    started_at: NOW,
+    completed_at: "2026-09-01T12:00:02Z",
+    duration_ms: 2000,
+    ...overrides,
+  };
+}
+
+export function notificationSettings(canManage = true, overrides: Partial<NotificationSettings> = {}): NotificationSettings {
+  const type = (name: string, label: string, mandatory: boolean, email: boolean, webhook: boolean) => ({
+    type: name,
+    label,
+    description: `${label} description`,
+    category: "violations" as const,
+    mandatory_in_app: mandatory,
+    organization: { in_app: true, email, webhook },
+    personal_in_app: true,
+    receives_in_app: true,
+  });
+  return {
+    organization: { id: 1001, login: "octo-org", type: "Organization" },
+    version: 1,
+    updated_at: NOW,
+    updated_by: "ada",
+    channels: { in_app: true, email: true, webhook: true, mode: "deliver" },
+    types: [type("critical_violation", "Critical violations", true, true, true), type("high_violation", "High-severity violations", false, false, false)],
+    email_recipients: canManage ? ["security@example.com"] : [],
+    webhooks: canManage ? [{ id: "d".repeat(32), url: "https://hooks.example.com/commitguard", created_at: NOW, created_by: "ada" }] : [],
+    can_manage: canManage,
     ...overrides,
   };
 }

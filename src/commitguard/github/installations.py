@@ -12,13 +12,35 @@ Two sources of truth, used for different decisions:
   looks the repository up by its immutable ID with that token. A missing or
   missed webhook therefore cannot grant access, and a payload naming an
   unrelated installation, owner or repository gets nothing.
+
+Connection state transitions are detected against the stored state, inside the
+same transaction that applies them:
+
+======================================  =============================================
+Transition                              Notification
+======================================  =============================================
+active -> suspended / deleted           ``installation_disconnected`` (enforcement
+                                        at risk)
+suspended -> active (unsuspend)         ``installation_reconnected``
+new installation for an account whose   ``installation_reconnected``
+previous installation was removed
+suspended -> deleted, deleted ->        none: already disconnected
+deleted, repeated events
+======================================  =============================================
+
+Webhooks can arrive out of order. An installation stored as ``deleted`` is
+not revived by a late ``suspend``, ``unsuspend`` or ``new_permissions_accepted``
+event; only ``created`` makes it active again.
 """
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from commitguard.audit.models import GITHUB_ACTOR, Actor, AuditEventType
+from commitguard.core.result import Severity
 from commitguard.github.auth import InstallationToken, InstallationTokenProvider
 from commitguard.github.client import GitHubClient, InstallationInfo
 from commitguard.github.errors import (
@@ -38,6 +60,9 @@ from commitguard.github.events import (
 from commitguard.github.identifiers import AccountType, RepositoryRef
 from commitguard.github.repositories import MirrorManager
 from commitguard.github.storage import InstallationRecord, InstallationState, SqliteStateStore
+from commitguard.notifications.deduplication import domain_key
+from commitguard.notifications.models import NotificationEvent, NotificationType
+from commitguard.notifications.outbox import emit
 from commitguard.observability.logging import get_logger
 from commitguard.services.audit import AuditService
 
@@ -95,10 +120,16 @@ class InstallationService:
             updated_at=now,
         )
         installation_id = event.installation_id
+        deleted = existing is not None and existing.state is InstallationState.DELETED
+        if deleted and event.action is not InstallationAction.CREATED:
+            log.info("installation_event_after_removal_ignored", action=event.action.value)
+            return
+        before = existing.state if existing else None
         if event.action is InstallationAction.CREATED:
-            self._store.upsert_installation(record)
             self._store.replace_repositories(event.installation_id, event.repositories, now)
-            self._audit.record(
+            self._apply(
+                record,
+                before,
                 AuditEventType.INSTALLATION_CREATED,
                 actor=GITHUB_ACTOR,
                 installation_id=installation_id,
@@ -108,45 +139,160 @@ class InstallationService:
                 repositories=len(event.repositories),
             )
         elif event.action is InstallationAction.DELETED:
-            self._store.upsert_installation(
-                record.model_copy(update={"state": InstallationState.DELETED})
-            )
-            self._store.set_installation_state(
-                event.installation_id, InstallationState.DELETED, now
-            )
-            self._tokens.invalidate(event.installation_id)
-            self._mirrors.remove_installation(event.installation_id)
-            self._audit.record(
+            repositories = len(self._store.list_repositories(installation_id))
+            self._apply(
+                record.model_copy(update={"state": InstallationState.DELETED}),
+                before,
                 AuditEventType.INSTALLATION_REMOVED,
+                affected=repositories,
                 actor=GITHUB_ACTOR,
                 installation_id=installation_id,
             )
-        elif event.action is InstallationAction.SUSPEND:
-            self._store.upsert_installation(
-                record.model_copy(update={"state": InstallationState.SUSPENDED})
-            )
             self._tokens.invalidate(event.installation_id)
-            self._audit.record(
+            self._mirrors.remove_installation(event.installation_id)
+        elif event.action is InstallationAction.SUSPEND:
+            self._tokens.invalidate(event.installation_id)
+            self._apply(
+                record.model_copy(update={"state": InstallationState.SUSPENDED}),
+                before,
                 AuditEventType.INSTALLATION_SUSPENDED,
                 actor=GITHUB_ACTOR,
                 installation_id=installation_id,
             )
         elif event.action is InstallationAction.UNSUSPEND:
-            self._store.upsert_installation(record)
-            self._audit.record(
+            self._apply(
+                record,
+                before,
                 AuditEventType.INSTALLATION_UNSUSPENDED,
                 actor=GITHUB_ACTOR,
                 installation_id=installation_id,
             )
         else:  # new_permissions_accepted
             state = existing.state if existing else InstallationState.ACTIVE
-            self._store.upsert_installation(record.model_copy(update={"state": state}))
             self._tokens.invalidate(event.installation_id)
-            self._audit.record(
+            self._apply(
+                record.model_copy(update={"state": state}),
+                before,
                 AuditEventType.INSTALLATION_PERMISSIONS_UPDATED,
                 actor=GITHUB_ACTOR,
                 installation_id=installation_id,
             )
+
+    def _apply(
+        self,
+        record: InstallationRecord,
+        before: InstallationState | None,
+        audit_type: AuditEventType,
+        *,
+        affected: int | None = None,
+        actor: Actor,
+        installation_id: int,
+        **data: Any,
+    ) -> None:
+        """Store the installation state, its audit event and any transition notification."""
+        now = self._now()
+        after = record.state
+        with self._store.transaction() as db:
+            self._store.upsert_installation_in(db, record)
+            if after is InstallationState.DELETED:
+                self._store.set_installation_state_in(db, installation_id, after, now)
+            repositories = affected
+            if repositories is None:
+                repositories = int(
+                    db.execute(
+                        "SELECT COUNT(*) AS n FROM installation_repositories "
+                        "WHERE installation_id = ?",
+                        (installation_id,),
+                    ).fetchone()["n"]
+                )
+            notification = self._transition_notification(db, record, before, repositories)
+            audit = self._store.insert_audit_event(
+                db,
+                self._audit.build(
+                    audit_type,
+                    actor=actor,
+                    installation_id=installation_id,
+                    account_id=record.account_id,
+                    **{k: v for k, v in data.items() if k != "account_id"},
+                ),
+            )
+            if notification is not None:
+                emit(db, notification, now)
+        self._audit.log_stored(audit)
+
+    @staticmethod
+    def _transition_notification(
+        db: sqlite3.Connection,
+        record: InstallationRecord,
+        before: InstallationState | None,
+        repositories: int,
+    ) -> NotificationEvent | None:
+        after = record.state
+        account = record.account_login
+        if before is InstallationState.ACTIVE and after in (
+            InstallationState.SUSPENDED,
+            InstallationState.DELETED,
+        ):
+            how = "uninstalled" if after is InstallationState.DELETED else "suspended"
+            return NotificationEvent(
+                type=NotificationType.INSTALLATION_DISCONNECTED,
+                account_id=record.account_id,
+                severity=Severity.CRITICAL,
+                installation_id=record.installation_id,
+                resource_type="installation",
+                resource_id=str(record.installation_id),
+                dedup_key=domain_key(
+                    NotificationType.INSTALLATION_DISCONNECTED, record.installation_id
+                ),
+                title=f"CommitGuard GitHub installation disconnected: {account}",
+                body=(
+                    f"The CommitGuard GitHub App was {how} for {account}. Affected repositories: "
+                    f"{repositories}. GitHub enforcement: AT RISK - CommitGuard checks no longer "
+                    "run, and required checks may block or stop protecting merges. Action: "
+                    "reinstall or unsuspend the CommitGuard GitHub App."
+                ),
+                metadata={
+                    "installation_id": record.installation_id,
+                    "account": account,
+                    "state": after.value,
+                    "affected_repositories": repositories,
+                    "enforcement": "at_risk",
+                },
+            )
+        reconnected = before is InstallationState.SUSPENDED and after is InstallationState.ACTIVE
+        if before is None and after is InstallationState.ACTIVE:
+            previous = db.execute(
+                "SELECT 1 FROM installations WHERE account_id = ? AND installation_id != ? "
+                "AND state = 'deleted' LIMIT 1",
+                (record.account_id, record.installation_id),
+            ).fetchone()
+            reconnected = previous is not None
+        if before is InstallationState.DELETED and after is InstallationState.ACTIVE:
+            reconnected = True
+        if not reconnected:
+            return None
+        return NotificationEvent(
+            type=NotificationType.INSTALLATION_RECONNECTED,
+            account_id=record.account_id,
+            severity=Severity.LOW,
+            installation_id=record.installation_id,
+            resource_type="installation",
+            resource_id=str(record.installation_id),
+            dedup_key=domain_key(NotificationType.INSTALLATION_RECONNECTED, record.account_id),
+            title=f"CommitGuard GitHub installation restored: {account}",
+            body=(
+                f"The CommitGuard GitHub App is available again for {account}. Affected "
+                f"repositories: {repositories}. GitHub enforcement: RESTORED for new events. "
+                "Commits pushed while disconnected were not checked by the App; re-run the "
+                "CommitGuard check on open pull requests."
+            ),
+            metadata={
+                "installation_id": record.installation_id,
+                "account": account,
+                "affected_repositories": repositories,
+                "enforcement": "restored",
+            },
+        )
 
     def handle_repositories(self, event: InstallationRepositoriesEvent) -> None:
         now = self._now()

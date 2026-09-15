@@ -25,6 +25,7 @@ from commitguard.api.settings import DashboardSettings, Environment
 from commitguard.controlplane.commands import ControlPlaneCommands
 from commitguard.controlplane.identity import AuthService
 from commitguard.controlplane.members import MembershipService
+from commitguard.controlplane.notifications import NotificationCenter
 from commitguard.controlplane.queries import DashboardQueries
 from commitguard.github.app import GitHubAppService, create_wsgi_app
 from commitguard.github.enforcement_status import EnforcementProbe
@@ -161,6 +162,9 @@ def build_dashboard(
         commands=commands,
         policies=service.policies,
         members=MembershipService(store, service.audit, now=now),
+        notifications=NotificationCenter(
+            store, service.audit, service.notifications.settings, now=now
+        ),
         now=now,
     )
 
