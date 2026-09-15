@@ -10,6 +10,7 @@ import {
   CircleCheck,
   CircleDashed,
   CircleHelp,
+  CircleMinus,
   CircleSlash,
   CircleX,
   Clock,
@@ -94,7 +95,7 @@ export const SEVERITY: Record<string, StatusStyle> = {
   critical: style("CRITICAL", "critical", OctagonAlert),
   high: style("HIGH", "danger", TriangleAlert),
   medium: style("MEDIUM", "warning", TriangleAlert),
-  low: style("LOW", "info", CircleHelp),
+  low: style("LOW", "neutral", CircleMinus),
   info: style("INFO", "neutral", CircleHelp),
 };
 

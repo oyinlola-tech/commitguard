@@ -11,7 +11,6 @@ const ORGANIZATION_KEY = "commitguard.organization";
 
 function storage(): Storage | null {
   try {
-    // eslint-disable-next-line no-restricted-globals -- the single sanctioned use
     return window.localStorage;
   } catch {
     return null;
