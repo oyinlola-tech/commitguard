@@ -265,3 +265,46 @@ def test_cli_import_does_not_load_the_app_service_or_cryptography() -> None:
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "[]"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 6: control plane and dashboard API boundaries
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("package", ["controlplane", "api"])
+def test_control_plane_does_not_detect_or_evaluate_policy(package: str) -> None:
+    """The dashboard stores and explains ScanResults; it has no detection or policy engine."""
+    offenders = []
+    for path in (PACKAGE_ROOT / package).rglob("*.py"):
+        for name in _imports(path):
+            if (
+                _matches(name, "commitguard.detectors")
+                or _matches(name, "commitguard.core.engine")
+                or _matches(name, "commitguard.policies.evaluator")
+                or _matches(name, "commitguard.services.analysis")
+            ):
+                offenders.append(f"{_module_name(path)} imports {name}")
+    assert offenders == []
+
+
+def test_api_routes_contain_no_sql() -> None:
+    """Routes call control plane services; SQL lives in the control plane and storage."""
+    offenders = [
+        _module_name(path)
+        for path in (PACKAGE_ROOT / "api").rglob("*.py")
+        if any(
+            keyword in path.read_text(encoding="utf-8")
+            for keyword in ("SELECT ", "INSERT ", "UPDATE ", "DELETE FROM", "sqlite3")
+        )
+    ]
+    assert offenders == []
+
+
+def test_dashboard_api_is_not_loaded_by_the_cli() -> None:
+    script = (
+        "import sys, commitguard.cli.app\n"
+        "names = ('commitguard.api', 'commitguard.controlplane')\n"
+        "print(sorted(n for n in names if n in sys.modules))"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[]"
