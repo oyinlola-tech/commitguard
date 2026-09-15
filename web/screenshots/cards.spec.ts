@@ -85,7 +85,7 @@ function banner(t: Theme) {
     .left{position:relative;padding:56px 0 48px 64px;display:flex;flex-direction:column}
     .brand{display:flex;align-items:center;gap:16px}
     .brand svg{width:58px;height:58px;color:var(--ink)}
-    h1{font-family:Display;font-weight:700;font-size:64px;letter-spacing:-.035em;font-stretch:88%;line-height:1}
+    h1{font-family:Display;font-weight:700;font-size:62px;letter-spacing:-.022em;font-stretch:96%;line-height:1}
     h1 span{color:var(--graphite)}
     .tag{margin-top:26px;font-size:25px;line-height:1.3;color:var(--soft);max-width:520px;letter-spacing:-.01em}
     .flow{margin-top:auto;font-family:Mono;font-size:14.5px;color:var(--graphite);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -103,7 +103,7 @@ function banner(t: Theme) {
     .pass .chip{color:var(--pass);background:var(--passTint);border-color:color-mix(in srgb,var(--pass) 35%,transparent)}
     .warning .chip{color:var(--warning);background:var(--warningTint);border-color:color-mix(in srgb,var(--warning) 35%,transparent)}
     .blocked .chip{color:var(--blocked);background:var(--blockedTint);border-color:color-mix(in srgb,var(--blocked) 35%,transparent)}
-    .blocked{background:linear-gradient(90deg,var(--blockedTint),transparent 80%);margin:0 -18px;padding:0 18px;border-left:3px solid var(--blocked)}
+    .blocked{background:linear-gradient(90deg,var(--blockedTint),transparent 80%);margin:0 -18px;padding:0 18px 0 15px;border-left:3px solid var(--blocked)}
     .blocked .node{border-color:var(--blocked);background:var(--blocked);outline:4px solid var(--blockedTint)}
     .blocked .msg{color:var(--blocked)}
   </style>
@@ -125,7 +125,7 @@ function terminal(session: Session) {
         .replace(/^(Result: BLOCK|result=BLOCK.*)$/gm, '<span class="bad">$1</span>')
         .replace(/^(BLOCK)\t/gm, '<span class="bad">$1</span>\t')
         .replace(/^(CommitGuard)$/gm, '<span class="head">$1</span>');
-      return `<div class="step"><div class="cmd"><span class="cwd">${escape(session.cwd)}</span> <span class="prompt">$</span> ${escape(step.command)}</div><pre>${lines}</pre><div class="exit">exit ${step.exit}</div></div>`;
+      return `<div class="step"><div class="cmd"><span class="cwd">${escape(session.cwd)}</span> <span class="prompt">$</span> ${escape(step.command)}</div><pre>${lines}</pre><div class="exit${step.exit === 0 ? " zero" : ""}">exit ${step.exit}</div></div>`;
     })
     .join("");
   return `<style>
@@ -142,6 +142,7 @@ function terminal(session: Session) {
     pre{margin-top:10px;font:inherit;white-space:pre-wrap;tab-size:10;color:#c4cec9}
     .bad{color:#ff8a82;font-weight:700}.head{color:#dfe7e3;font-weight:700}
     .exit{margin-top:10px;display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;color:#ff8a82;border:1px solid rgb(255 138 130 / .35);background:rgb(255 138 130 / .1);border-radius:4px;padding:2px 7px}
+    .exit.zero{color:#5ccb94;border-color:rgb(92 203 148 / .35);background:rgb(92 203 148 / .1)}
   </style>
   <div id="card"><div class="bar">${LOGO}<span class="title">${escape(session.title)}</span></div>${body}</div>`;
 }
@@ -149,7 +150,13 @@ function terminal(session: Session) {
 function results(t: Theme, data: Tests) {
   const total = data.suites.reduce((sum, s) => sum + s.passed, 0);
   const failed = data.suites.reduce((sum, s) => sum + s.failed, 0);
-  const allOk = [...data.suites, ...data.checks].every((item) => item.ok);
+  const failedChecks = data.checks.filter((c) => !c.ok).length;
+  const allOk = failed === 0 && failedChecks === 0 && data.suites.every((s) => s.ok);
+  const status = allOk
+    ? `${total.toLocaleString("en-US")} TESTS PASSED`
+    : failed > 0
+      ? `${failed} TEST${failed === 1 ? "" : "S"} FAILED`
+      : `${failedChecks || "SUITE"} CHECK${failedChecks === 1 ? "" : "S"} FAILED`;
   const date = new Date(data.generated_at).toISOString().slice(0, 10);
   const suites = data.suites
     .map(
@@ -169,7 +176,7 @@ function results(t: Theme, data: Tests) {
     #card{width:1100px;background:var(--surface);border:1px solid var(--rule);border-radius:16px;color:var(--ink);font-family:Body;overflow:hidden}
     header{display:flex;align-items:center;gap:14px;padding:22px 30px;border-bottom:1px solid var(--rule)}
     header svg{width:26px;height:26px}
-    h2{font-family:Display;font-weight:700;font-size:24px;letter-spacing:-.02em;font-stretch:90%}
+    h2{font-family:Display;font-weight:700;font-size:24px;letter-spacing:-.01em;font-stretch:96%}
     .status{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-family:Mono;font-weight:700;font-size:13px;letter-spacing:.06em;padding:5px 10px;border-radius:5px;border:1px solid}
     .status svg{width:15px;height:15px}
     .status.ok{color:var(--pass);background:var(--passTint);border-color:color-mix(in srgb,var(--pass) 35%,transparent)}
@@ -180,7 +187,7 @@ function results(t: Theme, data: Tests) {
     .name{display:flex;align-items:center;gap:8px;font-family:Mono;font-size:14px;color:var(--graphite)}
     .name svg{width:17px;height:17px}
     .ok .name svg,.check.ok svg{color:var(--pass)}.fail .name svg,.check.fail svg{color:var(--blocked)}
-    .num{margin-top:12px;font-family:Display;font-weight:700;font-size:56px;letter-spacing:-.04em;line-height:1;font-stretch:85%}
+    .num{margin-top:12px;font-family:Display;font-weight:700;font-size:54px;letter-spacing:-.015em;line-height:1;font-stretch:100%;font-variant-numeric:tabular-nums}
     .label{margin-top:6px;font-size:15px;color:var(--soft)}
     .meta{margin-top:10px;font-family:Mono;font-size:12.5px;color:var(--graphite)}
     .checks{display:flex;gap:10px;flex-wrap:wrap;padding:18px 30px;border-top:1px solid var(--rule);background:var(--sunken)}
@@ -190,7 +197,7 @@ function results(t: Theme, data: Tests) {
     footer span:last-child{margin-left:auto}
   </style>
   <div id="card">
-    <header>${LOGO}<h2>Test evidence</h2><span class="status ${allOk ? "ok" : "fail"}">${allOk ? CHECK : CROSS}${allOk ? `${total.toLocaleString("en-US")} TESTS PASSED` : `${failed} FAILED`}</span></header>
+    <header>${LOGO}<h2>Test evidence</h2><span class="status ${allOk ? "ok" : "fail"}">${allOk ? CHECK : CROSS}${status}</span></header>
     <div class="grid">${suites}</div>
     <div class="checks">${checks}</div>
     <footer><span>commit ${escape(data.commit)}</span><span>Python ${escape(data.python)}</span><span>generated ${date} by scripts/readme_evidence.py</span></footer>
