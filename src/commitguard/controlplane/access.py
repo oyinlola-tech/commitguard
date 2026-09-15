@@ -34,6 +34,7 @@ Each role includes every permission of the roles above it. The owner of a
 personal (user-account) installation is always its ``owner``.
 """
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -113,14 +114,20 @@ class AccessScope:
 
     session_hash: str
     installation_ids: tuple[int, ...]
+    account_ids: tuple[int, ...]
 
     @property
     def empty(self) -> bool:
-        return not self.installation_ids
+        return not self.installation_ids and not self.account_ids
 
-    def placeholders(self) -> str:
-        """``?, ?, ?`` for the installation IDs (the IDs are bound as parameters)."""
-        return ", ".join("?" for _ in self.installation_ids)
+    @property
+    def installations_json(self) -> str:
+        """The installation IDs as a JSON array, bound to ``json_each(?)`` in queries."""
+        return json.dumps(list(self.installation_ids))
+
+    @property
+    def accounts_json(self) -> str:
+        return json.dumps(list(self.account_ids))
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +173,11 @@ class Principal:
         installations = tuple(
             sorted(i for i, account in self.installations.items() if account in accounts)
         )
-        return AccessScope(session_hash=self.session_hash, installation_ids=installations)
+        return AccessScope(
+            session_hash=self.session_hash,
+            installation_ids=installations,
+            account_ids=tuple(sorted(accounts)),
+        )
 
     def permissions_for(self, account_id: int) -> frozenset[Permission]:
         role = self.role_in(account_id)

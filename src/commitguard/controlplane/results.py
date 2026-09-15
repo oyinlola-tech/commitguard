@@ -47,7 +47,7 @@ exposures, so a slow scan cannot reopen or close anything behind a newer one.
 import json
 import sqlite3
 import uuid
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -91,7 +91,9 @@ class _Group:
 
 def job_group(job: ScanJob) -> _Group:
     if job.pull_request_number is not None:
-        return _Group(group_key(job.pull_request_number), "pull_request", f"#{job.pull_request_number}")
+        return _Group(
+            group_key(job.pull_request_number), "pull_request", f"#{job.pull_request_number}"
+        )
     ref = job.context.ref or ""
     return _Group(branch_group_key(ref), "branch", clean_text(ref, 256))
 
@@ -147,12 +149,11 @@ class ScanResultRecorder:
     ) -> None:
         """Store the result, its findings and the violation lifecycle in one transaction."""
         now = self._now()
-        tracked = [
-            f for commit in result.report.commits for f in commit.findings
-        ]
-        identities = self._identities(repository, {f.finding.commit_sha for f in tracked})
+        # Errors and cancellations never reach this method: they change no violation state.
+        findings = [f for commit in result.report.commits for f in commit.findings]
+        identities = self._identities(repository, {f.finding.commit_sha for f in findings})
         group = job_group(job)
-        current = {f.fingerprint for f in tracked if f.action in TRACKED_ACTIONS}
+        current = {f.fingerprint for f in findings if f.action in TRACKED_ACTIONS}
         # Reachability checks run Git, so they happen before the database transaction.
         unreachable = self._unreachable_branch_exposures(job, group, current, repository)
 
@@ -198,7 +199,7 @@ class ScanResultRecorder:
             )
             stale = self._newer_scan_completed(db, job)
             touched: set[str] = set()
-            for item in tracked:
+            for item in findings:
                 violation_id = None
                 if item.action in TRACKED_ACTIONS:
                     violation_id, event = self._upsert_violation(
@@ -218,9 +219,6 @@ class ScanResultRecorder:
             events = [self._store.insert_audit_event(db, e) for e in events]
         for event in events:
             self._audit.log_stored(event)
-
-    def record_failed(self, job: ScanJob) -> None:
-        """Scans that ended in error or were cancelled change no violation state."""
 
     # ------------------------------------------------------------------ #
     # GitHub lifecycle events
@@ -257,8 +255,9 @@ class ScanResultRecorder:
             if merged and base_ref:
                 branch = _Group(branch_group_key(base_ref), "branch", clean_text(base_ref, 256))
                 for violation_id in ids:
-                    self._activate_exposure_row(db, installation_id, repository_id, branch,
-                                                violation_id, None, now)
+                    self._activate_exposure_row(
+                        db, installation_id, repository_id, branch, violation_id, None, now
+                    )
             events.extend(self._refresh_statuses(db, ids, now))
             events = [self._store.insert_audit_event(db, e) for e in events]
         for event in events:
@@ -501,8 +500,7 @@ class ScanResultRecorder:
                 continue
             if group.kind == "pull_request":
                 reason = (
-                    f"no longer part of pull request {group.label} "
-                    f"(scan of {job.head_sha[:12]})"
+                    f"no longer part of pull request {group.label} (scan of {job.head_sha[:12]})"
                 )
             elif row["violation_id"] in unreachable:
                 reason = (
@@ -625,12 +623,3 @@ def scan_result_label(state: str, result_action: str | None) -> str:
         JobState.ERROR.value: "error",
         JobState.CANCELLED.value: "cancelled",
     }.get(state, "error")
-
-
-def mark_terminal(store: SqliteStateStore, job_ids: Sequence[str], now: datetime) -> None:
-    """Record ``completed_at`` for jobs that ended without a result (error, cancelled)."""
-    with store.transaction() as db:
-        db.executemany(
-            "UPDATE scan_jobs SET completed_at = COALESCE(completed_at, ?) WHERE job_id = ?",
-            [(_ts(now), job_id) for job_id in job_ids],
-        )

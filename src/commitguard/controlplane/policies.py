@@ -101,7 +101,9 @@ def policy_changes(old: Mapping[str, Action], new: Mapping[str, Action]) -> list
         if before == after:
             continue
         weakening = before is not None and (after is None or after.rank < before.rank)
-        changes.append(PolicyChange(policy_id=policy_id, old=before, new=after, weakening=weakening))
+        changes.append(
+            PolicyChange(policy_id=policy_id, old=before, new=after, weakening=weakening)
+        )
     return changes
 
 
@@ -143,7 +145,7 @@ class OrganizationPolicyService:
             "ORDER BY version DESC LIMIT ? OFFSET ?",
             (int(account_id), int(limit), int(offset)),
         )
-        return [self._version_view(self._version(row)) for row in rows]
+        return [self.version_view(self._version(row)) for row in rows]
 
     @staticmethod
     def _version(row: Mapping[str, object]) -> PolicyVersion:
@@ -154,13 +156,15 @@ class OrganizationPolicyService:
             floors={k: Action(v) for k, v in document.items()},
             fingerprint=str(row["fingerprint"]),
             created_at=datetime.fromtimestamp(float(str(row["created_at"])), UTC),
-            created_by_id=int(str(row["created_by_id"])) if row["created_by_id"] is not None else None,
+            created_by_id=int(str(row["created_by_id"]))
+            if row["created_by_id"] is not None
+            else None,
             created_by_login=str(row["created_by_login"]) if row["created_by_login"] else None,
             reason=str(row["reason"]) if row["reason"] else None,
         )
 
     @staticmethod
-    def _version_view(version: PolicyVersion) -> PolicyVersionView:
+    def version_view(version: PolicyVersion) -> PolicyVersionView:
         return PolicyVersionView(
             version=version.version,
             fingerprint=version.fingerprint or "",
@@ -178,9 +182,7 @@ class OrganizationPolicyService:
             for policy_id, override in self._service_policy.config.policies.items()
         }
 
-    def view(
-        self, organization: OrganizationRef, *, can_write: bool
-    ) -> OrganizationPolicyView:
+    def view(self, organization: OrganizationRef, *, can_write: bool) -> OrganizationPolicyView:
         current = self.current(organization.id)
         service = self.service_floors()
         rules = []
@@ -191,7 +193,9 @@ class OrganizationPolicyService:
             minimum = Action.most_restrictive(floors) if floors else None
             if minimum is None:
                 source = "built_in_default"
-            elif service_floor is not None and service_floor.rank >= (org_floor or Action.ALLOW).rank:
+            elif (
+                service_floor is not None and service_floor.rank >= (org_floor or Action.ALLOW).rank
+            ):
                 source = "service_policy"
             else:
                 source = "organization_policy"
@@ -236,7 +240,9 @@ class OrganizationPolicyService:
         confirm_weakening: bool,
     ) -> tuple[PolicyVersion, list[PolicyChange]]:
         now = self._now()
-        reason_text = clean_text(reason.strip(), MAX_REASON_CHARS) if reason and reason.strip() else None
+        reason_text = (
+            clean_text(reason.strip(), MAX_REASON_CHARS) if reason and reason.strip() else None
+        )
         current = self.current(account_id)
         if current.version != expected_version:
             raise ConflictError(

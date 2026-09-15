@@ -553,8 +553,7 @@ _ORPHAN_DELETES = (
     "(SELECT installation_id FROM installations)",
     "DELETE FROM violations WHERE installation_id NOT IN "
     "(SELECT installation_id FROM installations)",
-    "DELETE FROM findings WHERE installation_id NOT IN "
-    "(SELECT installation_id FROM installations)",
+    "DELETE FROM findings WHERE installation_id NOT IN (SELECT installation_id FROM installations)",
     "DELETE FROM repository_settings WHERE installation_id NOT IN "
     "(SELECT installation_id FROM installations)",
     "DELETE FROM enforcement_status WHERE installation_id NOT IN "
@@ -634,7 +633,9 @@ class SqliteStateStore(AuditStorage):
         db = self._db
         db.execute("BEGIN IMMEDIATE")
         try:
-            db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
             row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
             current = int(row["value"]) if row is not None and row["value"].isdigit() else 0
             if row is not None and not row["value"].isdigit():
@@ -859,6 +860,15 @@ class SqliteStateStore(AuditStorage):
                 "AND repository_id = ?",
                 (default_branch, int(installation_id), int(repository_id)),
             )
+
+    def monitoring_enabled(self, installation_id: int, repository_id: int) -> bool:
+        """False when an administrator paused CommitGuard for this repository."""
+        rows = self._query(
+            "SELECT monitoring_enabled FROM repository_settings WHERE installation_id = ? "
+            "AND repository_id = ?",
+            (int(installation_id), int(repository_id)),
+        )
+        return not rows or bool(rows[0]["monitoring_enabled"])
 
     def repository_listed(self, installation_id: int, repository_id: int) -> bool:
         return bool(

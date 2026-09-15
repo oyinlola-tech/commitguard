@@ -99,9 +99,9 @@ class EnforcementProbe:
             return "not_detected", f"no {directory} directory on {branch}"
         except GitHubAPIError as exc:
             return "unknown", f"workflows could not be read ({exc.category.value})"
-        workflows = [
-            e for e in entries if e.type == "file" and e.name.endswith((".yml", ".yaml"))
-        ][:MAX_WORKFLOW_FILES]
+        workflows = [e for e in entries if e.type == "file" and e.name.endswith((".yml", ".yaml"))][
+            :MAX_WORKFLOW_FILES
+        ]
         for entry in workflows:
             try:
                 text = self._client.get_file_text(token, repository, entry.path, branch)

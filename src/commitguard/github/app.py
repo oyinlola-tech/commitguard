@@ -29,6 +29,8 @@ from wsgiref.types import StartResponse, WSGIEnvironment
 
 from commitguard.audit.models import AuditEventType
 from commitguard.config.sources import MandatoryPolicy, load_mandatory_policy
+from commitguard.controlplane.policies import OrganizationPolicyService
+from commitguard.controlplane.results import ScanResultRecorder
 from commitguard.github.auth import AppCredentials, InstallationTokenProvider
 from commitguard.github.checks import APP_CHECK_NAME, APP_PUSH_CHECK_NAME
 from commitguard.github.client import API_URL, GitHubClient, Transport
@@ -69,6 +71,7 @@ from commitguard.observability.metrics import (
     InMemoryMetrics,
 )
 from commitguard.security.hashing import fingerprint
+from commitguard.security.rate_limit import RequestRateLimiter
 from commitguard.security.secrets import Secret
 from commitguard.services.audit import AuditService
 
@@ -85,30 +88,6 @@ RETENTION_INTERVAL_SECONDS = 3600.0
 class WebhookResult:
     status: int
     body: Mapping[str, str | int] = field(default_factory=dict)
-
-
-class RequestRateLimiter:
-    """Fixed-window request counter per client address (bounded memory)."""
-
-    MAX_TRACKED = 10_000
-
-    def __init__(self, per_minute: int, clock: Callable[[], float] = time.monotonic) -> None:
-        self._limit = per_minute
-        self._clock = clock
-        self._lock = threading.Lock()
-        self._windows: dict[str, tuple[int, int]] = {}
-
-    def allow(self, key: str) -> bool:
-        window = int(self._clock() // 60)
-        with self._lock:
-            if len(self._windows) > self.MAX_TRACKED:
-                self._windows.clear()
-            start, count = self._windows.get(key, (window, 0))
-            if start != window:
-                start, count = window, 0
-            count += 1
-            self._windows[key] = (start, count)
-            return count <= self._limit
 
 
 class GitHubAppService:
@@ -139,6 +118,10 @@ class GitHubAppService:
         self.installations = InstallationService(
             store, self.tokens, client, mirrors, self.audit, now=now
         )
+        self.policies = OrganizationPolicyService(
+            store, self.audit, service_policy=mandatory_policy, now=now
+        )
+        self.recorder = ScanResultRecorder(store, self.audit, now=now)
         self.worker = ScanWorker(
             store=store,
             installations=self.installations,
@@ -146,7 +129,8 @@ class GitHubAppService:
             mirrors=mirrors,
             audit=self.audit,
             metrics=self.metrics,
-            mandatory_policy=mandatory_policy,
+            policy_resolver=self.policies.mandatory_for_installation,
+            recorder=self.recorder,
             max_commits=max_commits,
             now=now,
         )
@@ -290,13 +274,23 @@ class GitHubAppService:
                 return self._push(event, delivery)
             return self._pull_request(event, delivery)
 
+    def _monitoring_paused(self, installation_id: int, repository_id: int) -> bool:
+        if self.store.monitoring_enabled(installation_id, repository_id):
+            return False
+        log.info("repository_monitoring_paused")
+        return True
+
     def _push(self, event: PushEvent, delivery: WebhookDelivery) -> WebhookResult:
         context = event.context
-        if context.ref_deleted or context.after_sha is None:
-            return WebhookResult(202, {"status": "ignored"})  # nothing to scan
-        if not (context.ref or "").startswith("refs/heads/"):
-            return WebhookResult(202, {"status": "ignored"})  # tags are not scanned
         ref = context.ref or ""
+        if not ref.startswith("refs/heads/"):
+            return WebhookResult(202, {"status": "ignored"})  # tags are not scanned
+        if context.ref_deleted or context.after_sha is None:
+            # Nothing to scan; violations seen only on this branch are no longer present.
+            self.recorder.branch_deleted(event.installation_id, event.repository.id, ref)
+            return WebhookResult(202, {"status": "ignored"})
+        if self._monitoring_paused(event.installation_id, event.repository.id):
+            return WebhookResult(202, {"status": "ignored"})
         return self._enqueue(
             NewScanJob(
                 job_key=fingerprint(["push", ref, context.before_sha or "", context.after_sha]),
@@ -320,8 +314,22 @@ class GitHubAppService:
             self.store.cancel_queued_group(
                 event.installation_id, event.repository.id, group_key(event.number), self._now()
             )
+            self.recorder.pull_request_closed(
+                event.installation_id,
+                event.repository.id,
+                event.number,
+                merged=False,
+                base_ref=None,
+            )
             return WebhookResult(200, {"status": "processed"})
         if action is PullRequestDisposition.RECORD_MERGE:
+            self.recorder.pull_request_closed(
+                event.installation_id,
+                event.repository.id,
+                event.number,
+                merged=True,
+                base_ref=event.context.ref,
+            )
             self.audit.record(
                 AuditEventType.PULL_REQUEST_MERGED,
                 installation_id=event.installation_id,
@@ -331,6 +339,8 @@ class GitHubAppService:
                 pull_request=event.number,
             )
             return WebhookResult(200, {"status": "processed"})
+        if self._monitoring_paused(event.installation_id, event.repository.id):
+            return WebhookResult(202, {"status": "ignored"})
         context = event.context
         head = context.head_sha or ""
         return self._enqueue(

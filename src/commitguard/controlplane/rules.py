@@ -177,6 +177,8 @@ def rule_detail(rule_id: str) -> RuleDetail | None:
         rule=rule_view(entry),
         remediation=remediation_steps(rule_id),
         evidence_sources=tuple(source.label for source in entry.evidence_sources),
-        data_files=tuple(RuleDataFile(name=name, entries=counts[name]) for name in entry.data_files),
+        data_files=tuple(
+            RuleDataFile(name=name, entries=counts[name]) for name in entry.data_files
+        ),
         editable=False,
     )

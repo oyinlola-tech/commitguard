@@ -33,11 +33,13 @@ from datetime import UTC, datetime
 from commitguard.audit.models import AuditEventType
 from commitguard.ci.context import CIEventKind
 from commitguard.config.sources import MandatoryPolicy
+from commitguard.controlplane.results import ScanResultRecorder
 from commitguard.core.decision import Action
 from commitguard.exceptions.base import CommitGuardError
 from commitguard.exceptions.configuration import ConfigurationError
 from commitguard.exceptions.git import GitError
 from commitguard.exceptions.service import InfrastructureError, ScanError, StaleScanError
+from commitguard.git.repository import Repository
 from commitguard.github.check_runs import (
     completed_output,
     error_output,
@@ -82,6 +84,9 @@ MAX_JOB_ATTEMPTS = 3
 _LOCK_STRIPES = 64
 
 
+type PolicyResolver = Callable[[int], tuple[MandatoryPolicy | None, int | None]]
+
+
 @dataclass
 class _Progress:
     auth: AuthorizedRepository | None = None
@@ -100,6 +105,8 @@ class ScanWorker:
         metrics: Metrics,
         scan_service: ScanService | None = None,
         mandatory_policy: MandatoryPolicy | None = None,
+        policy_resolver: PolicyResolver | None = None,
+        recorder: ScanResultRecorder | None = None,
         max_commits: int = DEFAULT_CI_MAX_COMMITS,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -110,7 +117,11 @@ class ScanWorker:
         self._audit = audit
         self._metrics = metrics
         self._scans = scan_service or ScanService()
-        self._mandatory = mandatory_policy
+        # The floor for an installation: service policy + its organisation's policy.
+        self._policy_resolver: PolicyResolver = policy_resolver or (
+            lambda _installation_id: (mandatory_policy, None)
+        )
+        self._recorder = recorder or ScanResultRecorder(store, audit, now=now)
         self._max_commits = max_commits
         self._now = now
         self._locks = tuple(threading.Lock() for _ in range(_LOCK_STRIPES))
@@ -153,6 +164,8 @@ class ScanWorker:
         return self._locks[index]
 
     def _run(self, job: ScanJob, progress: _Progress) -> JobState:
+        if not self._store.monitoring_enabled(job.installation_id, job.repository.id):
+            raise StaleScanError("CommitGuard monitoring is paused for this repository")
         auth = self._installations.authorize(job.installation_id, job.repository)
         progress.auth = auth
         repository = auth.repository
@@ -225,11 +238,12 @@ class ScanWorker:
             branches=branches,
         )
 
+        mandatory, organization_policy_version = self._policy_resolver(job.installation_id)
         request = ScanRequest(
             repository=mirror,
             context=context,
             max_commits=self._max_commits,
-            mandatory_policy=self._mandatory,
+            mandatory_policy=mandatory,
         )
         plan = self._scans.plan(request)
         if plan.range.head is not None and plan.range.head != job.head_sha:
@@ -244,7 +258,7 @@ class ScanWorker:
         with correlation(scan_id=result.metadata.scan_id):
             conclusion, output = completed_output(result)
             self._publish(job, progress, CheckRunStatus.COMPLETED, output, conclusion)
-            return self._record_result(job, result, conclusion)
+            return self._record_result(job, result, conclusion, mirror, organization_policy_version)
 
     def _describe(self, job: ScanJob) -> str:
         if job.pull_request_number is not None:
@@ -273,21 +287,23 @@ class ScanWorker:
             )
 
     def _record_result(
-        self, job: ScanJob, result: ScanResult, conclusion: CheckRunConclusion
+        self,
+        job: ScanJob,
+        result: ScanResult,
+        conclusion: CheckRunConclusion,
+        repository: Repository,
+        organization_policy_version: int | None,
     ) -> JobState:
         stats = result.statistics
         state = JobState.PASSED if result.enforcement.allowed else JobState.FAILED
-        self._store.update_job(
-            job.job_id,
-            self._now(),
+        # Job state, findings and the violation lifecycle change in one transaction.
+        self._recorder.record_completed(
+            job,
+            result,
             state=state,
-            scan_id=result.metadata.scan_id,
-            result_action=result.action.value,
             conclusion=conclusion.value,
-            commits_scanned=stats.commits_scanned,
-            violations=stats.violations,
-            warnings=stats.warnings,
-            lease_expires_at=None,
+            repository=repository,
+            organization_policy_version=organization_policy_version,
         )
         self._audit_job(
             AuditEventType.REPOSITORY_SCANNED,
@@ -346,6 +362,7 @@ class ScanWorker:
             state=JobState.CANCELLED,
             message=safe_text(reason),
             lease_expires_at=None,
+            completed_at=self._now().timestamp(),
         )
         self._metrics.increment(SCANS_CANCELLED)
         self._audit_job(AuditEventType.SCAN_CANCELLED, job, reason=reason)
@@ -366,6 +383,7 @@ class ScanWorker:
             failure_kind=kind.value,
             message=reason,
             lease_expires_at=None,
+            completed_at=self._now().timestamp(),
         )
         self._metrics.increment(SCANS_FAILED, kind=kind.value)
         log.warning(
