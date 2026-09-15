@@ -47,7 +47,7 @@ class Analyzer:
         context = CommitContext(commit=commit, trigger=trigger)
         detection = self._engine.run(context, enabled_rules=self._enabled_rules)
         decision = self._evaluator.evaluate(detection)
-        return CommitReport.build(commit.short_sha, detection, decision)
+        return CommitReport.build(commit.short_sha, detection, decision, subject=commit.subject)
 
 
 def load_analyzer(

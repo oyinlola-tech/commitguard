@@ -37,10 +37,28 @@ branches, and every decision should be explainable with preserved evidence.
 
 ## Threats and mitigations
 
+### Local Git operations (Phase 3)
+
+| Threat | Mitigation / limitation | Status |
+|---|---|---|
+| Developer **accidentally** commits or pushes an AI-attributed commit | pre-commit and commit-msg hooks block the commit; pre-push blocks every outgoing violating commit, including ones created with `--no-verify`, merges, rebases and tools that skip commit hooks | **[done]** |
+| Developer **intentionally** bypasses local hooks (`--no-verify`, deleting hooks, `core.hooksPath`, editing `.commitguard.yaml`, another clone) | **Limitation:** local hooks are user-controlled; CommitGuard does not fight Git's bypass mechanism (tests assert it works). `commitguard doctor` makes missing, modified, disabled or redirected hooks visible. **Future mitigation:** GitHub-side CI as a required check with branch protection, reading policy from the base branch | limitation documented; mitigation **[planned, Phase 4]** |
+| Malicious commit metadata or ref names attempt command injection (`$(…)`, backticks, `;`, `&&`, `\|`, quotes, Unicode) | Git metadata and pre-push input are untrusted data: no shell anywhere, argument vectors or stdin only, object IDs validated before use, ref names never interpolated; tests with hostile messages and branch names assert no execution | **[done]** |
+| Existing hooks are destroyed by installation | Foreign hooks are renamed to `<hook>.pre-commitguard` and chained (never overwritten); conflicts refuse; uninstall removes only the managed block and restores the original; tests compare bytes | **[done]** |
+| Repository content hijacks the hook (a `commitguard/` package in the work tree) | Hooks run `python -P -m commitguard`, so the current directory is not on `sys.path`; tested | **[done]** |
+| CommitGuard unavailable (venv removed, not on PATH) silently allows operations | Wrapper falls back to `commitguard` on PATH, otherwise blocks with instructions (exit 2) | **[done]** |
+| Invalid configuration or internal errors allow operations | Hook commands map every exception to exit 2 (blocks Git) with "security check could not be completed"; not configurable | **[done]** |
+| Malformed pre-push input | Strict parsing (four fields, valid object IDs, no control characters, consistent deletions); anything else blocks | **[done]** |
+| Hook script tampering | Managed block checksum; `doctor` reports modifications, `install` repairs on request | **[done]** (detection, not prevention) |
+| Shared `core.hooksPath` modified for all repositories | Install refuses hooks directories outside the repository's Git directory unless explicitly allowed; `--global` uses `init.templateDir` only when unset, never `core.hooksPath` | **[done]** |
+| Huge pushes exhaust resources or are silently truncated | Only outgoing commits analysed, deduplicated, bounded by `max_push_commits`; exceeding it blocks | **[done]** |
+| Stale remote-tracking refs exclude commits the remote no longer has | Accepted: those commits were checked when pushed; exclusion never uses unknown data | limitation documented |
+| commit-msg cannot see `--cleanup` or the final commit object | Documented best effort; pre-push analyses real commit objects | limitation documented |
+
 ### Bypassing local enforcement
 - `--no-verify`, removing hooks, other clones. **Accepted locally**; mitigated by
-  server-side enforcement **[planned, Phase 4]**. `pre-push` re-scans commits
-  created with `--no-verify` **[planned, Phase 3]**.
+  server-side enforcement **[planned, Phase 4]**. `pre-push` analyses commits
+  created with `--no-verify` **[done]**.
 
 ### Weakening policy through configuration
 - PR adds `action: allow`. Mitigation: CI reads policy from the base branch **[planned]**.
@@ -99,5 +117,7 @@ branches, and every decision should be explainable with preserved evidence.
 - Detectors receive data, not a repository handle; architecture tests forbid
   I/O imports in detection layers **[done]**.
 - Git reads use `GIT_OPTIONAL_LOCKS=0` **[done]**.
-- CommitGuard never rewrites commits or history **[by design]**.
+- CommitGuard never rewrites commits or history; it never runs `git reset`, `rebase`,
+  `commit --amend`, `filter-branch` or `filter-repo`. Remediation text explains
+  the scope of any command it suggests **[by design]**.
 - `init` never overwrites an existing file **[done]**.

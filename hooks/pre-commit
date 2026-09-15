@@ -1,25 +1,31 @@
 #!/bin/sh
-# commitguard-managed-hook
-#
-# CommitGuard pre-commit hook (TEMPLATE).
-# Checks the pending commit's identity and staged changes.
-#
-# STATUS: template only. `commitguard install` (Phase 3) will install this hook,
-# and the command it runs is not implemented yet - installing it by hand today
-# blocks every operation with a "not implemented" error.
-#
-# Behaviour: fails closed. If CommitGuard cannot be found the operation is
-# refused rather than silently allowed.
-#
-# Note: local hooks are bypassable (git --no-verify). They provide fast feedback;
-# repository-level enforcement is provided by GitHub enforcement (Phase 4).
+# BEGIN COMMITGUARD
+# This block is managed by CommitGuard. Do not edit it: `commitguard doctor`
+# detects changes and `commitguard install` restores it. `commitguard uninstall`
+# removes it and restores any hook preserved during installation.
+# commitguard-hook: pre-commit
+# commitguard-format: 1
+# commitguard-checksum: sha256:1bc8d3cdf258e5b057b953f4b898f81670fc1b914de488bbc5416159726fdad3
+commitguard_hook='pre-commit'
+commitguard_python=''
+commitguard_chained="$(dirname -- "$0")/pre-commit.pre-commitguard"
 
-set -eu
+commitguard_run() {
+    if [ -n "$commitguard_python" ] && [ -f "$commitguard_python" ]; then
+        "$commitguard_python" -P -m commitguard hook "$commitguard_hook" "$@"
+    elif command -v commitguard >/dev/null 2>&1; then
+        commitguard hook "$commitguard_hook" "$@"
+    else
+        echo "CommitGuard is not available." >&2
+        echo "The repository's $commitguard_hook security hook could not execute." >&2
+        echo "Operation blocked because the security check could not be completed." >&2
+        echo "Run: commitguard doctor   (reinstall hooks with: commitguard install)" >&2
+        return 2
+    fi
+}
 
-if ! command -v commitguard >/dev/null 2>&1; then
-    echo "commitguard: executable not found on PATH; refusing pre-commit (fail closed)." >&2
-    echo "commitguard: install CommitGuard, or remove this hook deliberately." >&2
-    exit 1
+commitguard_run "$@" || exit $?
+if [ -x "$commitguard_chained" ]; then
+    "$commitguard_chained" "$@" || exit $?
 fi
-
-exec commitguard check --hook pre-commit
+# END COMMITGUARD

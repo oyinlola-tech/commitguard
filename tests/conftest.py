@@ -207,6 +207,25 @@ class GitRepo:
         )
         return self.git("rev-parse", "HEAD")
 
+    def run(
+        self, *args: str, env: Mapping[str, str] | None = None, input_text: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """Run git without raising (for operations that hooks may block)."""
+        return subprocess.run(
+            ["git", *args],
+            cwd=self.path,
+            env={**os.environ, **(env or {})},
+            capture_output=True,
+            text=True,
+            input=input_text,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD")
+
 
 @pytest.fixture
 def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> GitRepo:
@@ -218,3 +237,33 @@ def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> GitRepo:
     repo.git("config", "commit.gpgsign", "false")
     monkeypatch.chdir(path)
     return repo
+
+
+@pytest.fixture
+def bare_remote(tmp_path: Path) -> Path:
+    """An empty bare repository to push to."""
+    path = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "init", "--quiet", "--bare", "--initial-branch=main", str(path)], check=True
+    )
+    return path
+
+
+def remote_refs(remote: Path) -> dict[str, str]:
+    result = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname) %(objectname)"],
+        cwd=remote,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    refs: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        name, oid = line.rsplit(" ", 1)
+        refs[name] = oid
+    return refs
+
+
+@pytest.fixture
+def get_remote_refs() -> Callable[[Path], dict[str, str]]:
+    return remote_refs

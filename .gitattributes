@@ -1,0 +1,7 @@
+# Normalise line endings in the repository.
+* text=auto
+
+# Shell scripts and Git hooks must keep LF endings on every platform,
+# including Windows checkouts: Git runs hooks with sh.
+hooks/* text eol=lf
+*.sh text eol=lf

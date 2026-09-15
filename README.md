@@ -2,10 +2,11 @@
 
 **Git commit provenance and contribution policy enforcement.**
 
-> **Status: pre-alpha (Phase 2 — AI attribution detection).** `commitguard scan`
-> and `commitguard check` analyse commits locally and exit non-zero when a
-> policy blocks them. **Git hooks and GitHub enforcement are not implemented
-> yet**, so nothing is enforced automatically. See [What works today](#what-works-today).
+> **Status: pre-alpha (Phase 3 — Git hook enforcement).** After
+> `commitguard install`, `git commit` and `git push` are checked automatically
+> and stopped when a policy blocks them. Local hooks can be bypassed by anyone
+> who controls the clone; **GitHub-side enforcement (Phase 4) is not
+> implemented yet.** See [What works today](#what-works-today).
 
 ---
 
@@ -107,18 +108,35 @@ Precedence is deterministic: **block > warn > allow**, independent of detector
 order. A detector that crashes blocks (fail closed). See
 [docs/policy-engine.md](docs/policy-engine.md).
 
+## Quick start
+
+```bash
+cd my-project
+commitguard init          # .commitguard.yaml with secure defaults
+commitguard install       # pre-commit, commit-msg and pre-push hooks
+commitguard doctor        # Status: HEALTHY
+
+git add .
+git commit -m "implement authentication"   # checked automatically
+git push                                   # every outgoing commit checked
+```
+
 ## CLI usage
 
 ```bash
 commitguard init                          # write .commitguard.yaml with secure defaults
+commitguard install                       # install hooks (existing hooks are preserved and chained)
+commitguard uninstall                     # remove only CommitGuard's hooks, restore previous ones
 commitguard scan                          # explain findings for HEAD
 commitguard scan origin/main..HEAD        # every commit in a range
 commitguard scan --format json            # structured report (schema_version 1)
 commitguard check                         # machine-friendly result for HEAD
 commitguard check --quiet origin/main..HEAD
 commitguard check --message-file .git/COMMIT_EDITMSG   # a commit that does not exist yet
+commitguard check --verbose               # check with full human-readable evidence
 commitguard policy list                   # effective policies and config layers
-commitguard doctor                        # environment, config and rules health
+commitguard doctor                        # installation, config, engine and hook health
+commitguard hook pre-commit|commit-msg <file>|pre-push   # called by installed hooks
 ```
 
 Blocked `scan` output (abridged):
@@ -155,7 +173,7 @@ result=BLOCK commits=1 block=1 warn=0 allow=0
 |---|---|
 | `0` | allowed (no findings, or only `allow`/`warn` findings) |
 | `1` | blocked by policy (a finding or detector failure evaluated to `block`) |
-| `2` | error: invalid configuration/rules, Git error, bad arguments, unexpected failure |
+| `2` | error: invalid configuration/rules, Git error, bad arguments, unexpected failure (hooks block on errors) |
 
 CommitGuard never modifies commits or rewrites history; remediation is always
 left to the developer.
@@ -177,22 +195,45 @@ policies:
 Layers, lowest precedence first: built-in defaults → global
 `~/.config/commitguard/config.yaml` → repository `.commitguard.yaml` →
 `--config PATH`. Omitted policies keep secure defaults; invalid configuration
-is an error (exit 2). See [docs/configuration.md](docs/configuration.md).
+is an error (exit 2). Which hooks enforce is set under `enforcement:`
+(all enabled by default). See [docs/configuration.md](docs/configuration.md).
 
 ## Git hooks and enforcement layers
 
-Local Git hooks (Phase 3) will run `commitguard check` automatically on
-`git commit`/`git push`. Hooks run on the developer's machine and can be
-skipped (`--no-verify`), so they are fast feedback, **not a security
-boundary**. Repository-level enforcement (Phase 4) will run the same engine in
-GitHub Actions as a required check, reading policy from the protected base
-branch. See [docs/git-hooks.md](docs/git-hooks.md) and
+```text
+git commit ─▶ pre-commit / commit-msg ─┐
+git push   ─▶ pre-push ────────────────┴─▶ commitguard hook ─▶ engine ─▶ policy
+                                                                  ALLOW/WARN ─▶ Git continues
+                                                                  BLOCK/error ─▶ Git stops
+```
+
+- **pre-commit** checks the pending author/committer, **commit-msg** checks the
+  message, and **pre-push** checks every commit the push would introduce
+  (new branches, tags, force pushes, multiple refs, deduplicated). pre-push is
+  the authoritative local check.
+- Hooks contain no detection logic; they call the same engine as `scan`.
+- Existing hooks are never overwritten: they are preserved as
+  `<hook>.pre-commitguard` and run after CommitGuard. `uninstall` restores them.
+- Failures **block** (fail closed): invalid configuration or a missing
+  CommitGuard installation stops the commit or push with instructions.
+- `commitguard doctor` reports missing, modified or disabled hooks.
+
+**Local Git hooks can be bypassed by someone who controls the local repository**
+(`git commit --no-verify`, `git push --no-verify`, deleting hooks). They give
+fast feedback and stop accidents; authoritative protection requires
+server-side enforcement, which is Phase 4 (GitHub Actions as a required check,
+reading policy from the protected base branch). See
+[docs/git-hooks.md](docs/git-hooks.md) and
 [docs/github-enforcement.md](docs/github-enforcement.md).
 
 ## What works today
 
-- `scan`, `check` (including `--message-file`, `--format json`, `--quiet`),
-  `init`, `policy list`, `doctor`, with documented exit codes
+- `scan`, `check` (including `--message-file`, `--format json`, `--quiet`,
+  `--verbose`), `init`, `policy list`, with documented exit codes
+- Git hook enforcement: `install`/`uninstall` (per repository, or `--global`
+  via a Git template directory), `hook pre-commit|commit-msg|pre-push`,
+  chaining of existing hooks, integrity checksums, fail-closed wrappers
+- `doctor` with hook presence, integrity, interpreter and enforcement checks
 - Commit model with parsed trailers; lenient, bounded trailer parser that
   records malformed and evasive variants instead of crashing
 - Four detectors (`coauthor`, `identity`, `trailer`, `bot`) driven by YAML rules
@@ -202,8 +243,8 @@ branch. See [docs/git-hooks.md](docs/git-hooks.md) and
   replace objects, batched reads)
 - Terminal-safe output and ASCII-only JSON
 
-Not yet: `install`/`uninstall` and hook enforcement (Phase 3), GitHub
-enforcement (Phase 4), audit storage, signature verification, dashboard.
+Not yet: GitHub enforcement (Phase 4), audit storage, signature verification,
+secret detection, dashboard.
 
 ## Development
 
@@ -223,11 +264,11 @@ mypy
 Project structure · CLI · configuration · Git abstraction · commit model ·
 detector interface · policy interface · testing foundation
 
-**Phase 2 — AI attribution detection** ✔ *(current)*
+**Phase 2 — AI attribution detection** ✔
 `Co-authored-by` parsing · AI identity rules · AI domain rules · identity
 detection · findings · blocking decisions
 
-**Phase 3 — Git enforcement**
+**Phase 3 — Git enforcement** ✔ *(current)*
 `pre-commit` · `commit-msg` · `pre-push` · hook installation · hook management ·
 local repository enforcement
 

@@ -55,4 +55,5 @@ def load_yaml(text: str) -> object:
 
     Raises :class:`yaml.YAMLError` (including for duplicate keys and aliases).
     """
-    return yaml.load(text, Loader=_StrictSafeLoader)  # noqa: S506 - strict SafeLoader subclass
+    # SafeLoader subclass: no object construction (see tests for !!python tags).
+    return yaml.load(text, Loader=_StrictSafeLoader)  # noqa: S506  # nosec B506

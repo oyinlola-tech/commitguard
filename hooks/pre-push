@@ -1,25 +1,33 @@
 #!/bin/sh
-# commitguard-managed-hook
-#
-# CommitGuard pre-push hook (TEMPLATE).
-# Scans every commit about to be pushed. Git passes ref lines on stdin.
-#
-# STATUS: template only. `commitguard install` (Phase 3) will install this hook,
-# and the command it runs is not implemented yet - installing it by hand today
-# blocks every operation with a "not implemented" error.
-#
-# Behaviour: fails closed. If CommitGuard cannot be found the operation is
-# refused rather than silently allowed.
-#
-# Note: local hooks are bypassable (git --no-verify). They provide fast feedback;
-# repository-level enforcement is provided by GitHub enforcement (Phase 4).
+# BEGIN COMMITGUARD
+# This block is managed by CommitGuard. Do not edit it: `commitguard doctor`
+# detects changes and `commitguard install` restores it. `commitguard uninstall`
+# removes it and restores any hook preserved during installation.
+# commitguard-hook: pre-push
+# commitguard-format: 1
+# commitguard-checksum: sha256:96a48baec5781bd8472388f919587f1ed89f639a07330d5e213bc0edd290da85
+commitguard_hook='pre-push'
+commitguard_python=''
+commitguard_chained="$(dirname -- "$0")/pre-push.pre-commitguard"
 
-set -eu
+commitguard_run() {
+    if [ -n "$commitguard_python" ] && [ -f "$commitguard_python" ]; then
+        "$commitguard_python" -P -m commitguard hook "$commitguard_hook" "$@"
+    elif command -v commitguard >/dev/null 2>&1; then
+        commitguard hook "$commitguard_hook" "$@"
+    else
+        echo "CommitGuard is not available." >&2
+        echo "The repository's $commitguard_hook security hook could not execute." >&2
+        echo "Operation blocked because the security check could not be completed." >&2
+        echo "Run: commitguard doctor   (reinstall hooks with: commitguard install)" >&2
+        return 2
+    fi
+}
 
-if ! command -v commitguard >/dev/null 2>&1; then
-    echo "commitguard: executable not found on PATH; refusing pre-push (fail closed)." >&2
-    echo "commitguard: install CommitGuard, or remove this hook deliberately." >&2
-    exit 1
+commitguard_stdin=$(cat; echo .)
+commitguard_stdin=${commitguard_stdin%.}
+printf '%s' "$commitguard_stdin" | commitguard_run "$@" || exit $?
+if [ -x "$commitguard_chained" ]; then
+    printf '%s' "$commitguard_stdin" | "$commitguard_chained" "$@" || exit $?
 fi
-
-exec commitguard scan --hook pre-push
+# END COMMITGUARD

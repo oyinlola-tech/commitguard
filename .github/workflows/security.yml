@@ -12,43 +12,41 @@ permissions:
 
 jobs:
   dependency-audit:
-    name: Dependency audit
+    name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest
     steps:
       # TODO: pin third-party actions to full commit SHAs.
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install project and pip-audit
         run: |
           python -m pip install -e .
           python -m pip install pip-audit
-
       - name: Audit installed dependencies for known vulnerabilities
         run: pip-audit --skip-editable
 
   static-analysis:
-    name: Security lint (Ruff bandit rules)
+    name: Static security analysis
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install Ruff
-        run: python -m pip install ruff
-
-      - name: Ruff security rules
+      - name: Install analysers
+        run: python -m pip install ruff bandit
+      - name: Ruff security rules (bandit-derived)
         run: ruff check --select S,BLE .
+      - name: Bandit (medium and high severity)
+        # Subprocess usage is intentional and centralised (utils/subprocess.py,
+        # argument vectors only); low-severity notices about it are not failures.
+        run: bandit -r src -ll
 
   dependency-review:
     name: Dependency review

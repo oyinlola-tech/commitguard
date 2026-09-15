@@ -187,4 +187,4 @@ default policy in `policies/defaults.py` (enforced by tests).
 - Agents not in the rules, or that leave no attribution, are not detected.
 - Homoglyph folding covers common Cyrillic/Greek look-alikes only.
 - Most identities are unverified pending reference commits.
-- `check --message-file` does not yet strip Git comment lines (Phase 3).
+- `check --message-file` analyses the file as given; the commit-msg hook applies Git-style cleanup (see git-hooks.md).

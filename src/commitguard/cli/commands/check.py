@@ -25,7 +25,7 @@ from commitguard.cli.common import (
     RevisionArgument,
 )
 from commitguard.cli.output import ExitCode, OutputFormat, fail, handled_errors, info
-from commitguard.cli.render import render_check_text, render_json
+from commitguard.cli.render import render_check_text, render_json, render_scan_text
 from commitguard.core.context import ScanTrigger
 from commitguard.core.decision import Action
 from commitguard.exceptions.base import UnsafeInputError
@@ -53,6 +53,10 @@ def check_command(
     max_commits: MaxCommitsOption = DEFAULT_MAX_COMMITS,
     quiet: Annotated[
         bool, typer.Option("--quiet", "-q", help="Print nothing; use the exit code.")
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Human-readable output with full evidence."),
     ] = False,
 ) -> None:
     """Check commits (or a pending message) and exit 0 (pass), 1 (blocked) or 2 (error)."""
@@ -83,9 +87,12 @@ def check_command(
             trigger=ScanTrigger.CHECK,
             config=loaded,
         )
-        rendered = (
-            render_json(report) if output_format is OutputFormat.JSON else render_check_text(report)
-        )
+        if output_format is OutputFormat.JSON:
+            rendered = render_json(report)
+        elif verbose:
+            rendered = render_scan_text(report)
+        else:
+            rendered = render_check_text(report)
 
     if not quiet:
         info(rendered)

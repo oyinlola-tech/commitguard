@@ -2,8 +2,7 @@
 # Install CommitGuard Git hooks into the current repository.
 #
 # Thin wrapper around `commitguard install` so there is exactly one
-# implementation of hook installation. NOTE: `commitguard install` is not
-# implemented yet (Phase 3); this script currently exits with its error.
+# implementation of hook installation. Existing hooks are preserved and chained.
 set -euo pipefail
 
 if ! command -v commitguard >/dev/null 2>&1; then

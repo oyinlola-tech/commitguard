@@ -41,9 +41,33 @@ policies:
 | `policies` | mapping | no | keys must be known policy IDs |
 | `policies.<id>.enabled` | boolean | no | `true`/`false` only |
 | `policies.<id>.action` | `allow` \| `warn` \| `block` | no | exact lowercase |
+| `enforcement.pre_commit` | boolean | no | default `true` |
+| `enforcement.commit_msg` | boolean | no | default `true` |
+| `enforcement.pre_push` | boolean | no | default `true` |
+| `enforcement.max_push_commits` | integer 1–1000000 | no | default `10000`; larger pushes are blocked with an error |
 
 Known policy IDs: `ai_coauthor`, `ai_identity`, `ai_trailer`,
 `malformed_trailer`, `bot_identity`.
+
+## Enforcement
+
+```yaml
+enforcement:
+  pre_commit: true
+  commit_msg: true
+  pre_push: true
+  max_push_commits: 10000
+```
+
+Controls which installed Git hooks run the analysis (see
+[git-hooks.md](git-hooks.md)). Defaults are the conservative choice: every hook
+enforces. Layers merge field by field like policies.
+
+Disabling a hook is intentional and visible: the hook prints
+"pre-push enforcement is disabled by configuration" and `commitguard doctor`
+reports `⚠ pre-push enforcement disabled in configuration` and
+"Security enforcement is incomplete." It never changes policies, and it is
+never treated as a fully protected state.
 
 ## Validation (security-relevant)
 

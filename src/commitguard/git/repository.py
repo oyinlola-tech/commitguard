@@ -197,9 +197,7 @@ class Repository:
     @property
     def common_dir(self) -> Path:
         """The Git directory shared by all worktrees (where hooks normally live)."""
-        result = run_git(
-            ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=self.root
-        )
+        result = run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=self.root)
         return Path(result.stdout.decode("utf-8", errors="surrogateescape").strip())
 
     def peel_to_commit(self, oid: str) -> str | None:
@@ -282,12 +280,20 @@ class Repository:
         return shas
 
     def cleanup_message(self, message: str) -> str:
-        """Apply the message cleanup ``git commit`` would apply by default.
+        """Approximate the cleanup ``git commit`` applies before storing a message.
 
-        Honours ``commit.cleanup`` (``strip``/``default``, ``whitespace``,
-        ``verbatim``, ``scissors``) and ``core.commentChar`` via
-        ``git stripspace``. A ``--cleanup`` option given on the command line is
-        invisible to hooks and cannot be honoured.
+        A commit-msg hook cannot see whether an editor was used or which
+        ``--cleanup`` option was given, so this errs towards *keeping* text:
+
+        * comment lines are stripped only when ``commit.cleanup=strip`` is
+          configured (with ``-m``/``-F``, Git's default keeps ``#`` lines, so
+          stripping them would hide attribution that really gets stored);
+        * everything from Git's scissors line is dropped unless the mode is
+          ``verbatim``/``whitespace`` (the diff ``git commit -v`` appends there
+          is never part of the message);
+        * whitespace is normalised with ``git stripspace`` unless ``verbatim``.
+
+        pre-push analyses the real commit objects and is the authoritative check.
         """
         mode = (self.config_get("commit.cleanup") or "default").lower()
         if mode == "verbatim":
@@ -295,7 +301,7 @@ class Repository:
         if mode in ("default", "strip", "scissors"):
             message = _cut_at_scissors(message)
         args = ["stripspace"]
-        if mode in ("default", "strip"):
+        if mode == "strip":
             args.append("--strip-comments")
         result = run_git(args, cwd=self.root, input_bytes=message.encode("utf-8", "surrogatepass"))
         return result.stdout.decode("utf-8", errors="replace")

@@ -27,7 +27,9 @@ CI runs the same checks on Python 3.12 and 3.13.
 
 1. **Detectors find, policies decide.** A detector must never block, warn or
    read configuration. See `docs/detection-engine.md`.
-2. **Detectors are pure.** No subprocesses, network, filesystem writes, or Git
+2. **Hooks are thin.** Installed hook scripts and `commitguard hook` must not
+   contain detection logic; they call `services/`.
+3. **Detectors are pure.** No subprocesses, network, filesystem writes, or Git
    access. `tests/unit/test_architecture.py` enforces the import boundaries.
 3. **Fail closed.** When in doubt, an error must lead to BLOCK, not ALLOW.
 4. **Treat commit data as hostile.** Sanitise before display

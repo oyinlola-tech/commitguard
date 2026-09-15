@@ -1,59 +1,60 @@
-"""Hook template execution tests (the templates exist today)."""
+"""The reference hook copies in hooks/ and fail-closed behaviour of installed wrappers."""
 
-import os
-import shutil
-import stat
-import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from commitguard.git.hooks import HookType, install_hooks, render_hook_file
+from commitguard.git.repository import Repository
+
 HOOKS_DIR = Path(__file__).resolve().parents[3] / "hooks"
-HOOK_NAMES = ["commit-msg", "pre-commit", "pre-push"]
 
 
-@pytest.mark.parametrize("hook", HOOK_NAMES)
-def test_hook_template_is_executable_valid_sh_with_marker(hook: str) -> None:
-    path = HOOKS_DIR / hook
-    assert path.stat().st_mode & stat.S_IXUSR
-    content = path.read_text()
-    assert content.startswith("#!/bin/sh\n")
-    assert "# commitguard-managed-hook" in content
-    subprocess.run(["sh", "-n", str(path)], check=True)
+@pytest.mark.parametrize("hook", list(HookType))
+def test_reference_copies_match_the_generator(hook: HookType) -> None:
+    assert (HOOKS_DIR / hook.value).read_text(encoding="utf-8") == render_hook_file(hook, "")
 
 
-@pytest.mark.parametrize("hook", HOOK_NAMES)
-def test_hook_fails_closed_when_commitguard_is_missing(hook: str, tmp_path: Path) -> None:
-    empty_bin = tmp_path / "bin"
-    empty_bin.mkdir()
-    sh = shutil.which("sh")
-    assert sh is not None
-    result = subprocess.run(
-        [sh, str(HOOKS_DIR / hook), str(tmp_path / "COMMIT_EDITMSG")],
-        env={**os.environ, "PATH": str(empty_bin)},
-        capture_output=True,
-        text=True,
+def test_missing_commitguard_blocks_commit(git_repo, no_commitguard_path) -> None:  # type: ignore[no-untyped-def]
+    install_hooks(Repository.discover(git_repo.path), python="/nonexistent/python")
+    result = git_repo.run(
+        "commit", "--allow-empty", "-m", "clean commit", env={"PATH": no_commitguard_path()}
     )
-    assert result.returncode == 1
-    assert "fail closed" in result.stderr
-
-
-def test_commit_msg_hook_blocks_real_commit_when_commitguard_missing(git_repo) -> None:  # type: ignore[no-untyped-def]
-    shutil.copy2(HOOKS_DIR / "commit-msg", git_repo.path / ".git" / "hooks" / "commit-msg")
-    path_entries = os.environ.get("PATH", "").split(os.pathsep)
-    path = os.pathsep.join(e for e in path_entries if not (Path(e) / "commitguard").exists())
-
-    result = subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "feat: x"],
-        cwd=git_repo.path,
-        env={**os.environ, "PATH": path},
-        capture_output=True,
-        text=True,
-    )
-
     assert result.returncode != 0
-    assert "fail closed" in result.stderr
-    head = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=git_repo.path, capture_output=True
+    assert "CommitGuard is not available." in result.stderr
+    assert "Operation blocked" in result.stderr
+    assert "commitguard doctor" in result.stderr
+    assert git_repo.run("rev-parse", "--verify", "--quiet", "HEAD").returncode != 0
+
+
+def test_missing_commitguard_blocks_push(
+    git_repo, bare_remote, no_commitguard_path, get_remote_refs
+) -> None:  # type: ignore[no-untyped-def]
+    git_repo.git("remote", "add", "origin", str(bare_remote))
+    git_repo.commit("clean\n")
+    install_hooks(Repository.discover(git_repo.path), python="/nonexistent/python")
+    result = git_repo.run("push", "origin", "main", env={"PATH": no_commitguard_path()})
+    assert result.returncode != 0
+    assert "CommitGuard is not available." in result.stderr
+    assert get_remote_refs(bare_remote) == {}
+
+
+def test_falls_back_to_commitguard_on_path(git_repo) -> None:  # type: ignore[no-untyped-def]
+    # The embedded interpreter is gone but `commitguard` is on PATH (the test venv).
+    bin_dir = Path(sys.executable).parent
+    if not any((bin_dir / name).exists() for name in ("commitguard", "commitguard.exe")):
+        pytest.skip("commitguard console script not next to the interpreter")
+    install_hooks(Repository.discover(git_repo.path), python="/nonexistent/python")
+    import os
+
+    path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    blocked = git_repo.run(
+        "commit",
+        "--allow-empty",
+        "-m",
+        "x\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+        env={"PATH": path},
     )
-    assert head.returncode != 0  # no commit was created
+    assert blocked.returncode == 1
+    assert "COMMIT BLOCKED" in blocked.stderr

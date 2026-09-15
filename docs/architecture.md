@@ -1,7 +1,7 @@
 # Architecture
 
-> Status: Phase 2. Detection and policy are implemented; hooks (Phase 3) and
-> GitHub enforcement (Phase 4) are not.
+> Status: Phase 3. Detection, policy and local Git hook enforcement are
+> implemented; GitHub enforcement (Phase 4) is not.
 
 ## Goals
 
@@ -18,51 +18,50 @@
 ## Flow
 
 ```text
-                 ┌───────────────────────┐
-                 │  git commit / push    │   or  CI on a pull request (Phase 4)
-                 └───────────┬───────────┘
+                         Developer
                              │
-                   ┌─────────▼─────────┐
-                   │  CLI (cli/)       │  parses args, finds repo, loads config
-                   └─────────┬─────────┘
-                             │ Repository.read_commit() / pending commit
-                   ┌─────────▼─────────┐
-                   │  Commit (git/)    │  normalised, immutable, untrusted data
-                   └─────────┬─────────┘
-                             │ CommitContext
-                   ┌─────────▼─────────┐
-                   │ DetectionEngine   │  runs DetectorRegistry in name order
-                   │  + rules/*.yaml   │  (via services.analysis.Analyzer)
-                   │  (core/)          │
-                   └─────────┬─────────┘
-          ┌─────────────┬────┴────────┬──────────────┐
-          ▼             ▼             ▼              ▼
-     coauthor       identity       trailer          bot        (detectors/)
-          └─────────────┴──────┬──────┴──────────────┘
-                               │ DetectionResult (findings + detector failures)
-                   ┌───────────▼───────────┐
-                   │ PolicyEvaluator       │  PolicySet from config + defaults
-                   │  (policies/)          │
-                   └───────────┬───────────┘
-                               │ Decision (ALLOW / WARN / BLOCK + explanations)
-                   ┌───────────▼───────────┐
-                   │ CLI output / exit code│  sanitised text or JSON; exit 0, 1 or 2
-                   └───────────────────────┘
+                   ┌─────────┴─────────┐
+              git commit           git push
+                   │                   │
+         pre-commit / commit-msg    pre-push           commitguard scan / check
+                   │                   │                          │
+                   └─────────┬─────────┴──────────────────────────┘
+                             ▼
+                 commitguard hook <name>  (cli/commands/hook.py, fail closed)
+                             │
+                 services/hooks.py · services/analysis.py
+                             │   Repository: pending identity, message cleanup,
+                             │   push ref parsing, outgoing commits (rev-list)
+                             ▼
+                       Commit / CommitContext
+                             │
+                      DetectionEngine  ◀── rules/*.yaml
+                  ┌──────────┼──────────┬──────────┐
+              coauthor   identity    trailer      bot
+                  └──────────┼──────────┴──────────┘
+                             ▼
+                          Findings
+                             │
+                   PolicyEvaluator  ◀── .commitguard.yaml (policies, enforcement)
+                    ┌────────┼────────┐
+                  ALLOW     WARN     BLOCK / error
+                    │        │        │
+                   Git      Git      STOP (exit 1 / 2)
 ```
 
 ## Packages and dependency rules
 
 | Package | Responsibility | Status |
 |---|---|---|
-| `cli` | Typer app, commands, text/JSON rendering, exit codes | `scan`, `check`, `init`, `policy list`, `doctor` work; `install`/`uninstall` are Phase 3 |
-| `services` | the one analysis pipeline (config + rules + engine + evaluator + Git reading) shared by every entry point; report models | implemented |
+| `cli` | Typer app, commands (incl. `hook`), text/JSON rendering, exit codes | implemented |
+| `services` | the one analysis pipeline shared by every entry point (`analysis`), hook runtime and outgoing-commit planning (`hooks`), report models | implemented |
 | `core` | `CommitContext`, `Finding`, `Evidence`, `DetectionResult`, `Decision`, `DetectionEngine` | implemented |
 | `detectors` | pure detectors + explicit registry | implemented (4 detectors) |
 | `rules` | rule schemas, compiled matcher (pure); loader (reads packaged YAML) | implemented |
 | `policies` | `Policy`, `PolicySet`, defaults, layered merge, evaluator | implemented |
 | `provenance` | identities, trailer parsing, normalisation, signatures model | implemented (signature verification: Phase 5) |
-| `git` | Git CLI wrapper, repository queries, commit model, hooks, diff | reading implemented; hooks/diff are Phase 3 |
-| `config` | schema, layered loader, defaults | implemented |
+| `git` | Git CLI wrapper, repository queries, commit model, pre-push input parsing, hook install/uninstall/integrity | implemented (staged diff inspection: Phase 5) |
+| `config` | schema, layered loader, defaults, enforcement settings | implemented |
 | `github` | Phase 4 enforcement | placeholder |
 | `audit` | opt-in audit events and storage | placeholder (reports are audit-ready) |
 | `security` | validation, sanitisation, hashing, strict safe YAML | implemented |
@@ -99,3 +98,10 @@ a policy all produce BLOCK.
 
 **Pending commits.** `Commit.sha` is optional so `commit-msg` hooks can evaluate
 a commit before it exists.
+
+**Hooks are thin.** Installed hook files only locate CommitGuard and call
+`commitguard hook <name>`; the analysis is the same `Analyzer` used by `scan`.
+Existing hooks are chained, never overwritten. See [git-hooks.md](git-hooks.md).
+
+**Fail closed at every enforcement point.** Hook commands map every exception
+to exit 2, which stops Git; the wrapper blocks if CommitGuard cannot be found.

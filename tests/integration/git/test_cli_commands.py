@@ -298,23 +298,55 @@ def test_policy_list_invalid_config_fails(git_repo) -> None:  # type: ignore[no-
     assert "\x1b" not in result.output
 
 
-def test_doctor_in_repository(git_repo) -> None:  # type: ignore[no-untyped-def]
+def test_doctor_without_hooks_reports_incomplete_enforcement(git_repo) -> None:  # type: ignore[no-untyped-def]
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "Git 2." in result.stdout
+    assert "Detection engine" in result.stdout
+    assert "pre-push hook missing" in result.stdout
+    assert "Fix: commitguard install" in result.stdout
+    assert "Security enforcement is incomplete." in result.stdout
+    assert "Status: UNHEALTHY" in result.stdout
+
+
+def test_doctor_healthy_after_init_and_install(git_repo) -> None:  # type: ignore[no-untyped-def]
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    assert runner.invoke(app, ["install"]).exit_code == 0
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0, result.output
-    assert "[  ok] git" in result.stdout
-    assert "[  ok] rules" in result.stdout
-    assert "[todo] hooks" in result.stdout
+    assert "Status: HEALTHY" in result.stdout
+
+
+def test_doctor_reports_disabled_enforcement(git_repo) -> None:  # type: ignore[no-untyped-def]
+    (git_repo.path / ".commitguard.yaml").write_text(
+        "version: 1\nenforcement:\n  pre_push: false\n"
+    )
+    assert runner.invoke(app, ["install"]).exit_code == 0
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "pre-push enforcement disabled in configuration" in result.stdout
+    assert "Security enforcement is incomplete." in result.stdout
+    assert "Status: DEGRADED" in result.stdout
 
 
 def test_doctor_reports_invalid_config(git_repo) -> None:  # type: ignore[no-untyped-def]
     (git_repo.path / ".commitguard.yaml").write_text("version: 2\n")
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == ExitCode.ERROR
-    assert "[fail] configuration" in result.stdout
+    assert "Configuration" in result.stdout
+    assert "hooks block until then" in result.stdout
 
 
-@pytest.mark.parametrize("args", [["install"], ["uninstall"]])
-def test_unimplemented_commands_say_so_and_exit_2(git_repo, args: list[str]) -> None:  # type: ignore[no-untyped-def]
-    result = runner.invoke(app, args)
+def test_doctor_reports_hooks_path_pointing_elsewhere(git_repo, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    git_repo.git("config", "core.hooksPath", str(tmp_path / "elsewhere"))
+    result = runner.invoke(app, ["doctor"])
     assert result.exit_code == ExitCode.ERROR
-    assert "not implemented yet" in result.output
+    assert "core.hooksPath points outside" in result.stdout
+
+
+def test_check_verbose(git_repo) -> None:  # type: ignore[no-untyped-def]
+    git_repo.commit(AI)
+    result = runner.invoke(app, ["check", "--verbose"])
+    assert result.exit_code == ExitCode.BLOCKED
+    assert "Remediation:" in result.stdout
+    assert "Result: BLOCK" in result.stdout

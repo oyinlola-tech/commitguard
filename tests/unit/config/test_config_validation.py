@@ -186,3 +186,40 @@ class TestLayering:
 
         with pytest.raises(ConfigurationError, match="not found"):
             load_effective_config(None, explicit_path=tmp_path / "missing.yaml")
+
+
+class TestEnforcement:
+    def test_defaults_enforce_every_hook(self) -> None:
+        from commitguard.config.enforcement import DEFAULT_MAX_PUSH_COMMITS, build_enforcement
+
+        enforcement = build_enforcement(parse_config("version: 1\n"))
+        assert enforcement.pre_commit
+        assert enforcement.commit_msg
+        assert enforcement.pre_push
+        assert enforcement.complete
+        assert enforcement.max_push_commits == DEFAULT_MAX_PUSH_COMMITS
+
+    def test_layers_override_individual_hooks(self) -> None:
+        from commitguard.config.enforcement import build_enforcement
+
+        lower = parse_config("version: 1\nenforcement:\n  pre_push: false\n  commit_msg: false\n")
+        upper = parse_config("version: 1\nenforcement:\n  commit_msg: true\n")
+        enforcement = build_enforcement(lower, upper)
+        assert not enforcement.pre_push
+        assert enforcement.commit_msg
+        assert not enforcement.complete
+        assert enforcement.enabled("commit-msg")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "version: 1\nenforcement:\n  pre_push: 'false'\n",
+            "version: 1\nenforcement:\n  pre_push:\n",
+            "version: 1\nenforcement:\n  prepush: false\n",
+            "version: 1\nenforcement:\n  max_push_commits: 0\n",
+            "version: 1\nenforcement: false\n",
+        ],
+    )
+    def test_invalid_enforcement_is_rejected(self, text: str) -> None:
+        with pytest.raises(ConfigurationError):
+            parse_config(text)

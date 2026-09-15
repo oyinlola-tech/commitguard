@@ -8,12 +8,13 @@ metadata only) and decisions - never file contents or full commit messages.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from commitguard.core.decision import Action, Decision
 from commitguard.core.result import DetectionResult, DetectorFailure, Finding
 
 REPORT_SCHEMA_VERSION: Literal[1] = 1
+MAX_SUBJECT_CHARS = 120
 
 
 class EvaluatedFinding(BaseModel):
@@ -47,6 +48,7 @@ class CommitReport(BaseModel):
 
     commit_sha: str | None
     short_sha: str
+    subject: str = Field(default="", description="First line of the message, truncated")
     action: Action
     findings: tuple[EvaluatedFinding, ...] = ()
     failures: tuple[EvaluatedFailure, ...] = ()
@@ -55,7 +57,12 @@ class CommitReport(BaseModel):
 
     @classmethod
     def build(
-        cls, short_sha: str, detection: DetectionResult, decision: Decision
+        cls,
+        short_sha: str,
+        detection: DetectionResult,
+        decision: Decision,
+        *,
+        subject: str = "",
     ) -> "CommitReport":
         findings: list[EvaluatedFinding] = []
         failures: list[EvaluatedFailure] = []
@@ -80,6 +87,7 @@ class CommitReport(BaseModel):
         return cls(
             commit_sha=detection.commit_sha,
             short_sha=short_sha,
+            subject=subject[:MAX_SUBJECT_CHARS],
             action=decision.action,
             findings=tuple(findings),
             failures=tuple(failures),

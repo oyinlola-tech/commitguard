@@ -179,13 +179,19 @@ def parse_managed_block(text: str) -> ManagedBlock | None:
     inner = [line.rstrip("\r") for line in lines[start + 1 : end]]
     checksum_lines = [line for line in inner if line.startswith(_CHECKSUM_PREFIX)]
     content = [line for line in inner if not line.startswith(_CHECKSUM_PREFIX)]
-    intact = len(checksum_lines) == 1 and checksum_lines[0] == f"{_CHECKSUM_PREFIX}{_checksum(content)}"
+    intact = (
+        len(checksum_lines) == 1 and checksum_lines[0] == f"{_CHECKSUM_PREFIX}{_checksum(content)}"
+    )
     hook = next(
         (line.split(":", 1)[1].strip() for line in inner if line.startswith("# commitguard-hook:")),
         None,
     )
     python = next(
-        (_unquote_sh(line[len(_PYTHON_PREFIX) :]) for line in inner if line.startswith(_PYTHON_PREFIX)),
+        (
+            _unquote_sh(line[len(_PYTHON_PREFIX) :])
+            for line in inner
+            if line.startswith(_PYTHON_PREFIX)
+        ),
         None,
     )
     return ManagedBlock(start=start, end=end, hook=hook, python=python, intact=intact)
@@ -245,7 +251,9 @@ class HookStatus(BaseModel):
     chained: Path | None = None
 
 
-def hook_status(hooks_dir: Path, hook: HookType, *, expected_python: str | None = None) -> HookStatus:
+def hook_status(
+    hooks_dir: Path, hook: HookType, *, expected_python: str | None = None
+) -> HookStatus:
     path = hooks_dir / hook.value
     chained_path = hooks_dir / f"{hook.value}{CHAINED_SUFFIX}"
     chained = chained_path if _exists(chained_path) else None
@@ -325,7 +333,9 @@ def install_hook(hooks_dir: Path, hook: HookType, python: str) -> InstallResult:
     if not _exists(path):
         _write_hook(path, f"{SHEBANG}\n{desired_block}", overwrite=False)
         return InstallResult(
-            hook=hook, path=path, action=InstallAction.INSTALLED,
+            hook=hook,
+            path=path,
+            action=InstallAction.INSTALLED,
             chained=chained if _exists(chained) else None,
         )
 
@@ -336,14 +346,18 @@ def install_hook(hooks_dir: Path, hook: HookType, python: str) -> InstallResult:
         current = "\n".join(lines[block.start : block.end + 1]) + "\n"
         if current == desired_block and (not supports_executable_bit() or os.access(path, os.X_OK)):
             return InstallResult(
-                hook=hook, path=path, action=InstallAction.UNCHANGED,
+                hook=hook,
+                path=path,
+                action=InstallAction.UNCHANGED,
                 chained=chained if _exists(chained) else None,
             )
         new_text = "\n".join(lines[: block.start]) + ("\n" if block.start else "")
         new_text += desired_block + "\n".join(lines[block.end + 1 :])
         _write_hook(path, new_text, overwrite=True)
         return InstallResult(
-            hook=hook, path=path, action=InstallAction.UPDATED,
+            hook=hook,
+            path=path,
+            action=InstallAction.UPDATED,
             chained=chained if _exists(chained) else None,
         )
 
@@ -381,7 +395,9 @@ def uninstall_hook(hooks_dir: Path, hook: HookType) -> UninstallResult:
             if _exists(chained)
             else ""
         )
-        return UninstallResult(hook=hook, path=path, action=UninstallAction.BLOCK_REMOVED, note=note)
+        return UninstallResult(
+            hook=hook, path=path, action=UninstallAction.BLOCK_REMOVED, note=note
+        )
 
     if _exists(chained):
         os.replace(chained, path)  # atomic: the preserved hook replaces the wrapper

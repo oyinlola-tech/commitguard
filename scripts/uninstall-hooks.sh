@@ -2,7 +2,7 @@
 # Remove CommitGuard-managed Git hooks from the current repository.
 #
 # Thin wrapper around `commitguard uninstall`. Only hooks carrying the
-# CommitGuard marker will ever be removed. NOTE: not implemented yet (Phase 3).
+# CommitGuard marker will ever be removed; preserved hooks are restored.
 set -euo pipefail
 
 if ! command -v commitguard >/dev/null 2>&1; then

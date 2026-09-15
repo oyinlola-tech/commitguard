@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added (Phase 3 — Git hook enforcement)
+
+- `commitguard install` / `uninstall`: managed hooks with `# BEGIN/END COMMITGUARD`
+  markers and checksums; existing hooks preserved as `<hook>.pre-commitguard`
+  and chained (CommitGuard first, then the original hook with the same stdin);
+  refuses shared `core.hooksPath` unless `--allow-shared-hooks-path`.
+- `--global` installation through a Git template directory (`init.templateDir`
+  set only when unset; `core.hooksPath` never touched).
+- `commitguard hook pre-commit | commit-msg <file> | pre-push [remote] [url]`,
+  all fail closed (exit 2 on any error).
+- pre-push outgoing commit planning: multiple refs, new branches, deletions,
+  annotated tags, tags to non-commits, force pushes, merges, detached HEAD,
+  pushes to URLs, SHA deduplication, `max_push_commits` bound.
+- commit-msg message cleanup honouring `commit.cleanup` and scissors lines.
+- `enforcement:` configuration section (per-hook switches, push commit limit).
+- `commitguard doctor` rewritten: sections, hook presence/integrity/
+  executability/interpreter checks, engine self-test, HEALTHY/DEGRADED/UNHEALTHY.
+- `commitguard check --verbose`; commit subjects in reports.
+- CI matrix on Ubuntu, macOS and Windows; bandit in the security workflow.
+- `.gitattributes` keeping hooks and shell scripts LF.
+
+### Security (Phase 3)
+
+- Hooks run `python -P` so a `commitguard/` directory in the repository cannot
+  shadow the installed package.
+- Hook reference copies in `hooks/` are generated and verified by tests.
+
 ### Added (Phase 2 — AI attribution detection)
 
 - Commit model with derived trailers, pending commits and reserved signature field.
