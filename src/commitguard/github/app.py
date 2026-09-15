@@ -142,6 +142,7 @@ class GitHubAppService:
         self._limiter = RequestRateLimiter(rate_limit_per_minute)
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
+        self._maintenance_tasks: list[Callable[[], object]] = []
 
     # ------------------------------------------------------------------ #
     # Construction
@@ -400,10 +401,16 @@ class GitHubAppService:
             self.queue.put(job_id)
         return len(ids)
 
+    def add_maintenance_task(self, task: Callable[[], object]) -> None:
+        """Run ``task`` with the hourly retention purge (e.g. expired dashboard sessions)."""
+        self._maintenance_tasks.append(task)
+
     def purge_expired(self) -> dict[str, int]:
         cutoff = self._now() - self._retention
         counts = self.store.purge_expired(cutoff)
         counts["mirrors"] = self.mirrors.purge_unused(self._retention.total_seconds())
+        for task in self._maintenance_tasks:
+            task()
         log.info("retention_purge", **counts)
         return counts
 
@@ -577,12 +584,19 @@ def create_wsgi_app(
 def wsgi_app_from_environment() -> Callable[[WSGIEnvironment, StartResponse], Iterable[bytes]]:
     """Entry point for WSGI servers: settings from the environment, workers started.
 
+    With ``COMMITGUARD_DASHBOARD_URL`` set, the dashboard API (and, with
+    ``COMMITGUARD_DASHBOARD_STATIC_DIR``, the dashboard) is served too.
+
     Example (one process, several threads, behind a TLS reverse proxy)::
 
         gunicorn --workers 1 --threads 8 \\
             'commitguard.github.app:wsgi_app_from_environment()'
     """
+    from commitguard.api.hosting import build_dashboard, create_server_app
+    from commitguard.api.settings import dashboard_enabled, load_dashboard_settings
+
     configure_json_logging()
     service = GitHubAppService.from_settings(load_settings())
+    dashboard = build_dashboard(service, load_dashboard_settings()) if dashboard_enabled() else None
     service.start()
-    return create_wsgi_app(service)
+    return create_server_app(service, dashboard)
