@@ -1,9 +1,12 @@
-"""GitHub API client (Phase 4, not implemented).
+"""GitHub API client (not implemented).
 
-TODO(phase-4):
+Phase 4 enforcement deliberately works without the API: GitHub Actions
+provides the event, the checkout and the check result. A future GitHub App or
+Checks API integration (PR comments, organisation policies, verifying branch
+protection) would live here, with these constraints:
+
 * explicit opt-in only; token read from the environment at call time, never
   logged, never written to configuration or audit records;
-* least privilege (``checks: write``, ``contents: read``, ``pull-requests: read``);
-* no repository content is uploaded - only check results and summaries;
-* choose an HTTP client then (no dependency is added until it is needed).
+* least privilege per feature (e.g. ``checks: write`` only for Checks API output);
+* no repository content is uploaded - only check results and summaries.
 """

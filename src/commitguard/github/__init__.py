@@ -1,13 +1,15 @@
-"""GitHub enforcement layer (Phase 4, not implemented).
+"""GitHub enforcement layer (GitHub Actions).
 
-Local hooks can be bypassed (``--no-verify``, deleting the hook, committing
-from another machine). Repository-level enforcement runs CommitGuard where the
-developer cannot skip it: a required GitHub Actions check on pull requests
-combined with branch protection.
+Local hooks can be bypassed (``--no-verify``, deleting hooks, pushing from
+another clone). This package adapts GitHub Actions to the shared CI service so
+the same detection and policy engine runs on GitHub:
 
-Planned scope: GitHub Actions integration, Checks API reporting, pull request
-validation, repository policy validation and branch protection guidance.
+* :mod:`~commitguard.github.events`   - event payloads -> ``CIContext``;
+* :mod:`~commitguard.github.actions`  - workflow commands, job summary, outputs;
+* :mod:`~commitguard.github.checks`   - check-run shaped output (future Checks API / App);
+* :mod:`~commitguard.github.workflow` - workflow template and static inspection;
+* :mod:`~commitguard.github.client`   - placeholder for a future API client.
 
-The local tool never requires GitHub authentication, and nothing in this
-package performs network access today.
+Nothing here performs network access or needs a token. The check becomes a
+merge gate only when branch protection or a ruleset requires it.
 """

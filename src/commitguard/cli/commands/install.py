@@ -49,7 +49,8 @@ SharedOption = Annotated[
 
 BYPASS_NOTE = (
     "Note: local hooks can be bypassed (git commit/push --no-verify) by anyone who controls "
-    "this clone. Server-side enforcement (Phase 4) is required for authoritative protection."
+    "this clone. Authoritative protection needs the GitHub check required by branch "
+    "protection (see: commitguard github setup)."
 )
 
 

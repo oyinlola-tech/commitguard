@@ -7,7 +7,7 @@
 > **Local Git hooks can be bypassed by someone who controls the local
 > repository** (`--no-verify`, deleting hooks, another clone). Server-side
 > enforcement is therefore required for authoritative repository protection;
-> that is Phase 4.
+> that is the GitHub check, see [github-enforcement.md](github-enforcement.md).
 
 ## Quick start
 
@@ -295,4 +295,6 @@ New repositories created by `git init` or `git clone` then receive the hooks.
 - Annotated tag objects' own messages are not analysed, only the commits they
   point to.
 
-Authoritative protection requires server-side enforcement (Phase 4).
+Authoritative protection requires server-side enforcement: the GitHub check
+(`commitguard ci github`) required by branch protection. See
+[github-enforcement.md](github-enforcement.md).
