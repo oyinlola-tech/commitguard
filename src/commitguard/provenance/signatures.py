@@ -25,7 +25,7 @@ class SignatureStatus(StrEnum):
 
 
 class SignatureInfo(BaseModel):
-    """Signature metadata for a commit. Not populated yet (Phase 5)."""
+    """Signature metadata for a commit. Not populated yet (security intelligence phase)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

@@ -1,0 +1,74 @@
+{
+  "action": "closed",
+  "number": 7,
+  "pull_request": {
+    "url": "https://api.github.com/repos/octo-org/project/pulls/7",
+    "id": 90001,
+    "number": 7,
+    "state": "closed",
+    "title": "Add payment service",
+    "body": "Sanitized example",
+    "merged": true,
+    "head": {
+      "label": "octocat:feature",
+      "ref": "feature",
+      "sha": "2222222222222222222222222222222222222222",
+      "repo": {
+        "id": 5001,
+        "node_id": "R_example",
+        "name": "project",
+        "full_name": "octo-org/project",
+        "private": true,
+        "owner": {
+          "login": "octo-org",
+          "id": 1001,
+          "type": "Organization"
+        },
+        "default_branch": "main",
+        "html_url": "https://github.com/octo-org/project"
+      }
+    },
+    "base": {
+      "label": "octo-org:main",
+      "ref": "main",
+      "sha": "1111111111111111111111111111111111111111",
+      "repo": {
+        "id": 5001,
+        "node_id": "R_example",
+        "name": "project",
+        "full_name": "octo-org/project",
+        "private": true,
+        "owner": {
+          "login": "octo-org",
+          "id": 1001,
+          "type": "Organization"
+        },
+        "default_branch": "main",
+        "html_url": "https://github.com/octo-org/project"
+      }
+    }
+  },
+  "repository": {
+    "id": 5001,
+    "node_id": "R_example",
+    "name": "project",
+    "full_name": "octo-org/project",
+    "private": true,
+    "owner": {
+      "login": "octo-org",
+      "id": 1001,
+      "type": "Organization"
+    },
+    "default_branch": "main",
+    "html_url": "https://github.com/octo-org/project"
+  },
+  "installation": {
+    "id": 42,
+    "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uNDI="
+  },
+  "sender": {
+    "login": "octocat",
+    "id": 2001,
+    "type": "User"
+  }
+}

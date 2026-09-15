@@ -1,0 +1,49 @@
+{
+  "ref": "refs/heads/main",
+  "before": "1111111111111111111111111111111111111111",
+  "after": "2222222222222222222222222222222222222222",
+  "created": false,
+  "deleted": false,
+  "forced": false,
+  "compare": "https://github.com/octo-org/project/compare/111111111111...222222222222",
+  "commits": [
+    {
+      "id": "2222222222222222222222222222222222222222",
+      "message": "feat: example",
+      "author": {
+        "name": "Example Dev",
+        "email": "dev@example.com"
+      }
+    }
+  ],
+  "head_commit": {
+    "id": "2222222222222222222222222222222222222222"
+  },
+  "repository": {
+    "id": 5001,
+    "node_id": "R_example",
+    "name": "project",
+    "full_name": "octo-org/project",
+    "private": true,
+    "owner": {
+      "login": "octo-org",
+      "id": 1001,
+      "type": "Organization"
+    },
+    "default_branch": "main",
+    "html_url": "https://github.com/octo-org/project"
+  },
+  "pusher": {
+    "name": "octocat",
+    "email": "octocat@example.com"
+  },
+  "installation": {
+    "id": 42,
+    "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uNDI="
+  },
+  "sender": {
+    "login": "octocat",
+    "id": 2001,
+    "type": "User"
+  }
+}

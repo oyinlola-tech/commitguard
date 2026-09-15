@@ -3,7 +3,8 @@
 ## Supported versions
 
 CommitGuard is pre-alpha (`0.1.0.dev0`). Only the `main` branch receives fixes.
-It does not enforce any policy yet; do not rely on it as a security control.
+Local hooks, the GitHub Action and the GitHub App enforce policy, but the project
+has not had an external security review: treat it as pre-release software.
 
 ## Reporting a vulnerability
 
@@ -42,6 +43,21 @@ We aim to acknowledge reports within 5 working days.
 - CI installs dependencies from `requirements/ci.txt` with `--require-hashes`.
 - Reports about the GitHub layer are in scope, including ways to make the check
   pass for commits that the same policy blocks locally.
+
+## GitHub App
+
+In scope in addition to the above:
+
+- forging or replaying webhooks, or making a scan run for a repository an
+  installation does not cover;
+- cross-tenant access to another installation's repositories, scans or audit data;
+- leaking the private key, webhook secret, JWTs or installation tokens;
+- a Check Run reporting success for a commit that was not evaluated, or a result
+  attached to the wrong commit;
+- execution of repository-controlled code by the service.
+
+Operators: rotate the App private key and webhook secret in GitHub if you
+suspect exposure, and report the circumstances if CommitGuard was the cause.
 
 ## Out of scope
 

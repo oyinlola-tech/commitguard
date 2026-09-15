@@ -68,6 +68,7 @@ def build_report(
     trigger: ScanTrigger,
     config: LoadedConfig,
     ci: CIReport | None = None,
+    extra_config_sources: Sequence[str] = (),
 ) -> ScanReport:
     return ScanReport(
         tool_version=__version__,
@@ -75,7 +76,7 @@ def build_report(
         repository=str(repository.root) if repository else None,
         target=target,
         trigger=trigger.value,
-        config_sources=tuple(str(source) for source in config.sources),
+        config_sources=(*(str(source) for source in config.sources), *extra_config_sources),
         action=Action.most_restrictive([report.action for report in reports]),
         commits=tuple(reports),
         ci=ci,

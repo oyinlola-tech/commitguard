@@ -24,7 +24,11 @@ branches, and every decision should be explainable with preserved evidence.
 - the repository policy (`.commitguard.yaml`) and rule data;
 - the decision and its evidence;
 - the developer's machine and environment (CommitGuard runs inside Git hooks);
-- repository contents (must not leave the machine).
+- repository contents (must not leave the machine);
+- GitHub App credentials: the App private key, the webhook secret, JWTs and
+  installation tokens (Phase 5);
+- the App's state (installations, scan jobs, audit events) and tenant isolation
+  between the accounts and organisations that install it.
 
 ## Adversaries
 
@@ -34,8 +38,47 @@ branches, and every decision should be explainable with preserved evidence.
 | Malicious commit author (any repo you scan) | crash, mislead, or exploit CommitGuard via crafted metadata |
 | Malicious repository content | abuse config/rules to execute code or weaken policy |
 | Automated agent | add attribution that evades detection, or strip it |
+| Internet attacker (GitHub App) | forge or replay webhooks, reach other tenants' repositories, exhaust the service, steal credentials |
 
 ## Threats and mitigations
+
+### GitHub App (Phase 5)
+
+Security boundaries, each validating its input before passing anything on:
+
+```text
+GitHub ─▶ webhook boundary (size, content type, rate limit)
+       ─▶ authentication boundary (X-Hub-Signature-256, delivery ID)
+       ─▶ event normalisation (typed events; raw JSON stops here)
+       ─▶ authorization (installation state; down-scoped token; repository ID lookup)
+       ─▶ scan service ─▶ CommitGuard core ─▶ policy engine
+       ─▶ GitHub Check (exact scanned SHA, ownership-guarded writes)
+```
+
+| Threat | Mitigation / limitation | Status |
+|---|---|---|
+| Forged webhook | HMAC-SHA256 over the raw body with the webhook secret, constant-time comparison, verified before any parsing; missing, malformed or wrong signatures get `401` (tested: valid, invalid, missing, modified payload, wrong secret, empty, malformed) | **[done]** |
+| Replayed webhook | `X-GitHub-Delivery` IDs stored with a payload digest: same ID and payload is ignored, same ID with a different payload is `409`; equivalent events under new IDs map to an existing scan job (tested). Delivery IDs expire with retention; a replay older than that re-runs a deterministic scan of the same SHA | **[done]** |
+| Duplicate webhook | Idempotent job keys and one Check Run per repository, SHA and check name (tested: 5 deliveries give one scan and one run; 12 concurrent deliveries give one job) | **[done]** |
+| Unauthorized repository access (spoofed installation, owner or repository in a payload) | Every scan mints a token down-scoped to that single repository ID; GitHub refuses when the installation does not cover it; the repository is then looked up by immutable ID with that token. Stored state rejects deleted or suspended installations early. Names are never used for authorization or paths (tested: repository outside the installation, spoofed installation ID, removed repository, uninstalled App) | **[done]** |
+| Stolen installation token | Tokens live about 1 hour, are limited to one repository and to Checks write plus read-only Contents, Metadata and Pull requests, are kept only in memory, are dropped on uninstall or removal, and are never logged | **[done]** (short lifetime is GitHub's) |
+| Stolen private key or webhook secret | Read from files or the environment, wrapped in `Secret`, registered for redaction, never logged or stored, key file permissions checked by `validate`. A stolen key lets the holder act as the App: rotate it in GitHub | partially mitigated (operational) |
+| Secrets leaking into logs, errors, Checks or responses | Redaction of registered secrets and credential-shaped strings in logs, errors and stored text; generic HTTP errors; test forces credential-echoing failures and inspects every output surface | **[done]** |
+| Malicious repository metadata (names, branches, PR text, commit messages, trailers) | Names validated against GitHub's formats; PR titles and bodies are never read; commit data only reaches detectors and escaped Markdown; no shell (tested with `$(touch …)`, backticks, `;`, `\|`, `&&`, `../../`) | **[done]** |
+| Repository code execution | No checkout, no work tree, no hooks (`--template=`, null hooks path), no submodules, no builds or installs; only commit, tree and config-blob objects are fetched | **[done]** |
+| Malicious Git server response or redirect | Protocol allow-list (HTTPS only in production), no redirects, no credential helpers, fetch timeout; token only in a header scoped to the remote URL | **[done]** (Git client bugs remain an upstream risk) |
+| PR policy tampering | Trusted base or before policy (Phase 4 code); a weakening is reported as "Security policy modification detected" and audited (tested) | **[done]** |
+| Rule tampering | Rules only from the installed package (tested with rule files in the PR) | **[done]** |
+| Repository weakens organisation requirements | Optional mandatory policy applied after trusted config; can only tighten; `enabled: false` rejected (tested) | **[done]** (organisation-hosted policy: planned) |
+| Stale scan overwrites newer result | Sequenced jobs; per-SHA check ownership with guarded writes; superseded PR scans cancelled (tested: B before A, A mid-flight while B completes) | **[done]** |
+| Result attached to the wrong commit (TOCTOU) | Check Runs are created with the SHA that is fetched and scanned; the planned range head is verified before publishing; GitHub's returned head SHA is checked | **[done]** |
+| GitHub API outage, errors or rate limits produce a false PASS | Bounded retries (3 attempts), bounded rate-limit waits; every failure publishes `failure` or `timed_out` when a check exists, otherwise no check (a required check stays unsatisfied) (tested: 5xx, timeouts, persistent 429, permission revoked mid-scan) | **[done]** |
+| Reduced App permissions silently pass | Token requests ask for the required permissions and verify the granted ones; missing permissions stop the scan without publishing success (tested) | **[done]** |
+| Denial of service | Request body limit (25 MB, checked from `Content-Length` before reading), JSON depth limit, duplicate-key rejection, per-client rate limit, bounded queue with durable recovery, commit limit per scan, fetch and Git timeouts, pagination page limit, output caps (20 findings, 60,000 characters) | **[done]** (per-message size limit: not implemented) |
+| SSRF | No URLs are taken from payloads: the API base and Git host are fixed, paths are built from validated segments, pagination links must stay on the API host, only the HTTPS handler is installed | **[done]** |
+| Cross-tenant data access | All storage keyed by installation and repository IDs; tenant-scoped listing APIs; mirrors under numeric installation and repository directories | **[done]** (no external API yet) |
+| Plain-HTTP interception of webhooks | The service binds to localhost; TLS is required at the reverse proxy (documented). GitHub requires HTTPS webhook URLs for signature verification to be meaningful | limitation documented |
+| Check exists but merges are not blocked | Branch protection or rulesets must require `commitguard-app`; not configured or verified by CommitGuard | limitation documented |
 
 ### GitHub server-side enforcement (Phase 4)
 
@@ -128,11 +171,17 @@ branches, and every decision should be explainable with preserved evidence.
 - Unexpected CLI errors exit 2 (never 1 = "blocked", never 0) without tracebacks **[done]**.
 
 ### Information disclosure
+
+The GitHub App stores IDs, repository names, SHAs, states, counts, rule IDs and
+finding fingerprints for a bounded retention period (default 30 days). Mirrors
+hold commit and tree objects (file names, not file contents) of repositories
+while they are installed. See [github-app.md](github-app.md#operational-notes).
+
 - No network access and no AI/LLM APIs in the local tool; no telemetry; enforced by architecture tests **[done]**.
 - Reports and JSON contain concise metadata evidence only, never file contents or full messages **[done]**.
 - Tracebacks never render local variables (`pretty_exceptions_show_locals=False`) **[done]**.
 - Environment variables are never logged **[done — nothing logs them]**.
-- GitHub enforcement uses no token and no secrets **[done]**; a future GitHub App would read tokens at call time and never persist them **[planned]**.
+- GitHub Actions enforcement uses no token and no secrets **[done]**. The GitHub App keeps installation tokens and JWTs in memory only, redacts them from every output and never persists them **[done]**.
 
 ### Repository modification
 - Detectors receive data, not a repository handle; architecture tests forbid

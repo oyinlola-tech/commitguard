@@ -2,10 +2,10 @@
 
 **Git commit provenance and contribution policy enforcement.**
 
-> **Status: pre-alpha (Phase 4 — GitHub server-side enforcement).** Local Git
-> hooks stop violations during `git commit` / `git push`; a GitHub Actions check
-> runs the same engine on every pull request, merge queue entry and push.
-> **The GitHub check blocks merges only when branch protection requires it** —
+> **Status: pre-alpha (Phase 5 — GitHub App).** Local Git hooks stop violations
+> during `git commit` / `git push`; a GitHub Actions check and a webhook-driven
+> GitHub App run the same engine on pull requests and pushes.
+> **A failing GitHub check blocks merges only when branch protection requires it** —
 > CommitGuard cannot configure or verify that. See [What works today](#what-works-today).
 
 ---
@@ -212,6 +212,28 @@ is an error (exit 2). Which hooks enforce is set under `enforcement:`
 ## Enforcement layers: local + GitHub
 
 ```text
+Local Hooks
+     │
+     ▼
+CommitGuard Core  (detection engine · policy engine · ScanService)
+     │
+     ├───────────────► GitHub Actions      commitguard ci github → job status "commitguard"
+     │
+     └───────────────► GitHub App          commitguard github serve
+                              │
+                              ▼
+                         Webhooks (signed, deduplicated)
+                              │
+                              ▼
+                         Scan Service (metadata-only fetch, trusted policy)
+                              │
+                              ▼
+                       GitHub Checks       "commitguard-app"
+```
+
+In more detail, for the Action:
+
+```text
 Developer ─▶ git commit / push ─▶ Local hooks (Phase 3) ──── fast feedback, bypassable
                                         │
                                         ▼
@@ -256,6 +278,24 @@ preserved and chained; failures block. See [docs/git-hooks.md](docs/git-hooks.md
 
 See [docs/github-enforcement.md](docs/github-enforcement.md).
 
+**GitHub App** (`commitguard github serve`, `pip install 'commitguard[app]'`):
+
+- a centralised service you deploy: install it once on an account or
+  organisation and it scans pull requests and pushes of the selected
+  repositories from signed webhooks;
+- publishes the Check Run `commitguard-app` (queued → in progress → completed)
+  on the exact commit it scanned;
+- least privilege: Checks write, and read-only Contents, Metadata and Pull
+  requests. Tokens are down-scoped to one repository per scan;
+- never checks out or runs repository code, and never modifies a repository;
+- supports an optional **mandatory policy** that repositories cannot weaken;
+- `commitguard github validate` checks configuration, authentication,
+  permissions and installations.
+
+Actions or App? Actions: simplest, no service. App: organisation-wide,
+webhook-driven, central policy, but you operate it. Both can run together. See
+[docs/github-app.md](docs/github-app.md) and [docs/deployment.md](docs/deployment.md).
+
 ## What works today
 
 - `scan`, `check` (including `--message-file`, `--format json`, `--quiet`,
@@ -277,9 +317,17 @@ See [docs/github-enforcement.md](docs/github-enforcement.md).
 - Hardened read-only Git access (no shell, `--end-of-options`, no mailmap /
   replace objects, batched reads)
 - Terminal-safe output and ASCII-only JSON
+- GitHub App service: signed webhooks with replay protection, installation
+  lifecycle, repository authorization, down-scoped installation tokens,
+  metadata-only Git mirrors, Check Runs with stale-write protection,
+  mandatory policy floor, policy-weakening detection, SQLite state with
+  retention, audit events, structured logs with correlation IDs,
+  `/health` and `/ready`, `github validate`, `github webhook-test`, `github serve`
 
-Not yet: GitHub App / Checks API / PR comments, SARIF, organisation policies,
-audit storage, signature verification, secret detection, dashboard.
+Not yet: PR comments, SARIF, organisation-hosted policies, merge queue support
+in the App, a management API, signature verification, secret detection,
+dashboard. The App has not yet been tested against github.com itself (only an
+offline model of the API plus real Git).
 
 ## Development
 
@@ -307,17 +355,21 @@ detection · findings · blocking decisions
 `pre-commit` · `commit-msg` · `pre-push` · hook installation · hook management ·
 local repository enforcement
 
-**Phase 4 — GitHub enforcement** ✔ *(current)*
+**Phase 4 — GitHub enforcement** ✔
 GitHub Actions check · pull request, merge queue and push scanning · trusted policy source ·
-branch protection guidance (configuration via GitHub App/API: later)
+branch protection guidance
 
-**Phase 5 — Security intelligence**
-Advanced bot detection · signed commit verification · secret detection ·
-provenance analysis · audit storage · advanced rules
+**Phase 5 — GitHub App** ✔ *(current)*
+Webhooks · App authentication · installation lifecycle · Check Runs · ScanService ·
+EnforcementService · audit events · mandatory policy · deployment docs
 
 **Phase 6 — Web dashboard**
 Repositories · security status · blocked commits · findings · policies · rules ·
-audit history · GitHub integrations. (`web/` is a placeholder.)
+audit history · organisation policy administration. (`web/` is a placeholder.)
+
+**Later — Security intelligence**
+Advanced bot detection · signed commit verification · secret detection ·
+provenance analysis · SARIF · advanced rules
 
 ## Documentation
 
@@ -326,7 +378,9 @@ audit history · GitHub integrations. (`web/` is a placeholder.)
 - [Policy engine](docs/policy-engine.md)
 - [Configuration](docs/configuration.md)
 - [Git hooks](docs/git-hooks.md)
-- [GitHub enforcement](docs/github-enforcement.md)
+- [GitHub enforcement (Actions)](docs/github-enforcement.md)
+- [GitHub App](docs/github-app.md)
+- [Deployment](docs/deployment.md)
 - [Threat model](docs/threat-model.md)
 
 ## Contributing, security, license

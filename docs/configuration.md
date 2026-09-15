@@ -121,10 +121,58 @@ not used in CI. A change to `.commitguard.yaml` in a pull request is therefore
 **not applied to that pull request**; CI reports it as a notice and it takes
 effect once merged.
 
+If the evaluated commits change the configuration in a way that would weaken a
+policy (disable it or lower its action), CI and the GitHub App additionally
+report **"Security policy modification detected"** listing each change, for
+example `ai_coauthor: block -> allow`. The trusted policy is still the one
+applied.
+
+The GitHub App uses the same sources and can add a **mandatory policy**, see
+below.
+
 Locally, repository configuration is controlled by whoever can commit, and a
 repository layer can loosen a global one; that is acceptable because local
 checks are advisory. See [github-enforcement.md](github-enforcement.md#policy-trust-model)
 and [threat-model.md](threat-model.md).
+
+## Mandatory policy (GitHub App)
+
+`COMMITGUARD_APP_MANDATORY_POLICY_FILE` points to a file with the same schema
+as `.commitguard.yaml`. It is a **floor**, not a layer:
+
+- it is applied after the trusted repository configuration;
+- every policy it names is enabled, at the more restrictive of its own action
+  and the repository's;
+- `enabled: false` and `enforcement:` settings are rejected, because a mandatory
+  policy can only enforce.
+
+```yaml
+version: 1
+policies:
+  ai_coauthor:
+    action: block
+  ai_identity: {}        # enabled, with the default action (block)
+```
+
+| Repository (trusted) | Mandatory | Effective |
+|---|---|---|
+| `ai_coauthor: allow` | `ai_coauthor: block` | **block** |
+| `ai_identity: enabled: false` | `ai_identity: {}` | **enabled, block** |
+| `bot_identity: block` | `bot_identity: warn` | **block** (a floor never relaxes) |
+
+Reports list it in `config_sources` as `mandatory: <file name>`, and the policy
+source reads `… + mandatory policy (…)`.
+
+The intended future hierarchy is global mandatory policy → organisation
+mandatory policy → trusted repository configuration → local developer
+configuration. Each mandatory level may only tighten. Organisation-hosted
+policies are not implemented yet.
+
+## GitHub App environment
+
+The App is configured through environment variables only (App ID, private key,
+webhook secret, data directory, mandatory policy, workers, retention, commit
+limit). See [github-app.md](github-app.md#5-configure-the-environment).
 
 ### Unknown fields
 

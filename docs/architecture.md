@@ -1,7 +1,8 @@
 # Architecture
 
-> Status: Phase 4. Detection, policy, local Git hook enforcement and GitHub
-> Actions enforcement are implemented. No GitHub App, Checks API or dashboard.
+> Status: Phase 5. Detection, policy, local Git hook enforcement, GitHub
+> Actions enforcement and the webhook-driven GitHub App (Checks API) are
+> implemented. No dashboard or management API yet.
 
 ## Goals
 
@@ -60,22 +61,62 @@
 Both paths reach the same `services.analysis.Analyzer`; only the inputs differ
 (which commits, which policy source).
 
+### GitHub App (Phase 5)
+
+```text
+                         GitHub
+                           │ webhook (HTTPS)
+                           ▼
+       github/app.py  WSGI POST /webhooks/github
+         webhooks.py   size · signature · headers · JSON
+         events.py     normalize_webhook ─▶ typed events (CIContext via parse_github_event)
+         storage.py    delivery-ID dedup ─▶ ScanJob stored ─▶ queue.py
+                           │
+                           ▼  (background)
+       github/worker.py  ScanWorker
+         installations.py  installation state + token for ONE repository + ID lookup
+         repositories.py   metadata-only mirror fetch (no checkout, no blobs)
+                           │
+                           ▼
+       services/scan.py  ScanService ─▶ services/ci.py plan_ci + execute_ci_plan
+                           │                (identical to `commitguard ci github`)
+                           ▼
+                Detection Engine ─▶ Policy Engine (+ optional mandatory policy floor)
+                           │
+                           ▼
+       services/enforcement.py ─▶ check_runs.py ─▶ client.py ─▶ Check Run (exact SHA)
+       services/audit.py ─▶ audit events · observability/ ─▶ JSON logs, metrics
+```
+
+The adapters differ only at the edges:
+
+```text
+                    CommitGuard core (detection, policy, findings, ScanReport)
+                                        │
+        ┌───────────────┬───────────────┼────────────────┬──────────────────┐
+        │               │               │                │                  │
+       CLI          Git hooks     GitHub Actions     GitHub App      future providers
+   exit codes    allow/reject      exit code +      Check Runs      (GitLab, Bitbucket…)
+                                   job summary                       via CIContext
+```
+
 ## Packages and dependency rules
 
 | Package | Responsibility | Status |
 |---|---|---|
 | `cli` | Typer app, commands (incl. `hook`), text/JSON rendering, exit codes | implemented |
-| `services` | the one analysis pipeline shared by every entry point (`analysis`), hook runtime (`hooks`), CI range/policy planning (`ci`), report models | implemented |
+| `services` | the one analysis pipeline shared by every entry point (`analysis`), hook runtime (`hooks`), CI range/policy planning (`ci`), `ScanService` (`scan`), `EnforcementService` (`enforcement`), `AuditService` (`audit`), report models | implemented |
 | `core` | `CommitContext`, `Finding`, `Evidence`, `DetectionResult`, `Decision`, `DetectionEngine` | implemented |
 | `detectors` | pure detectors + explicit registry | implemented (4 detectors) |
 | `rules` | rule schemas, compiled matcher (pure); loader (reads packaged YAML) | implemented |
 | `policies` | `Policy`, `PolicySet`, defaults, layered merge, evaluator | implemented |
-| `provenance` | identities, trailer parsing, normalisation, signatures model | implemented (signature verification: Phase 5) |
-| `git` | Git CLI wrapper, repository queries, commit model, `CommitRange` (`ranges`), pre-push input parsing, hook install/uninstall/integrity | implemented (staged diff inspection: Phase 5) |
+| `provenance` | identities, trailer parsing, normalisation, signatures model | implemented (signature verification: planned) |
+| `git` | Git CLI wrapper, repository queries, commit model, `CommitRange` (`ranges`), pre-push input parsing, hook install/uninstall/integrity | implemented (staged diff inspection: planned) |
 | `config` | schema, layered loader, policy sources (`sources`: working tree / trusted revision / built-in), enforcement settings | implemented |
 | `ci` | provider-neutral `CIContext` | implemented |
-| `github` | event normalisation (`events`), Actions output (`actions`), check-run model (`checks`), workflow template and inspection (`workflow`); `client` is a placeholder (no API) | implemented |
-| `audit` | opt-in audit events and storage | placeholder (reports are audit-ready) |
+| `github` | Actions: event normalisation (`events`), output (`actions`), check model (`checks`), workflow template and inspection (`workflow`). App: `settings`, `auth`, `client`, `webhooks`, `installations`, `repositories` (mirrors), `storage`, `queue`, `worker`, `check_runs`, `app` (WSGI), `server` | implemented |
+| `audit` | audit event model, storage interface, logger | implemented (recorded by the GitHub App) |
+| `observability` | structured JSON logs, correlation IDs, redaction, metrics | implemented |
 | `security` | validation, sanitisation, hashing, strict safe YAML | implemented |
 | `exceptions`, `utils` | error types, subprocess/filesystem/platform helpers | implemented |
 
@@ -91,6 +132,14 @@ Enforced by `tests/unit/test_architecture.py`:
 - `github`, `ci` and `services/ci.py` never import detectors, the detection engine or the
   policy evaluator directly: CI enforcement cannot grow its own detection logic.
 - No module imports HTTP clients or AI SDKs (`requests`, `httpx`, `openai`, `anthropic`, …).
+- Network modules (`urllib.request`, `http.client`, `ssl`, `socket`, servers)
+  appear only in `github.client` (outbound) and `github.server` (inbound).
+- `cryptography` is used only by `github.auth`; importing the CLI loads neither
+  it nor the App service, SQLite or HTTP modules, so hooks and the Action stay
+  offline and dependency-light.
+- `services.scan`, `services.enforcement`, `services.audit` and `services.ci`
+  import nothing from `github`, `cli` or `detectors`.
+- `git fetch` appears only in `github.repositories`.
 - YAML is only parsed through `security.safe_yaml`.
 - Every module imports cleanly in a fresh interpreter (no import cycles).
 - No `shell=True` anywhere.
@@ -128,6 +177,23 @@ CI and `scan a..b`, so every enforcement point agrees on what "introduced" means
 policy came from the work tree, a trusted commit or built-in defaults; every CI
 report shows it. Future organisation or GitHub-hosted policy sources add layers
 here without touching detection.
+
+**GitHub is an adapter.** The App reuses `CIContext`, `CommitRange`,
+`PolicySource`, `plan_ci` and the `Analyzer` through `ScanService`. It reads
+real Git objects from a partial mirror instead of API commit lists, so it
+analyses exactly what the Action and the hooks analyse.
+
+**Dependency-free service.** The App uses the standard library for HTTP
+(WSGI and `urllib`), storage (`sqlite3`) and queueing. Only JWT signing needs
+`cryptography`, in the optional `app` extra. Storage and the queue are
+interfaces, so PostgreSQL or a message broker can replace them later.
+
+**Durable jobs, disposable queue.** Webhooks persist a scan job before
+answering. The queue only wakes workers, so crashes and restarts lose nothing.
+
+**Checks are per commit, writes are owned.** A newer job owns the Check Run for
+a (repository, SHA, check name) slot, and every write verifies ownership under
+a lock.
 
 **CI context is provider-neutral.** GitHub-specific JSON stops at
 `github.events`; `services.ci` works on `ci.context.CIContext`, so GitLab or

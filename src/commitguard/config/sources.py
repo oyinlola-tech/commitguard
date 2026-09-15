@@ -15,8 +15,15 @@ Kind               Configuration read from                  Used by
                                                              commit exists
 =================  =======================================  ======================
 
-Future sources (organisation, GitHub repository settings) extend this module
-and add layers; the policy evaluator is unchanged.
+On top of any source, a central service can apply a :class:`MandatoryPolicy`
+(e.g. the operator of the GitHub App, later an organisation). It is a floor,
+not a layer: repository configuration cannot weaken it (see
+:mod:`commitguard.policies.mandatory`). The intended future hierarchy is::
+
+    global mandatory policy -> organisation mandatory policy
+        -> trusted repository configuration -> (local developer configuration)
+
+where every mandatory level can only tighten what the levels below produce.
 """
 
 from enum import StrEnum
@@ -29,6 +36,7 @@ from commitguard.config.loader import (
     ConfigLayer,
     ConfigSource,
     LoadedConfig,
+    load_config,
     load_effective_config,
     parse_config,
 )
@@ -36,6 +44,8 @@ from commitguard.config.schema import CommitGuardConfig
 from commitguard.exceptions.base import UnsafeInputError
 from commitguard.exceptions.configuration import ConfigurationError
 from commitguard.git.repository import Repository
+from commitguard.policies.mandatory import validate_mandatory_config
+from commitguard.security.hashing import sha256_hex
 from commitguard.security.validation import validate_git_sha, validate_repository_path
 
 
@@ -69,6 +79,31 @@ class PolicySource(BaseModel):
         if self.kind is PolicySourceKind.REVISION and self.revision:
             return f"{self.description} ({self.revision[:12]})"
         return self.description
+
+
+class MandatoryPolicy(BaseModel):
+    """A policy floor applied after all configuration layers."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config: CommitGuardConfig
+    description: str
+    fingerprint: str
+
+
+def load_mandatory_policy(path: Path, *, description: str | None = None) -> MandatoryPolicy:
+    """Load and validate a mandatory policy file (same schema as ``.commitguard.yaml``)."""
+    config = load_config(path)
+    try:
+        validate_mandatory_config(config)
+    except ValueError as exc:
+        raise ConfigurationError(str(exc), path=path) from None
+    canonical = config.model_dump_json(exclude_unset=True)
+    return MandatoryPolicy(
+        config=config,
+        description=description or path.name,
+        fingerprint=sha256_hex(canonical.encode("utf-8")),
+    )
 
 
 def load_config_at_revision(

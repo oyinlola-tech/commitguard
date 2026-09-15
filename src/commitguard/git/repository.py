@@ -4,7 +4,7 @@ Nothing in this module writes to the repository.
 """
 
 import secrets
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +26,7 @@ from commitguard.security.validation import (
     validate_repository_path,
     validate_revision,
 )
+from commitguard.utils.subprocess import CommandResult
 
 # Fields are NUL-separated; the free-form message (%B) comes last so that any
 # NUL bytes inside it cannot shift the positions of the structured fields.
@@ -39,9 +40,14 @@ _READ_BATCH_SIZE = 256
 class Repository:
     """A discovered Git repository with a work tree."""
 
-    def __init__(self, root: Path, git_dir: Path) -> None:
+    def __init__(
+        self, root: Path, git_dir: Path, *, git_env: Mapping[str, str] | None = None
+    ) -> None:
         self.root = root
         self.git_dir = git_dir
+        # Extra environment for every git invocation on this repository (e.g. a
+        # server-side mirror disables lazy object fetching). Never holds secrets.
+        self._git_env = dict(git_env) if git_env else None
 
     def __repr__(self) -> str:
         return f"Repository(root={self.root!s})"
@@ -75,15 +81,25 @@ class Repository:
             raise NotAGitRepositoryError(f"not inside a Git work tree: {start}")
         return cls(root=Path(lines[0]), git_dir=Path(lines[1]))
 
+    def _git(
+        self,
+        args: Sequence[str],
+        *,
+        check: bool = True,
+        input_bytes: bytes | None = None,
+    ) -> CommandResult:
+        return run_git(
+            args, cwd=self.root, check=check, input_bytes=input_bytes, extra_env=self._git_env
+        )
+
     # ------------------------------------------------------------------ #
     # Queries
     # ------------------------------------------------------------------ #
     def resolve_commit(self, revision: str) -> str:
         """Resolve ``revision`` to a full commit object ID."""
         validate_revision(revision)
-        result = run_git(
+        result = self._git(
             ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{revision}^{{commit}}"],
-            cwd=self.root,
             check=False,
         )
         sha = result.stdout.decode("ascii", errors="replace").strip()
@@ -106,7 +122,7 @@ class Repository:
         validate_revision(revision_range)
         if ".." not in revision_range:
             return [self.resolve_commit(revision_range)]
-        result = run_git(
+        result = self._git(
             [
                 "rev-list",
                 f"--max-count={max_count + 1}",
@@ -114,7 +130,6 @@ class Repository:
                 revision_range,
                 "--",
             ],
-            cwd=self.root,
             check=False,
         )
         if not result.ok:
@@ -142,9 +157,17 @@ class Repository:
             commits.extend(self._read_batch(shas[start : start + _READ_BATCH_SIZE]))
         return commits
 
+    def iter_commits(self, shas: Sequence[str]) -> Iterator[Commit]:
+        """Like :meth:`read_commits`, but reads one batch at a time (bounded memory)."""
+        for sha in shas:
+            if not is_git_sha(sha):
+                raise UnsafeInputError("iter_commits requires full commit ids")
+        for start in range(0, len(shas), _READ_BATCH_SIZE):
+            yield from self._read_batch(shas[start : start + _READ_BATCH_SIZE])
+
     def _read_batch(self, shas: Sequence[str]) -> list[Commit]:
         boundary = secrets.token_hex(16)
-        result = run_git(
+        result = self._git(
             [
                 "-c",
                 "log.showSignature=false",
@@ -160,7 +183,6 @@ class Repository:
                 *shas,
                 "--",
             ],
-            cwd=self.root,
         )
         records = result.stdout.split(f"\x00{boundary}\x00".encode("ascii"))
         if records[0].strip():
@@ -183,7 +205,7 @@ class Repository:
         )
 
     def _git_var_identity(self, variable: str) -> Identity:
-        result = run_git(["var", variable], cwd=self.root, check=False)
+        result = self._git(["var", variable], check=False)
         if not result.ok:
             raise GitError(f"git could not determine {variable} (is user.name/user.email set?)")
         line = result.stdout.decode("utf-8", errors="replace").rstrip("\n")
@@ -198,7 +220,7 @@ class Repository:
     @property
     def common_dir(self) -> Path:
         """The Git directory shared by all worktrees (where hooks normally live)."""
-        result = run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=self.root)
+        result = self._git(["rev-parse", "--path-format=absolute", "--git-common-dir"])
         return Path(result.stdout.decode("utf-8", errors="surrogateescape").strip())
 
     def peel_to_commit(self, oid: str) -> str | None:
@@ -209,9 +231,8 @@ class Repository:
         """
         if not is_git_sha(oid):
             raise UnsafeInputError("peel_to_commit requires a full object id")
-        result = run_git(
+        result = self._git(
             ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{oid}^{{commit}}"],
-            cwd=self.root,
             check=False,
         )
         sha = result.stdout.decode("ascii", errors="replace").strip()
@@ -220,7 +241,7 @@ class Repository:
     def object_exists(self, oid: str) -> bool:
         if not is_git_sha(oid):
             raise UnsafeInputError("object_exists requires a full object id")
-        return run_git(["cat-file", "-e", oid], cwd=self.root, check=False).ok
+        return self._git(["cat-file", "-e", oid], check=False).ok
 
     def has_commit(self, oid: str) -> bool:
         return is_git_sha(oid) and self.peel_to_commit(oid) == oid
@@ -235,14 +256,13 @@ class Repository:
         if not self.remote_exists(remote):
             return []
         # One call: object type/name and, for tags, the peeled type/name.
-        result = run_git(
+        result = self._git(
             [
                 "for-each-ref",
                 "--format=%(objecttype) %(objectname) %(*objecttype) %(*objectname)",
                 "--",
                 f"refs/remotes/{remote}/",
             ],
-            cwd=self.root,
         )
         tips = []
         for line in result.stdout.decode("ascii", errors="replace").splitlines():
@@ -272,9 +292,8 @@ class Repository:
         if not include:
             return []
         stdin = "".join(f"{oid}\n" for oid in include) + "".join(f"^{oid}\n" for oid in exclude)
-        result = run_git(
+        result = self._git(
             ["rev-list", f"--max-count={max_count + 1}", "--stdin"],
-            cwd=self.root,
             input_bytes=stdin.encode("ascii"),
         )
         shas = result.stdout.decode("ascii", errors="replace").split()
@@ -309,16 +328,15 @@ class Repository:
         args = ["stripspace"]
         if mode == "strip":
             args.append("--strip-comments")
-        result = run_git(args, cwd=self.root, input_bytes=message.encode("utf-8", "surrogatepass"))
+        result = self._git(args, input_bytes=message.encode("utf-8", "surrogatepass"))
         return result.stdout.decode("utf-8", errors="replace")
 
     def ref_commit(self, refname: str) -> str | None:
         """The commit a fully qualified ref (``refs/...``) points to, if it exists."""
         if not refname.startswith("refs/") or any(ord(c) < 0x20 for c in refname):
             raise UnsafeInputError("ref_commit requires a fully qualified ref name")
-        result = run_git(
+        result = self._git(
             ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{refname}^{{commit}}"],
-            cwd=self.root,
             check=False,
         )
         sha = result.stdout.decode("ascii", errors="replace").strip()
@@ -334,7 +352,7 @@ class Repository:
         if not is_git_sha(commit):
             raise UnsafeInputError("read_blob_at requires a full commit id")
         validate_repository_path(path)
-        result = run_git(["ls-tree", "-z", "--end-of-options", commit, "--", path], cwd=self.root)
+        result = self._git(["ls-tree", "-z", "--end-of-options", commit, "--", path])
         entries = [e for e in result.stdout.split(b"\x00") if e]
         match = None
         for entry in entries:
@@ -348,15 +366,15 @@ class Repository:
         oid = match[2]
         if not is_git_sha(oid):
             raise MalformedGitOutputError("unexpected ls-tree output")
-        size = run_git(["cat-file", "-s", oid], cwd=self.root).stdout.decode("ascii").strip()
+        size = self._git(["cat-file", "-s", oid]).stdout.decode("ascii").strip()
         if not size.isdigit() or int(size) > max_bytes:
             raise UnsafeInputError(f"{path} at {commit[:12]} is larger than {max_bytes} bytes")
-        return run_git(["cat-file", "blob", oid], cwd=self.root).stdout
+        return self._git(["cat-file", "blob", oid]).stdout
 
     def config_get(self, key: str) -> str | None:
         """Return a Git configuration value, or None if it is unset."""
         validate_git_config_key(key)
-        result = run_git(["config", "--get", "--end-of-options", key], cwd=self.root, check=False)
+        result = self._git(["config", "--get", "--end-of-options", key], check=False)
         if result.returncode == 1:  # key not set
             return None
         if not result.ok:
@@ -365,9 +383,7 @@ class Repository:
 
     def hooks_dir(self) -> Path:
         """Return the effective hooks directory (honours ``core.hooksPath``)."""
-        result = run_git(
-            ["rev-parse", "--path-format=absolute", "--git-path", "hooks"], cwd=self.root
-        )
+        result = self._git(["rev-parse", "--path-format=absolute", "--git-path", "hooks"])
         return Path(result.stdout.decode("utf-8", errors="surrogateescape").strip())
 
 

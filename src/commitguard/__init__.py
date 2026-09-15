@@ -13,8 +13,9 @@ Package layout (dependency direction flows downwards only)::
     provenance   -> identity / trailer / signature models and analysis
     git          -> safe Git CLI wrapper (isolated from detection)
     config       -> validated repository configuration
-    github       -> future GitHub enforcement layer (no network yet)
-    audit        -> future opt-in audit log
+    github       -> GitHub Actions and GitHub App adapters (webhooks, Checks API)
+    audit        -> audit events (recorded by the GitHub App service)
+    observability-> structured logs, correlation IDs and metrics for services
     security     -> input validation, sanitisation, hashing
     exceptions   -> error hierarchy
     utils        -> subprocess / filesystem / platform helpers

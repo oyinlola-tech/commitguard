@@ -1,0 +1,28 @@
+{
+  "action": "removed",
+  "installation": {
+    "id": 42,
+    "account": {
+      "login": "octo-org",
+      "id": 1001,
+      "type": "Organization",
+      "site_admin": false
+    },
+    "app_id": 123
+  },
+  "repository_selection": "selected",
+  "repositories_added": [],
+  "repositories_removed": [
+    {
+      "id": 5001,
+      "name": "project",
+      "full_name": "octo-org/project",
+      "private": true
+    }
+  ],
+  "sender": {
+    "login": "octocat",
+    "id": 2001,
+    "type": "User"
+  }
+}

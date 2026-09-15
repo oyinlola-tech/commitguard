@@ -23,7 +23,7 @@ Repository.read_commits()           git log, NUL-delimited, random record bounda
         │
         ▼
 Commit (git/commit.py)              sha, parents, author, committer, dates,
-        │                           message, trailers (derived), signature (Phase 5)
+        │                           message, trailers (derived), signature (planned)
         ▼
 CommitContext (core/context.py)     commit + trigger
         │
@@ -49,7 +49,7 @@ DetectionResult                     findings + detector failures
 | `message` | raw message |
 | `trailers` | **derived** from `message` by the trailer parser; cannot be supplied separately |
 | `trailers_truncated` | `True` if the message exceeded the trailer limit |
-| `signature` | reserved, always `None` until Phase 5 |
+| `signature` | reserved, always `None` until signature verification is implemented |
 
 ## Trailer parser (`provenance/trailers.py`)
 

@@ -3,8 +3,10 @@
 > Status: **implemented (Phase 4)** as a GitHub Actions check: `commitguard ci
 > github`, the composite Action (`action.yml`), a workflow template
 > (`commitguard init --github`) and local guidance (`commitguard github setup`).
-> No GitHub App, Checks API, webhooks or PR comments. CommitGuard **cannot
-> configure or verify branch protection**.
+> PR comments are not implemented. A webhook-driven **GitHub App** that
+> publishes Check Runs is available as an alternative or complement, see
+> [github-app.md](github-app.md). CommitGuard **cannot configure or verify
+> branch protection**.
 
 ## Why a second layer
 
@@ -325,6 +327,21 @@ This is a GitHub platform property; CommitGuard cannot enforce it.
   commit), never by package name from an index.
 - Update pins deliberately: resolve the new tag to its commit, review the diff,
   update the SHA and the version comment together.
+
+## GitHub Actions or the GitHub App
+
+| | Actions (this page) | GitHub App ([github-app.md](github-app.md)) |
+|---|---|---|
+| Advantages | simple, repository-local, no service or credentials | centralised and organisation-wide, webhook-driven, Checks API, mandatory policy |
+| Limitations | runs inside CI; per-repository setup; a PR can edit its own workflow | needs deployment, App credentials and a webhook endpoint; no merge queue support yet |
+| Check name | `commitguard` | `commitguard-app` (pull requests), `commitguard-app/push` |
+
+Both use `ScanService` and the same trust model, so for the same commits,
+policy and rules they reach the same ALLOW, WARN or BLOCK decision (covered by
+`tests/integration/github/app/test_app_action_consistency.py`). If both run,
+pull requests show two checks. Require the one you rely on, and see
+[running both](github-app.md#running-the-app-and-the-action-together) for the
+recommended transition. CommitGuard never removes an existing workflow.
 
 ## Limitations
 

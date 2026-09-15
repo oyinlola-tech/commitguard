@@ -34,7 +34,8 @@ from commitguard.github.checks import build_check_output
 from commitguard.github.events import load_github_event
 from commitguard.security.sanitization import sanitize_for_terminal
 from commitguard.security.validation import validate_repository_path
-from commitguard.services.ci import DEFAULT_CI_MAX_COMMITS, run_ci
+from commitguard.services.ci import DEFAULT_CI_MAX_COMMITS
+from commitguard.services.scan import ScanRequest, ScanService
 from commitguard.utils.filesystem import atomic_write_text
 
 ci_app = typer.Typer(help="Server-side enforcement in CI systems.", no_args_is_help=True)
@@ -100,7 +101,15 @@ def github_command(
             event_name or os.environ.get("GITHUB_EVENT_NAME"),
             event_path or _env_path("GITHUB_EVENT_PATH"),
         )
-        run = run_ci(Repository.discover(), context, config_path=config, max_commits=max_commits)
+        result = ScanService().run(
+            ScanRequest(
+                repository=Repository.discover(),
+                context=context,
+                config_path=config,
+                max_commits=max_commits,
+                fail_on=fail_on,
+            )
+        )
     except Exception as exc:  # noqa: BLE001 - any failure must fail the check
         message = f"{type(exc).__name__}: {exc}" if not str(exc) else str(exc)
         if in_actions:
@@ -126,9 +135,9 @@ def github_command(
             error(text)
         raise typer.Exit(code=int(ExitCode.ERROR)) from None
 
-    report = run.report
+    report = result.report
     check = build_check_output(report, fail_on=fail_on)
-    failed = check.conclusion == "failure"
+    failed = not result.enforcement.allowed
 
     if output_format is OutputFormat.JSON:
         _emit(render_json(report))

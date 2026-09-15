@@ -32,11 +32,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The GitHub App service (webhooks, Checks API). Only RS256 signing of the App
+# JWT needs a third-party package; HTTP, WSGI and SQLite use the standard library.
+app = [
+    "cryptography>=42",
+]
 dev = [
     "pytest>=8.2",
     "ruff>=0.6",
     "mypy>=1.11",
     "types-PyYAML>=6.0",
+    "cryptography>=42",
 ]
 
 [project.scripts]
@@ -108,5 +114,5 @@ markers = [
     "network: needs internet access (PyPI); run with COMMITGUARD_NETWORK_TESTS=1",
     "phase2: behavioural specification for Phase 2 (AI attribution detection)",
     "phase3: behavioural specification for Phase 3 (Git hook enforcement)",
-    "phase5: behavioural specification for Phase 5 (security intelligence)",
+    "phase5: behavioural specification for Phase 5 (GitHub App)",
 ]

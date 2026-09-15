@@ -186,3 +186,82 @@ def test_ci_layers_do_not_reimplement_detection(package: str) -> None:
             if _matches(name, "commitguard.policies.evaluator"):
                 offenders.append(f"{_module_name(path)} imports {name}")
     assert offenders == []
+
+
+# --------------------------------------------------------------------------- #
+# Phase 5: GitHub App boundaries
+# --------------------------------------------------------------------------- #
+NETWORK_IMPORTS = (
+    "urllib.request",
+    "urllib.error",
+    "http.client",
+    "http.server",
+    "ssl",
+    "socket",
+    "socketserver",
+    "wsgiref.simple_server",
+)
+NETWORK_ALLOWED = {
+    # The only outbound HTTP client (fixed https API base, no redirects).
+    "commitguard.github.client": {"urllib.request", "urllib.error", "http.client", "ssl"},
+    # The only inbound HTTP server (development / single host).
+    "commitguard.github.server": {"socketserver", "wsgiref.simple_server"},
+}
+
+
+def test_network_access_is_confined_to_the_github_client_and_server() -> None:
+    violations = []
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        module = _module_name(path)
+        allowed = NETWORK_ALLOWED.get(module, set())
+        for name in _imports(path):
+            if any(_matches(name, n) for n in NETWORK_IMPORTS) and name not in allowed:
+                violations.append(f"{module} imports {name}")
+    assert violations == []
+
+
+def test_cryptography_is_only_used_for_app_authentication() -> None:
+    users = {
+        _module_name(path)
+        for path in PACKAGE_ROOT.rglob("*.py")
+        if any(_matches(name, "cryptography") for name in _imports(path))
+    }
+    # auth signs the App JWT; the CLI only probes that the optional extra is installed.
+    assert users <= {"commitguard.github.auth", "commitguard.cli.commands.github"}
+
+
+@pytest.mark.parametrize(
+    "module", ["services/scan.py", "services/enforcement.py", "services/audit.py", "services/ci.py"]
+)
+def test_shared_services_are_platform_neutral(module: str) -> None:
+    path = PACKAGE_ROOT / module
+    offenders = [
+        name
+        for name in _imports(path)
+        if _matches(name, "commitguard.github")
+        or _matches(name, "commitguard.cli")
+        or _matches(name, "commitguard.detectors")
+    ]
+    assert offenders == []
+
+
+def test_git_fetch_happens_only_in_the_mirror_manager() -> None:
+    offenders = [
+        _module_name(path)
+        for path in PACKAGE_ROOT.rglob("*.py")
+        if '"fetch"' in path.read_text(encoding="utf-8")
+        and _module_name(path) != "commitguard.github.repositories"
+    ]
+    assert offenders == []
+
+
+def test_cli_import_does_not_load_the_app_service_or_cryptography() -> None:
+    script = (
+        "import sys, commitguard.cli.app\n"
+        "names = ('cryptography', 'commitguard.github.app', 'commitguard.github.client', "
+        "'commitguard.github.auth', 'sqlite3')\n"
+        "print(sorted(n for n in names if n in sys.modules))"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[]"

@@ -1,16 +1,28 @@
-"""Audit logger.
+"""Audit logger: structured log line + optional storage for every event."""
 
-TODO(future): accept :class:`~commitguard.audit.models.AuditEvent` objects from
-the CLI after a decision is made and forward them to a configured
-:class:`~commitguard.audit.storage.AuditStorage`. Must be a no-op unless
-auditing is explicitly enabled in configuration.
-"""
+from collections.abc import Sequence
 
 from commitguard.audit.models import AuditEvent
+from commitguard.audit.storage import AuditStorage
+from commitguard.observability.logging import get_logger
+
+log = get_logger("commitguard.audit")
 
 
 class AuditLogger:
-    """Records audit events. Not implemented yet."""
+    def __init__(self, storages: Sequence[AuditStorage] = ()) -> None:
+        self._storages = tuple(storages)
 
     def record(self, event: AuditEvent) -> None:
-        raise NotImplementedError("audit logging is not implemented yet")
+        log.info(
+            "audit",
+            audit_type=event.type.value,
+            audit_event_id=event.event_id,
+            installation=event.installation_id,
+            repository_id=event.repository_id,
+            head_sha=event.head_sha,
+            action=event.action.value if event.action else None,
+            data=event.data,
+        )
+        for storage in self._storages:
+            storage.append_audit_event(event)

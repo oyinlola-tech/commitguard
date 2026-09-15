@@ -113,6 +113,9 @@ class CIReport(BaseModel):
     config_changes: tuple[str, ...] = Field(
         default=(), description="Config files changed by the evaluated commits (not applied)"
     )
+    policy_weakenings: tuple[str, ...] = Field(
+        default=(), description="Policies the evaluated commits' config would weaken (not applied)"
+    )
     notices: tuple[str, ...] = ()
 
 

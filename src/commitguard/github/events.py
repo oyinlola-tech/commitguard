@@ -1,4 +1,9 @@
-"""GitHub Actions event payloads -> :class:`~commitguard.ci.context.CIContext`.
+"""GitHub event payloads -> normalised events.
+
+``parse_github_event`` turns an Actions event (or an App webhook for the same
+event) into a :class:`~commitguard.ci.context.CIContext`; ``normalize_webhook``
+additionally validates GitHub App webhooks (installation, repository identity)
+and returns one of the typed events defined at the end of this module.
 
 Only the fields CommitGuard needs are read; raw JSON never travels further
 into the application. Payloads are untrusted input: SHAs are validated, ref
@@ -18,13 +23,16 @@ context of the base repository, and CommitGuard never needs that.
 """
 
 import json
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from commitguard.ci.context import CIContext, CIEventKind, CIProvider
-from commitguard.exceptions.base import CommitGuardError
+from commitguard.exceptions.base import CommitGuardError, UnsafeInputError
+from commitguard.github.errors import WebhookValidationError
+from commitguard.github.identifiers import MAX_GITHUB_ID, GitHubAccount, RepositoryRef
 from commitguard.utils.filesystem import read_bytes_limited
 
 MAX_EVENT_BYTES = 64 * 1024 * 1024
@@ -181,3 +189,217 @@ def load_github_event(event_name: str | None, event_path: Path | None) -> CICont
     except (OSError, ValueError, CommitGuardError) as exc:
         raise GitHubEventError(f"event payload could not be read as JSON: {exc}") from exc
     return parse_github_event(event_name, payload)
+
+
+# --------------------------------------------------------------------------- #
+# GitHub App webhooks -> normalised events
+# --------------------------------------------------------------------------- #
+# Webhook payloads for push and pull_request have the same shape as the
+# Actions event payloads above, so the commit range and trust decisions are
+# made by the same parser for both the GitHub Action and the GitHub App.
+
+SUPPORTED_WEBHOOK_EVENTS = frozenset(
+    {"installation", "installation_repositories", "pull_request", "push"}
+)
+PULL_REQUEST_SCAN_ACTIONS = frozenset({"opened", "synchronize", "reopened"})
+MAX_EVENT_REPOSITORIES = 50_000
+
+
+class InstallationAction(StrEnum):
+    CREATED = "created"
+    DELETED = "deleted"
+    SUSPEND = "suspend"
+    UNSUSPEND = "unsuspend"
+    NEW_PERMISSIONS_ACCEPTED = "new_permissions_accepted"
+
+
+class RepositoriesAction(StrEnum):
+    ADDED = "added"
+    REMOVED = "removed"
+
+
+class _Strict(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class InstallationEvent(_Strict):
+    kind: Literal["installation"] = "installation"
+    action: InstallationAction
+    installation_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    account: GitHubAccount
+    repository_selection: Literal["all", "selected"]
+    repositories: tuple[RepositoryRef, ...] = ()
+    permissions: dict[str, str] = {}
+
+
+class InstallationRepositoriesEvent(_Strict):
+    kind: Literal["installation_repositories"] = "installation_repositories"
+    action: RepositoriesAction
+    installation_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    account: GitHubAccount
+    repository_selection: Literal["all", "selected"]
+    added: tuple[RepositoryRef, ...] = ()
+    removed: tuple[RepositoryRef, ...] = ()
+
+
+class PushEvent(_Strict):
+    kind: Literal["push"] = "push"
+    installation_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    repository: RepositoryRef
+    context: CIContext
+
+
+class PullRequestEvent(_Strict):
+    kind: Literal["pull_request"] = "pull_request"
+    action: str = Field(pattern=r"^[a-z_]{1,64}$")
+    installation_id: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    repository: RepositoryRef
+    number: int = Field(gt=0, lt=MAX_GITHUB_ID)
+    merged: bool = False
+    base_changed: bool = False
+    context: CIContext
+
+
+class IgnoredEvent(_Strict):
+    kind: Literal["ignored"] = "ignored"
+    event: str
+    action: str | None = None
+    reason: str
+
+
+GitHubWebhookEvent = (
+    InstallationEvent | InstallationRepositoriesEvent | PushEvent | PullRequestEvent | IgnoredEvent
+)
+
+
+def _require(mapping: object, key: str, kind: type | tuple[type, ...], field: str) -> Any:
+    value = mapping.get(key) if isinstance(mapping, dict) else None
+    if not isinstance(value, kind) or (isinstance(value, bool) and kind is int):
+        raise WebhookValidationError(f"webhook payload field {field} is missing or invalid")
+    return value
+
+
+def _installation_id(payload: dict[str, Any]) -> int:
+    installation = _require(payload, "installation", dict, "installation")
+    value = _require(installation, "id", int, "installation.id")
+    if not 0 < value < MAX_GITHUB_ID:
+        raise WebhookValidationError("webhook payload field installation.id is invalid")
+    return int(value)
+
+
+def _account(installation: dict[str, Any]) -> GitHubAccount:
+    account = _require(installation, "account", dict, "installation.account")
+    return GitHubAccount(
+        id=_require(account, "id", int, "installation.account.id"),
+        login=_require(account, "login", str, "installation.account.login"),
+        type=_require(account, "type", str, "installation.account.type"),
+    )
+
+
+def _repository_list(payload: dict[str, Any], key: str) -> tuple[RepositoryRef, ...]:
+    items = payload.get(key)
+    if items is None:
+        return ()
+    if not isinstance(items, list) or len(items) > MAX_EVENT_REPOSITORIES:
+        raise WebhookValidationError(f"webhook payload field {key} is invalid")
+    return tuple(
+        RepositoryRef.from_full_name(
+            _require(item, "id", int, f"{key}[].id"),
+            _require(item, "full_name", str, f"{key}[].full_name"),
+        )
+        for item in items
+    )
+
+
+def _event_repository(payload: dict[str, Any]) -> RepositoryRef:
+    repository = _require(payload, "repository", dict, "repository")
+    ref = RepositoryRef.from_full_name(
+        _require(repository, "id", int, "repository.id"),
+        _require(repository, "full_name", str, "repository.full_name"),
+    )
+    owner = repository.get("owner")
+    login = owner.get("login") if isinstance(owner, dict) else None
+    if repository.get("name") not in (None, ref.name) or login not in (None, ref.owner):
+        raise WebhookValidationError("webhook repository name fields are inconsistent")
+    return ref
+
+
+def _permissions_field(installation: dict[str, Any]) -> dict[str, str]:
+    raw = installation.get("permissions") or {}
+    if not isinstance(raw, dict) or len(raw) > 200:
+        raise WebhookValidationError("webhook payload field installation.permissions is invalid")
+    return {
+        k: v
+        for k, v in raw.items()
+        if isinstance(k, str) and isinstance(v, str) and len(k) <= 64 and len(v) <= 16
+    }
+
+
+def normalize_webhook(event_name: str, payload: object) -> GitHubWebhookEvent:
+    """Validate a verified webhook payload and reduce it to a normalised event.
+
+    Raises :class:`WebhookValidationError` (HTTP 400) when a supported event is
+    missing mandatory fields; unsupported events are returned as
+    :class:`IgnoredEvent` so GitHub is not told to retry them.
+    """
+    if not isinstance(payload, dict):
+        raise WebhookValidationError("webhook payload must be a JSON object")
+    raw_action = payload.get("action")
+    action = raw_action if isinstance(raw_action, str) and len(raw_action) <= 64 else None
+    if event_name not in SUPPORTED_WEBHOOK_EVENTS:
+        reason = "ping" if event_name == "ping" else "event not used by CommitGuard"
+        return IgnoredEvent(event=event_name, action=action, reason=reason)
+    try:
+        if event_name == "installation":
+            if action not in set(InstallationAction):
+                return IgnoredEvent(event=event_name, action=action, reason="action not used")
+            installation = _require(payload, "installation", dict, "installation")
+            return InstallationEvent(
+                action=InstallationAction(action),
+                installation_id=_installation_id(payload),
+                account=_account(installation),
+                repository_selection=installation.get("repository_selection", "selected"),
+                repositories=_repository_list(payload, "repositories"),
+                permissions=_permissions_field(installation),
+            )
+        if event_name == "installation_repositories":
+            if action not in set(RepositoriesAction):
+                return IgnoredEvent(event=event_name, action=action, reason="action not used")
+            installation = _require(payload, "installation", dict, "installation")
+            return InstallationRepositoriesEvent(
+                action=RepositoriesAction(action),
+                installation_id=_installation_id(payload),
+                account=_account(installation),
+                repository_selection=_require(
+                    payload, "repository_selection", str, "repository_selection"
+                ),
+                added=_repository_list(payload, "repositories_added"),
+                removed=_repository_list(payload, "repositories_removed"),
+            )
+        installation_id = _installation_id(payload)
+        repository = _event_repository(payload)
+        context = parse_github_event(event_name, payload)
+        if context.repository != repository.full_name:
+            raise WebhookValidationError("webhook repository fields are inconsistent")
+        if event_name == "push":
+            return PushEvent(
+                installation_id=installation_id, repository=repository, context=context
+            )
+        if action is None:
+            raise WebhookValidationError("webhook payload field action is missing or invalid")
+        pull_request = _require(payload, "pull_request", dict, "pull_request")
+        changes = payload.get("changes")
+        return PullRequestEvent(
+            action=action,
+            installation_id=installation_id,
+            repository=repository,
+            number=_require(pull_request, "number", int, "pull_request.number"),
+            merged=pull_request.get("merged") is True,
+            base_changed=isinstance(changes, dict) and "base" in changes,
+            context=context,
+        )
+    except GitHubEventError as exc:
+        raise WebhookValidationError(str(exc)) from None
+    except (ValidationError, UnsafeInputError, ValueError) as exc:
+        detail = "invalid identifiers" if isinstance(exc, UnsafeInputError) else "invalid fields"
+        raise WebhookValidationError(f"malformed {event_name} webhook payload ({detail})") from None

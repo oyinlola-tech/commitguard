@@ -6,6 +6,7 @@ against :mod:`commitguard.rules.models`. Built-in rules ship inside the wheel
 repository's top-level ``rules/`` directory.
 """
 
+import hashlib
 from functools import cache
 from pathlib import Path
 
@@ -73,6 +74,18 @@ def load_rules(directory: Path) -> CompiledRules:
         raise RulesError(_format(exc), path=directory) from exc
     except ValueError as exc:  # conflicting aliases detected while compiling
         raise RulesError(str(exc), path=directory) from exc
+
+
+@cache
+def builtin_rules_fingerprint() -> str:
+    """SHA-256 over the built-in rule files: the rules version recorded with each scan."""
+    directory = builtin_rules_dir()
+    digest = hashlib.sha256()
+    for name in sorted((AI_IDENTITIES_FILE, AI_DOMAINS_FILE, BOT_IDENTITIES_FILE, PATTERNS_FILE)):
+        data = read_text_limited(directory / name, max_bytes=MAX_RULE_FILE_BYTES).encode("utf-8")
+        digest.update(f"{name}\0{len(data)}\0".encode())
+        digest.update(data)
+    return digest.hexdigest()
 
 
 @cache

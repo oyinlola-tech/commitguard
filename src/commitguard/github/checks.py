@@ -1,10 +1,12 @@
-"""Check-run shaped output built from a report.
+"""Check output built from a report, for both GitHub integrations.
 
-This is the data a future GitHub Checks API integration (or a GitHub App)
-would send: a title, a Markdown summary and annotations. Today it feeds the
-Actions job summary and workflow annotations; nothing here talks to GitHub.
-Findings already carry rule ID, severity, message, evidence and commit, so a
-SARIF exporter can be built from the same report later.
+* ``build_check_output`` feeds the Actions job summary and workflow annotations.
+* The Check Run types at the end of this module are what the GitHub App sends
+  to the Checks API (content rendered by :mod:`commitguard.github.check_runs`).
+
+Nothing here talks to GitHub. Findings already carry rule ID, severity,
+message, evidence and commit, so a SARIF exporter can be built from the same
+report later.
 """
 
 from enum import StrEnum
@@ -122,3 +124,87 @@ def build_check_output(report: ScanReport, *, fail_on: Action = Action.BLOCK) ->
         annotations=tuple(annotations),
         omitted_annotations=omitted,
     )
+
+
+# --------------------------------------------------------------------------- #
+# GitHub App Check Runs (Checks API)
+# --------------------------------------------------------------------------- #
+# The App publishes its own check, separate from the Action's "commitguard" job:
+#
+# * "commitguard-app"       - pull requests: the check to require in branch protection;
+# * "commitguard-app/push"  - pushes: informational (the commits are already on GitHub).
+#
+# Separate names keep a push scan (only the newly pushed commits) from ever
+# replacing a pull request scan (all commits of the PR) on the same SHA.
+#
+# Commit metadata has no file or line, so no annotations are sent: findings are
+# listed in the summary and text instead of being attached to invented locations.
+
+APP_CHECK_NAME = "commitguard-app"
+APP_PUSH_CHECK_NAME = "commitguard-app/push"
+MAX_CHECK_FINDINGS = 20
+MAX_CHECK_TITLE_CHARS = 200
+MAX_CHECK_TEXT_CHARS = 60_000  # GitHub limit: 65535 characters for summary and text
+
+
+class CheckRunStatus(StrEnum):
+    QUEUED = "queued"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+class CheckRunConclusion(StrEnum):
+    SUCCESS = "success"
+    FAILURE = "failure"
+    NEUTRAL = "neutral"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+    ACTION_REQUIRED = "action_required"
+
+
+class CheckRunOutput(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    title: str
+    summary: str
+    text: str | None = None
+
+    def to_api(self) -> dict[str, str]:
+        output = {
+            "title": self.title[:MAX_CHECK_TITLE_CHARS],
+            "summary": _clip(self.summary),
+        }
+        if self.text:
+            output["text"] = _clip(self.text)
+        return output
+
+
+def _clip(text: str) -> str:
+    if len(text) <= MAX_CHECK_TEXT_CHARS:
+        return text
+    return text[: MAX_CHECK_TEXT_CHARS - 40] + "\n\n_Output truncated by CommitGuard._\n"
+
+
+def check_run_create_payload(
+    *, name: str, head_sha: str, external_id: str, output: CheckRunOutput
+) -> dict[str, object]:
+    return {
+        "name": name,
+        "head_sha": head_sha,
+        "status": CheckRunStatus.QUEUED.value,
+        "external_id": external_id,
+        "output": output.to_api(),
+    }
+
+
+def check_run_update_payload(
+    status: CheckRunStatus,
+    output: CheckRunOutput,
+    conclusion: CheckRunConclusion | None = None,
+) -> dict[str, object]:
+    if (status is CheckRunStatus.COMPLETED) != (conclusion is not None):
+        raise ValueError("a conclusion is required exactly when the check run is completed")
+    payload: dict[str, object] = {"status": status.value, "output": output.to_api()}
+    if conclusion is not None:
+        payload["conclusion"] = conclusion.value
+    return payload

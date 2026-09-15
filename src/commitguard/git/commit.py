@@ -46,7 +46,8 @@ class Commit(BaseModel):
         default=False, description="True if the message had more trailers than can be analysed"
     )
     signature: SignatureInfo | None = Field(
-        default=None, description="Not collected yet (Phase 5); None means unknown"
+        default=None,
+        description="Not collected yet (security intelligence phase); None means unknown",
     )
 
     @model_validator(mode="before")

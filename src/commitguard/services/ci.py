@@ -23,23 +23,35 @@ push, ref deleted               nothing                     -
 
 The evaluated commits' own ``.commitguard.yaml`` is never applied; a change to
 it is reported as a notice and takes effect once it is on the trusted branch.
-Detection rules always come from the installed CommitGuard package.
+A change that would *weaken* a policy (disable it or lower its action) is
+reported as a security policy modification. Detection rules always come from
+the installed CommitGuard package. A central service may add a mandatory
+policy (:mod:`commitguard.policies.mandatory`) that no repository can weaken.
+
+Planning (:func:`plan_ci`) and execution (:func:`execute_ci_plan`) are separate
+so a service can report the commit count before analysis starts.
 """
 
 from pydantic import BaseModel, ConfigDict
 
 from commitguard.ci.context import CIContext, CIEventKind
 from commitguard.config.sources import (
+    MandatoryPolicy,
     PolicySource,
     PolicySourceKind,
     config_differs,
+    load_config_at_revision,
     load_policy_source,
 )
 from commitguard.core.context import ScanTrigger
+from commitguard.exceptions.configuration import ConfigurationError
 from commitguard.git.ranges import CommitRange, require_commit, resolve_commit_range
 from commitguard.git.repository import Repository
 from commitguard.policies.loader import build_policy_set
+from commitguard.policies.mandatory import apply_mandatory_policies
+from commitguard.policies.model import PolicySet
 from commitguard.rules.matcher import CompiledRules
+from commitguard.security.hashing import fingerprint
 from commitguard.services.analysis import Analyzer, build_report
 from commitguard.services.reports import CIReport, ScanReport
 
@@ -52,6 +64,7 @@ class CIPlan(BaseModel):
     range: CommitRange
     policy_source: PolicySource
     config_changes: tuple[str, ...] = ()
+    policy_weakenings: tuple[str, ...] = ()
     notices: tuple[str, ...] = ()
 
 
@@ -61,6 +74,71 @@ class CIRun(BaseModel):
     context: CIContext
     plan: CIPlan
     report: ScanReport
+    policy_fingerprint: str  # effective policies (trusted config + mandatory floor)
+
+
+def policy_set_fingerprint(policies: PolicySet) -> str:
+    parts: list[str] = []
+    for policy in policies.values():
+        parts += [policy.id, str(policy.enabled), policy.action.value]
+    return fingerprint(parts)
+
+
+def policy_weakenings(
+    repository: Repository, trusted: str, head: str, *, config_path: str | None = None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Policies the evaluated commits' configuration would weaken, plus notices.
+
+    Only used for reporting: the evaluated commits' configuration is never applied.
+    """
+    try:
+        before = build_policy_set(
+            *load_config_at_revision(repository, trusted, config_path=config_path).configs
+        )
+    except ConfigurationError:
+        return (), ()  # the trusted configuration itself is invalid: the scan fails later
+    try:
+        after = build_policy_set(
+            *load_config_at_revision(repository, head, config_path=config_path).configs
+        )
+    except ConfigurationError:
+        return (), (
+            "the evaluated commits contain an invalid or missing CommitGuard configuration; "
+            "it was not applied",
+        )
+    weakened = []
+    for policy_id, old in before.items():
+        new = after[policy_id]
+        if old.enabled and not new.enabled:
+            weakened.append(f"{policy_id}: {old.action.value} -> disabled")
+        elif old.enabled and new.action.rank < old.action.rank:
+            weakened.append(f"{policy_id}: {old.action.value} -> {new.action.value}")
+    return tuple(weakened), ()
+
+
+def _config_notices(
+    repository: Repository,
+    trusted: str,
+    head: str,
+    changes: tuple[str, ...],
+    label: str,
+    config_path: str | None,
+) -> tuple[tuple[str, ...], list[str]]:
+    if not changes:
+        return (), []
+    notices = [
+        f"{', '.join(changes)} is changed by the evaluated commits; the policy from the "
+        f"{label} was used. Policy changes take effect after they reach the trusted branch."
+    ]
+    weakened, extra = policy_weakenings(repository, trusted, head, config_path=config_path)
+    notices.extend(extra)
+    if weakened:
+        notices.append(
+            "Security policy modification detected: the evaluated commits attempt to weaken "
+            f"an existing CommitGuard policy ({'; '.join(weakened)}). The trusted policy was "
+            "used; additional authorization may be required."
+        )
+    return weakened, notices
 
 
 def _default_branch_tip(repository: Repository, context: CIContext) -> str | None:
@@ -103,13 +181,16 @@ def plan_ci(
             config_path=config_path,
         )
         changes = tuple(config_differs(repository, base, head))
-        if changes:
-            notices.append(
-                f"{', '.join(changes)} is changed by the evaluated commits; the policy from the "
-                f"{label} was used. Policy changes take effect after they are merged."
-            )
+        weakened, config_notices = _config_notices(
+            repository, base, head, changes, label, config_path
+        )
+        notices.extend(config_notices)
         return CIPlan(
-            range=commit_range, policy_source=source, config_changes=changes, notices=tuple(notices)
+            range=commit_range,
+            policy_source=source,
+            config_changes=changes,
+            policy_weakenings=weakened,
+            notices=tuple(notices),
         )
 
     # push
@@ -170,34 +251,48 @@ def plan_ci(
                 "no trusted commit to read policy from or to limit the range; analysing all "
                 "commits reachable from the pushed commit with built-in default policies"
             )
-    if changes:
-        notices.append(
-            f"{', '.join(changes)} is changed by the pushed commits; the policy from the "
-            f"{source.description} was used."
+    push_weakened: tuple[str, ...] = ()
+    if changes and source.revision is not None:
+        push_weakened, push_notices = _config_notices(
+            repository, source.revision, pushed, changes, source.description, config_path
         )
+        notices.extend(push_notices)
     commit_range = resolve_commit_range(
         repository, pushed, exclude, base=exclude[0] if exclude else None, max_count=max_commits
     )
     return CIPlan(
-        range=commit_range, policy_source=source, config_changes=changes, notices=tuple(notices)
+        range=commit_range,
+        policy_source=source,
+        config_changes=changes,
+        policy_weakenings=push_weakened,
+        notices=tuple(notices),
     )
 
 
-def run_ci(
+def execute_ci_plan(
     repository: Repository,
     context: CIContext,
+    plan: CIPlan,
     *,
-    config_path: str | None = None,
-    max_commits: int = DEFAULT_CI_MAX_COMMITS,
     rules: CompiledRules | None = None,
+    mandatory: MandatoryPolicy | None = None,
 ) -> CIRun:
-    plan = plan_ci(repository, context, config_path=config_path, max_commits=max_commits)
+    """Analyse the planned commits with the planned (trusted) policy."""
     loaded = load_policy_source(repository, plan.policy_source)
-    analyzer = Analyzer.create(build_policy_set(*loaded.configs), rules)
+    policies = build_policy_set(*loaded.configs)
+    extra_sources: tuple[str, ...] = ()
+    if mandatory is not None:
+        policies = apply_mandatory_policies(policies, mandatory.config)
+        extra_sources = (f"mandatory: {mandatory.description}",)
+    analyzer = Analyzer.create(policies, rules)
+    # Commits are read and analysed in batches; only the compact reports are kept.
     reports = [
         analyzer.analyze(commit, ScanTrigger.CI)
-        for commit in repository.read_commits(list(plan.range.commits))
+        for commit in repository.iter_commits(plan.range.commits)
     ]
+    policy_source = str(plan.policy_source)
+    if mandatory is not None:
+        policy_source += f" + mandatory policy ({mandatory.description})"
     ci_report = CIReport(
         provider=context.provider.value,
         event=context.event_name,
@@ -207,8 +302,9 @@ def run_ci(
         from_fork=context.from_fork,
         base_sha=plan.range.base,
         head_sha=plan.range.head,
-        policy_source=str(plan.policy_source),
+        policy_source=policy_source,
         config_changes=plan.config_changes,
+        policy_weakenings=plan.policy_weakenings,
         notices=plan.notices,
     )
     target = (
@@ -223,5 +319,24 @@ def run_ci(
         trigger=ScanTrigger.CI,
         config=loaded,
         ci=ci_report,
+        extra_config_sources=extra_sources,
     )
-    return CIRun(context=context, plan=plan, report=report)
+    return CIRun(
+        context=context,
+        plan=plan,
+        report=report,
+        policy_fingerprint=policy_set_fingerprint(policies),
+    )
+
+
+def run_ci(
+    repository: Repository,
+    context: CIContext,
+    *,
+    config_path: str | None = None,
+    max_commits: int = DEFAULT_CI_MAX_COMMITS,
+    rules: CompiledRules | None = None,
+    mandatory: MandatoryPolicy | None = None,
+) -> CIRun:
+    plan = plan_ci(repository, context, config_path=config_path, max_commits=max_commits)
+    return execute_ci_plan(repository, context, plan, rules=rules, mandatory=mandatory)

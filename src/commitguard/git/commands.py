@@ -15,7 +15,7 @@ Callers that pass revisions must place them after ``--end-of-options``.
 import re
 import shutil
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import cache
 from pathlib import Path
 
@@ -52,18 +52,26 @@ def run_git(
     check: bool = True,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     input_bytes: bytes | None = None,
+    extra_env: Mapping[str, str] | None = None,
 ) -> CommandResult:
     """Run ``git <args>`` with CommitGuard's hardening applied.
 
     With ``check=True`` a non-zero exit raises :class:`GitCommandError` whose
-    message contains sanitised stderr only.
+    message contains sanitised stderr only. ``extra_env`` may add variables but
+    never replace the hardening in :data:`GIT_ENV_OVERRIDES`.
     """
     argv = [git_executable(), "--no-pager", *args]
+    env = dict(GIT_ENV_OVERRIDES)
+    if extra_env:
+        clash = sorted(set(extra_env) & set(GIT_ENV_OVERRIDES))
+        if clash:
+            raise ValueError(f"extra_env must not override git hardening: {', '.join(clash)}")
+        env.update(extra_env)
     try:
         result = run_command(
             argv,
             cwd=cwd,
-            env_overrides=GIT_ENV_OVERRIDES,
+            env_overrides=env,
             timeout=timeout,
             input_bytes=input_bytes,
         )

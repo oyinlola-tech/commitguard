@@ -22,6 +22,7 @@ from pathlib import Path
 
 from commitguard.core.decision import Action
 from commitguard.github.checks import AnnotationLevel, CheckOutput
+from commitguard.github.markdown import escape_markdown
 from commitguard.security.sanitization import sanitize_for_terminal
 from commitguard.services.reports import ScanReport
 
@@ -80,14 +81,7 @@ def commands_stopped(emit: Callable[[str], None]) -> Iterator[None]:
         emit(f"::{token}::")
 
 
-def _md(value: str, limit: int = 200) -> str:
-    """Escape untrusted text for a Markdown table cell."""
-    text = sanitize_for_terminal(value, max_length=limit)
-    for char in "\\`*_{}[]()#+-.!~":  # Markdown first: entities below contain '#'
-        text = text.replace(char, "\\" + char)
-    for char, entity in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ("|", "&#124;")):
-        text = text.replace(char, entity)
-    return text
+_md = escape_markdown
 
 
 def render_step_summary(report: ScanReport, output: CheckOutput) -> str:

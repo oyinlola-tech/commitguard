@@ -58,7 +58,7 @@ everything below Git's scissors line (the `git commit -v` diff) is ignored.
 check; it also catches commits created with `--no-verify`, by `git merge`,
 `git rebase`, `git cherry-pick`, or tools that do not run commit hooks.
 
-`pre-commit` has no staged-content policies yet (secret detection is Phase 5).
+`pre-commit` has no staged-content policies yet (secret detection is planned for the security intelligence phase).
 
 ## Outgoing commit detection (pre-push)
 

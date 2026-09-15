@@ -6,6 +6,55 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added (Phase 5 — GitHub App and centralised enforcement)
+
+- GitHub App service (`commitguard github serve`, optional `app` extra):
+  - WSGI webhook endpoint `POST /webhooks/github` with `GET /health` and `GET /ready`;
+  - HMAC-SHA256 signature verification, delivery-ID replay protection, size,
+    content-type, JSON (duplicate keys, depth) and per-client rate limits;
+  - typed events for `installation`, `installation_repositories`, `push` and `pull_request`.
+- App authentication: RS256 JWTs from the App ID and private key (fails closed
+  on bad keys); installation tokens down-scoped to one repository and least
+  privilege, cached in memory only.
+- Small GitHub REST client:
+  - HTTPS only, no redirects, same-origin pagination;
+  - normalised errors (401/403/404/409/422/429/5xx/timeouts);
+  - bounded retries and rate-limit backoff.
+- Installation lifecycle and authorization: install, uninstall, suspend,
+  repositories added and removed, and authorization by repository ID before
+  every scan.
+- Metadata-only partial Git mirrors: no checkout, hooks or blobs, and no lazy
+  fetch during analysis. Requires Git 2.45+.
+- `ScanService` (`ScanRequest` → `ScanResult` with statistics and a
+  deterministic scan ID) and `EnforcementService` (exit codes and check
+  conclusions). `commitguard ci github` now uses them.
+- Check Runs `commitguard-app` (pull requests) and `commitguard-app/push`:
+  - queued → in_progress → completed lifecycle, with bounded Markdown output;
+  - ownership-guarded writes, so a stale scan never overwrites a newer result;
+  - the exact scanned SHA, verified before publishing.
+- SQLite state store for deliveries, installations, jobs, check ownership and
+  audit events: tenant-scoped reads and configurable retention.
+- Event queue abstraction with an in-process implementation, durable job recovery.
+- Audit events (`audit.models`, `services.audit`); structured JSON logs with
+  correlation IDs and secret redaction (`observability`); in-memory metrics.
+- Mandatory policy floor (`policies.mandatory`,
+  `COMMITGUARD_APP_MANDATORY_POLICY_FILE`) that repository configuration cannot weaken.
+- Policy weakening detection: CI reports and Check Runs flag commits that would
+  disable or relax a trusted policy.
+- `commitguard github validate` (configuration, Git version, authentication,
+  permissions, events, installation access) and `commitguard github webhook-test`.
+- Docs: `github-app.md`, `deployment.md`; threat model, configuration,
+  architecture and enforcement docs updated.
+
+### Changed (Phase 5)
+
+- `services.ci` split into `plan_ci` and `execute_ci_plan`. Commits are
+  analysed in batches (`Repository.iter_commits`).
+- `run_git` accepts additional (never overriding) environment variables;
+  `Repository` can carry a per-repository Git environment.
+- `CIReport` gains `policy_weakenings`; reports may list a `mandatory:` config source.
+- Roadmap: security intelligence (signatures, secret detection) moves after the dashboard.
+
 ### Added (Phase 4 — GitHub server-side enforcement)
 
 - `commitguard ci github`: analyses commits introduced by `pull_request`
