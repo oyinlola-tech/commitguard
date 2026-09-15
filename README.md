@@ -1,16 +1,79 @@
-# CommitGuard
+<div align="center">
 
-**Git commit provenance and contribution policy enforcement.**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.png">
+  <img alt="CommitGuard: Git commit provenance and contribution policy enforcement" src="docs/images/banner-light.png" width="100%">
+</picture>
 
-> **Status: pre-alpha (Phase 7 — notifications, merge queue, re-runs, policy recovery).**
+<p>
+  <a href="https://github.com/oyinlola-tech/commitguard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/oyinlola-tech/commitguard/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/oyinlola-tech/commitguard/actions/workflows/security.yml"><img alt="Security" src="https://github.com/oyinlola-tech/commitguard/actions/workflows/security.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-101816?style=flat"></a>
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-101816?style=flat&logo=python&logoColor=white">
+  <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-855700?style=flat">
+</p>
+
+<p>
+  <a href="#see-it-work"><strong>See it work</strong></a> ·
+  <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="#run-the-demo-locally"><strong>Run the demo</strong></a> ·
+  <a href="#test-evidence"><strong>Test evidence</strong></a> ·
+  <a href="#documentation"><strong>Docs</strong></a>
+</p>
+
+<a href="#built-with"><img alt="Python, TypeScript, React, Vite, Vitest, SQLite, Node.js, Git, GitHub Actions" src="https://skillicons.dev/icons?i=py,ts,react,vite,vitest,sqlite,nodejs,git,githubactions&perline=9" height="40"></a>
+
+</div>
+
+<br>
+
+> [!NOTE]
+> **Pre-alpha, Phase 7: notifications, merge queue, re-runs and policy recovery.**
 > Local Git hooks stop violations during `git commit` / `git push`; a GitHub
 > Actions check and a webhook-driven GitHub App run the same engine on pull
 > requests, pushes and merge queues; a web dashboard explains what was scanned,
 > what is blocked and why, and notifies the people who need to act.
-> **A failing GitHub check blocks merges only when branch protection requires it** —
+
+> [!IMPORTANT]
+> **A failing GitHub check blocks merges only when branch protection requires it.**
 > CommitGuard cannot configure or verify that. See [What works today](#what-works-today).
 
----
+## See it work
+
+Everything below was produced by running CommitGuard, not typed by hand: the
+terminal images come from real commands in a fresh repository, and the dashboard
+screenshots come from the demo stack, which replays a full lifecycle through
+the real services (see [Run the demo locally](#run-the-demo-locally)).
+
+**1. A local hook stops the commit.** Nothing is committed; the message is kept.
+
+<img alt="git commit blocked by the CommitGuard commit-msg hook" src="docs/images/cli-commit-blocked.png" width="820">
+
+**2. The same engine scans a commit range, as the GitHub check does.** Exit code 1 fails CI.
+
+<img alt="commitguard check and scan output for a blocked commit" src="docs/images/cli-scan-blocked.png" width="820">
+
+**3. The dashboard explains what was blocked, and why.**
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img alt="CommitGuard dashboard overview" src="docs/images/overview.png" width="100%">
+</picture>
+
+<table>
+  <tr>
+    <td width="50%"><img alt="Violation detail with evidence" src="docs/images/violation.png"><br><sub><b>Violation</b>: the exact trailer, the matched rule data and remediation; never file contents.</sub></td>
+    <td width="50%"><img alt="Scan executions after a GitHub re-run" src="docs/images/scan-executions.png"><br><sub><b>Re-runs</b>: a GitHub "Re-run" is a numbered execution; earlier results are kept.</sub></td>
+  </tr>
+  <tr>
+    <td><img alt="Notification center" src="docs/images/notifications.png"><br><sub><b>Notifications</b>: blocked violations, policy changes, rollbacks and installation outages.</sub></td>
+    <td><img alt="Repository enforcement evidence" src="docs/images/repository.png"><br><sub><b>Repositories</b>: protection is shown only with evidence from GitHub.</sub></td>
+  </tr>
+  <tr>
+    <td><img alt="Policy version history and rollback" src="docs/images/policy-rollback.png"><br><sub><b>Policy rollback</b>: immutable versions; a rollback is a new, audited version.</sub></td>
+    <td><img alt="Merge queue validation" src="docs/images/merge-queue.png"><br><sub><b>Merge queue</b>: the merge group commit itself is validated.</sub></td>
+  </tr>
+</table>
 
 ## What CommitGuard is
 
@@ -376,6 +439,61 @@ Not yet: PR comments, SARIF, signature verification, secret detection. The App a
 been tested against github.com itself (only an offline model of the API and
 OAuth flow plus real Git).
 
+## Run the demo locally
+
+The demo stack runs the real API, services and dashboard against an offline
+model of GitHub, then replays a complete lifecycle: a blocked pull request and
+its fix, a GitHub re-run, a merge group, a scan error, a policy change and its
+rollback, an App suspension and reconnection, and notification delivery.
+
+```bash
+./scripts/install-dev.sh && source .venv/bin/activate
+cd web && npm ci && npm run build && cd ..
+python tests/e2e/dashboard_harness.py --demo      # http://localhost:4173
+```
+
+Open <http://localhost:4173> and choose **Continue with GitHub** (signs in as
+the owner, `alice`), or sign in as another role:
+
+| User | Role | Sign-in link |
+|---|---|---|
+| `alice` | owner | <http://localhost:4173/demo/sign-in?user=501> |
+| `ada` | admin | <http://localhost:4173/demo/sign-in?user=504> |
+| `sam` | security manager | <http://localhost:4173/demo/sign-in?user=503> |
+| `victor` | viewer | <http://localhost:4173/demo/sign-in?user=502> |
+
+The demo keeps its data in a temporary directory, never contacts github.com,
+and records e-mail and webhook deliveries in memory instead of sending them.
+
+## Test evidence
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/tests-dark.png">
+  <img alt="Test evidence: pytest, Vitest and Playwright results with static checks" src="docs/images/tests-light.png" width="100%">
+</picture>
+
+The card is rendered from [docs/evidence/tests.json](docs/evidence/tests.json),
+which [scripts/readme_evidence.py](scripts/readme_evidence.py) writes from the
+real test runs and checks; the live status of every push is the
+[CI badge](https://github.com/oyinlola-tech/commitguard/actions/workflows/ci.yml).
+To regenerate the evidence, terminal images and screenshots:
+
+```bash
+python scripts/readme_evidence.py          # runs all suites and checks, writes docs/evidence/
+cd web && npm run build && npm run screenshots   # renders docs/images/
+```
+
+## Built with
+
+| | |
+|---|---|
+| **Core and GitHub App** | ![Python](https://img.shields.io/badge/Python_3.12+-3776AB?style=flat-square&logo=python&logoColor=white) ![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white) ![Git](https://img.shields.io/badge/Git-F05032?style=flat-square&logo=git&logoColor=white) ![GitHub Apps](https://img.shields.io/badge/GitHub_App-181717?style=flat-square&logo=github&logoColor=white) ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white) |
+| **Dashboard** | ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white) ![React](https://img.shields.io/badge/React_19-20232A?style=flat-square&logo=react&logoColor=61DAFB) ![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white) ![TanStack Query](https://img.shields.io/badge/TanStack_Query-FF4154?style=flat-square&logo=reactquery&logoColor=white) |
+| **Quality** | ![pytest](https://img.shields.io/badge/pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white) ![Vitest](https://img.shields.io/badge/Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white) ![Playwright](https://img.shields.io/badge/Playwright_+_axe-2EAD33?style=flat-square) ![Ruff](https://img.shields.io/badge/Ruff-D7FF64?style=flat-square&logo=ruff&logoColor=black) ![mypy](https://img.shields.io/badge/mypy_strict-2A6DB2?style=flat-square) |
+
+No AI or LLM API is called anywhere: detection is deterministic, offline and
+driven by rule data.
+
 ## Development
 
 Requires Python 3.12+ and Git 2.31+.
@@ -395,39 +513,16 @@ npm run build && npm run e2e      # browser tests against the full stack
 
 ## Roadmap
 
-**Phase 1 — Foundation** ✔
-Project structure · CLI · configuration · Git abstraction · commit model ·
-detector interface · policy interface · testing foundation
-
-**Phase 2 — AI attribution detection** ✔
-`Co-authored-by` parsing · AI identity rules · AI domain rules · identity
-detection · findings · blocking decisions
-
-**Phase 3 — Git enforcement** ✔
-`pre-commit` · `commit-msg` · `pre-push` · hook installation · hook management ·
-local repository enforcement
-
-**Phase 4 — GitHub enforcement** ✔
-GitHub Actions check · pull request, merge queue and push scanning · trusted policy source ·
-branch protection guidance
-
-**Phase 5 — GitHub App** ✔
-Webhooks · App authentication · installation lifecycle · Check Runs · ScanService ·
-EnforcementService · audit events · mandatory policy · deployment docs
-
-**Phase 6 — Security dashboard and control plane** ✔
-GitHub sign-in · roles and tenant isolation · repositories and enforcement evidence ·
-scans · violation lifecycle · versioned organization policy · rules · audit log ·
-installations · `/api/v1`
-
-**Phase 7 — Notifications, merge queue, re-runs and policy recovery** ✔ *(current)*
-Notification outbox · in-app, e-mail and signed webhook delivery · preferences ·
-deduplication and retries · merge group validation · check re-runs and scan
-executions · event processing records · policy rollback and diff · recovery
-
-**Later — Security intelligence**
-Advanced bot detection · signed commit verification · secret detection ·
-provenance analysis · SARIF · advanced rules
+| Phase | Scope | Status |
+|---|---|---|
+| **1. Foundation** | project structure · CLI · configuration · Git abstraction · commit model · detector and policy interfaces · testing foundation | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
+| **2. AI attribution detection** | `Co-authored-by` parsing · AI identity and domain rules · identity detection · findings · blocking decisions | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
+| **3. Git enforcement** | `pre-commit` · `commit-msg` · `pre-push` · hook installation and management · local enforcement | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
+| **4. GitHub enforcement** | GitHub Actions check · pull request, merge queue and push scanning · trusted policy source · branch protection guidance | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
+| **5. GitHub App** | webhooks · App authentication · installation lifecycle · Check Runs · ScanService · EnforcementService · audit events · mandatory policy | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
+| **6. Security dashboard and control plane** | GitHub sign-in · roles and tenant isolation · enforcement evidence · scans · violation lifecycle · versioned organization policy · audit log · `/api/v1` | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
+| **7. Notifications, merge queue, re-runs, recovery** | notification outbox · in-app, e-mail and signed webhooks · deduplication and retries · merge group validation · scan executions · policy rollback and diff | ![current](https://img.shields.io/badge/current-1a5bb3?style=flat-square) |
+| **Later: security intelligence** | advanced bot detection · signed commit verification · secret detection · provenance analysis · SARIF | ![planned](https://img.shields.io/badge/planned-55605c?style=flat-square) |
 
 ## Documentation
 
