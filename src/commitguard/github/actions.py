@@ -83,10 +83,10 @@ def commands_stopped(emit: Callable[[str], None]) -> Iterator[None]:
 def _md(value: str, limit: int = 200) -> str:
     """Escape untrusted text for a Markdown table cell."""
     text = sanitize_for_terminal(value, max_length=limit)
+    for char in "\\`*_{}[]()#+-.!~":  # Markdown first: entities below contain '#'
+        text = text.replace(char, "\\" + char)
     for char, entity in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ("|", "&#124;")):
         text = text.replace(char, entity)
-    for char in "\\`*_{}[]()#+-.!~":
-        text = text.replace(char, "\\" + char)
     return text
 
 

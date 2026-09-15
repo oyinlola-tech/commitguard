@@ -203,3 +203,13 @@ def run_ci_process(
 @pytest.fixture
 def run_ci():  # type: ignore[no-untyped-def]
     return run_ci_process
+
+
+# conftest.py is not importable under --import-mode=importlib: expose helpers.
+@pytest.fixture
+def gh():  # type: ignore[no-untyped-def]
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        pr_event=pr_event, push_event=push_event, ZERO=ZERO, AI=AI, BLOCK_CONFIG=BLOCK_CONFIG
+    )

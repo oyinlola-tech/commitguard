@@ -139,7 +139,9 @@ def parse_github_event(event_name: str, payload: object) -> CIContext:
             )
         if event_name == "push":
             push = GitHubPushContext.model_validate(payload)
-            deleted = push.deleted or _is_zero(push.after)
+            deleted = _is_zero(push.after)
+            if push.deleted != deleted:
+                raise GitHubEventError("push event: `deleted` contradicts the `after` commit")
             return CIContext(
                 provider=CIProvider.GITHUB,
                 event=CIEventKind.PUSH,

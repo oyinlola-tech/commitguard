@@ -18,6 +18,7 @@ FORBIDDEN_IN_PURE = (
     "commitguard.github",
     "commitguard.audit",
     "commitguard.services",
+    "commitguard.ci",
     "commitguard.rules.loader",
     "commitguard.config.loader",
     "commitguard.git.commands",
@@ -168,4 +169,20 @@ def test_yaml_is_only_loaded_through_the_strict_safe_loader() -> None:
         text = path.read_text(encoding="utf-8")
         if "yaml.load(" in text or "yaml.unsafe_load" in text or "yaml.full_load" in text:
             offenders.append(_module_name(path))
+    assert offenders == []
+
+
+@pytest.mark.parametrize("package", ["github", "ci"])
+def test_ci_layers_do_not_reimplement_detection(package: str) -> None:
+    """GitHub/CI code feeds commits to the shared Analyzer; it never uses detectors directly."""
+    offenders = []
+    paths = list((PACKAGE_ROOT / package).rglob("*.py"))
+    if package == "ci":
+        paths.append(PACKAGE_ROOT / "services" / "ci.py")
+    for path in paths:
+        for name in _imports(path):
+            if _matches(name, "commitguard.detectors") or _matches(name, "commitguard.core.engine"):
+                offenders.append(f"{_module_name(path)} imports {name}")
+            if _matches(name, "commitguard.policies.evaluator"):
+                offenders.append(f"{_module_name(path)} imports {name}")
     assert offenders == []

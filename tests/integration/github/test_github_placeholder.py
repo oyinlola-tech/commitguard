@@ -1,4 +1,4 @@
-"""The GitHub layer must stay optional: importable offline, no credentials needed."""
+"""The GitHub layer runs offline: no token, no network, no HTTP client."""
 
 import importlib
 import subprocess
@@ -11,21 +11,23 @@ GITHUB_MODULES = [
     "commitguard.github.client",
     "commitguard.github.checks",
     "commitguard.github.actions",
+    "commitguard.github.events",
+    "commitguard.github.workflow",
+    "commitguard.services.ci",
 ]
+NETWORK_MODULES = ("http.client", "urllib.request", "ssl", "requests", "httpx", "urllib3", "aiohttp")
 
 
 @pytest.mark.parametrize("module", GITHUB_MODULES)
-def test_imports_without_token_or_network(module: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_imports_without_token(module: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     importlib.import_module(module)
 
 
-def test_core_cli_does_not_load_github_layer() -> None:
+def test_cli_and_github_layer_load_no_network_modules() -> None:
     script = (
-        "import sys, commitguard.cli.app\n"
-        "print(any(m.startswith('commitguard.github') for m in sys.modules))"
+        "import sys, commitguard.cli.app, commitguard.services.ci\n"
+        f"print(sorted(m for m in {NETWORK_MODULES!r} if m in sys.modules))"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, check=True
-    )
-    assert result.stdout.strip() == "False"
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "[]"
