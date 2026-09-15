@@ -41,6 +41,15 @@ CI runs the same checks on Python 3.12 and 3.13.
    `NotImplementedError` with its planned phase, and docs say so.
 8. **Every new rule ID** needs a default policy in `policies/defaults.py`.
 
+## Dependencies and CI pins
+
+- Changing runtime dependencies requires regenerating `requirements/ci.txt`
+  (hashes for every published file of each pinned version; see `requirements/ci.in`).
+- GitHub Actions must be pinned to full commit SHAs with the tag in a comment;
+  `tests/unit/github/test_workflows_static.py` enforces this.
+- Workflow `run:` scripts must receive untrusted values through `env:`, never
+  `${{ }}` interpolation.
+
 ## Tests
 
 - Unit tests in `tests/unit/` must not need a real repository.
@@ -51,6 +60,9 @@ CI runs the same checks on Python 3.12 and 3.13.
   the feature, the test starts passing, strict xfail fails the run, and you
   remove the marker.
 - Commit fixtures live in `tests/fixtures/commits/*.yaml`.
+- GitHub behaviour is tested offline in `tests/integration/github/` with a bare
+  "GitHub" remote and real event payloads. `test_action_scripts.py` installs
+  from PyPI and runs only with `COMMITGUARD_NETWORK_TESTS=1`.
 
 ## Adding an AI identity
 

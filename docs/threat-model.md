@@ -37,12 +37,33 @@ branches, and every decision should be explainable with preserved evidence.
 
 ## Threats and mitigations
 
+### GitHub server-side enforcement (Phase 4)
+
+| Threat | Mitigation / limitation | Status |
+|---|---|---|
+| Developer bypasses local hooks | GitHub Actions check analyses every commit the pull request / push introduces with the same engine | **[done]** |
+| Developer modifies their local CommitGuard installation or rules | CI installs CommitGuard from the pinned Action commit (or, in this repository, a trusted commit) and uses its bundled rules | **[done]** |
+| Pull request relaxes `.commitguard.yaml` to approve itself | Policy is read from the trusted base commit's tree; the change is reported as a notice and applies only after merge (tested) | **[done]** |
+| Pull request edits `rules/*.yaml` to weaken detection | Repository rule files are never read; rules come from the installed package (tested) | **[done]** |
+| Pull request edits the workflow that runs the check (e.g. `exit 0`) | **Limitation of GitHub's `pull_request` model.** Mitigate with CODEOWNERS review for `.github/workflows/` or organisation rulesets requiring a workflow from another repository; documented, not enforceable by CommitGuard | limitation documented |
+| Malicious commit message, author, branch or trailer injects shell or workflow commands | No shell interpolation (env-only inputs, argument vectors); untrusted log text printed inside `::stop-commands::<random>`; annotations escaped; job summary Markdown/HTML-escaped; step outputs are enums/integers (tested with `$(touch /tmp/commitguard-pwned)`, `::set-output`, `::error::`) | **[done]** |
+| Malicious YAML in trusted policy | Strict safe loader; object tags, aliases, duplicate keys rejected; failure fails the check (tested) | **[done]** |
+| Malformed or spoofed event payload | Strict normalisation: validated SHAs, control-character checks, consistency checks (`deleted` vs `after`), unsupported events and `pull_request_target` fail | **[done]** |
+| Fork pull request steals secrets or writes to the repository | `pull_request` only, `contents: read`, no secrets used, `persist-credentials: false`; no repository-controlled code executed | **[done]** |
+| Third-party GitHub Action compromises CI | Actions pinned to verified commit SHAs (enforced by tests); minimal permissions | **[done]** |
+| Dependency tampering or confusion during install | `--require-hashes` lock (`requirements/ci.txt`), `--no-build-isolation`, CommitGuard installed from source by path, never by index name | **[done]** |
+| CommitGuard cannot evaluate (bad config, missing commits, Git missing, import failure) and CI passes | Every error path exits non-zero and prints `Result: FAILED`; shallow clones fail with an actionable message (tested) | **[done]** |
+| Direct push bypasses pull request validation | Push-triggered check detects it **after** the commits reach GitHub. Prevention requires protected branches, required pull requests and the required `commitguard` check | limitation documented |
+| Cancelled push runs leave commits unchecked | No `cancel-in-progress` in shipped workflows; `doctor` warns about it | **[done]** |
+| Branch protection not actually configured | CommitGuard cannot verify it locally; `doctor` and `github setup` say so explicitly | limitation documented |
+| Squash/rebase merge message edited at merge time | Detected by the post-merge push check (after landing) | limitation documented |
+
 ### Local Git operations (Phase 3)
 
 | Threat | Mitigation / limitation | Status |
 |---|---|---|
 | Developer **accidentally** commits or pushes an AI-attributed commit | pre-commit and commit-msg hooks block the commit; pre-push blocks every outgoing violating commit, including ones created with `--no-verify`, merges, rebases and tools that skip commit hooks | **[done]** |
-| Developer **intentionally** bypasses local hooks (`--no-verify`, deleting hooks, `core.hooksPath`, editing `.commitguard.yaml`, another clone) | **Limitation:** local hooks are user-controlled; CommitGuard does not fight Git's bypass mechanism (tests assert it works). `commitguard doctor` makes missing, modified, disabled or redirected hooks visible. **Future mitigation:** GitHub-side CI as a required check with branch protection, reading policy from the base branch | limitation documented; mitigation **[planned, Phase 4]** |
+| Developer **intentionally** bypasses local hooks (`--no-verify`, deleting hooks, `core.hooksPath`, editing `.commitguard.yaml`, another clone) | **Limitation:** local hooks are user-controlled; CommitGuard does not fight Git's bypass mechanism (tests assert it works). `commitguard doctor` makes these states visible. **Mitigation:** GitHub-side check (see below) | limitation documented; mitigation **[done, Phase 4]** (requires branch protection) |
 | Malicious commit metadata or ref names attempt command injection (`$(…)`, backticks, `;`, `&&`, `\|`, quotes, Unicode) | Git metadata and pre-push input are untrusted data: no shell anywhere, argument vectors or stdin only, object IDs validated before use, ref names never interpolated; tests with hostile messages and branch names assert no execution | **[done]** |
 | Existing hooks are destroyed by installation | Foreign hooks are renamed to `<hook>.pre-commitguard` and chained (never overwritten); conflicts refuse; uninstall removes only the managed block and restores the original; tests compare bytes | **[done]** |
 | Repository content hijacks the hook (a `commitguard/` package in the work tree) | Hooks run `python -P -m commitguard`, so the current directory is not on `sys.path`; tested | **[done]** |
@@ -57,7 +78,7 @@ branches, and every decision should be explainable with preserved evidence.
 
 ### Bypassing local enforcement
 - `--no-verify`, removing hooks, other clones. **Accepted locally**; mitigated by
-  server-side enforcement **[planned, Phase 4]**. `pre-push` analyses commits
+  server-side enforcement **[done, Phase 4; effective with branch protection]**. `pre-push` analyses commits
   created with `--no-verify` **[done]**.
 
 ### Weakening policy through configuration
@@ -111,7 +132,7 @@ branches, and every decision should be explainable with preserved evidence.
 - Reports and JSON contain concise metadata evidence only, never file contents or full messages **[done]**.
 - Tracebacks never render local variables (`pretty_exceptions_show_locals=False`) **[done]**.
 - Environment variables are never logged **[done — nothing logs them]**.
-- Tokens for Phase 4 read at call time, never persisted **[planned]**.
+- GitHub enforcement uses no token and no secrets **[done]**; a future GitHub App would read tokens at call time and never persist them **[planned]**.
 
 ### Repository modification
 - Detectors receive data, not a repository handle; architecture tests forbid

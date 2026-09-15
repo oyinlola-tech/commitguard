@@ -35,10 +35,20 @@ We aim to acknowledge reports within 5 working days.
 - Leakage of environment variables, tokens or repository content.
 - CommitGuard modifying a repository or its history.
 
+## CI and supply chain
+
+- GitHub Actions used by CommitGuard are pinned to full commit SHAs; updates are
+  made deliberately with the upstream tag noted next to the SHA.
+- CI installs dependencies from `requirements/ci.txt` with `--require-hashes`.
+- Reports about the GitHub layer are in scope, including ways to make the check
+  pass for commits that the same policy blocks locally.
+
 ## Out of scope
 
 - Bypassing **local** hooks (`--no-verify`, deleting hooks): documented and
   expected; see `docs/threat-model.md`.
+- Merges allowed because branch protection does not require the check, or a
+  pull request edited the workflow file: documented GitHub configuration issues.
 - Removing attribution from a commit entirely: metadata is self-asserted, and
   CommitGuard does not claim to prove authorship.
 - Features documented as not implemented.

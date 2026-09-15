@@ -2,11 +2,11 @@
 
 **Git commit provenance and contribution policy enforcement.**
 
-> **Status: pre-alpha (Phase 3 — Git hook enforcement).** After
-> `commitguard install`, `git commit` and `git push` are checked automatically
-> and stopped when a policy blocks them. Local hooks can be bypassed by anyone
-> who controls the clone; **GitHub-side enforcement (Phase 4) is not
-> implemented yet.** See [What works today](#what-works-today).
+> **Status: pre-alpha (Phase 4 — GitHub server-side enforcement).** Local Git
+> hooks stop violations during `git commit` / `git push`; a GitHub Actions check
+> runs the same engine on every pull request, merge queue entry and push.
+> **The GitHub check blocks merges only when branch protection requires it** —
+> CommitGuard cannot configure or verify that. See [What works today](#what-works-today).
 
 ---
 
@@ -121,6 +121,15 @@ git commit -m "implement authentication"   # checked automatically
 git push                                   # every outgoing commit checked
 ```
 
+Server side (GitHub):
+
+```bash
+commitguard init --github --action-repository OWNER/commitguard --action-ref <commit sha>
+commitguard github setup   # required check name + branch protection steps
+```
+
+Then require the `commitguard` status check on protected branches.
+
 ## CLI usage
 
 ```bash
@@ -137,6 +146,8 @@ commitguard check --verbose               # check with full human-readable evide
 commitguard policy list                   # effective policies and config layers
 commitguard doctor                        # installation, config, engine and hook health
 commitguard hook pre-commit|commit-msg <file>|pre-push   # called by installed hooks
+commitguard ci github                     # GitHub Actions check (reads $GITHUB_EVENT_PATH)
+commitguard github setup                  # workflow status, check name, setup guidance
 ```
 
 Blocked `scan` output (abridged):
@@ -198,33 +209,52 @@ Layers, lowest precedence first: built-in defaults → global
 is an error (exit 2). Which hooks enforce is set under `enforcement:`
 (all enabled by default). See [docs/configuration.md](docs/configuration.md).
 
-## Git hooks and enforcement layers
+## Enforcement layers: local + GitHub
 
 ```text
-git commit ─▶ pre-commit / commit-msg ─┐
-git push   ─▶ pre-push ────────────────┴─▶ commitguard hook ─▶ engine ─▶ policy
-                                                                  ALLOW/WARN ─▶ Git continues
-                                                                  BLOCK/error ─▶ Git stops
+Developer ─▶ git commit / push ─▶ Local hooks (Phase 3) ──── fast feedback, bypassable
+                                        │
+                                        ▼
+                                     GitHub
+                                        │ pull_request / merge_group / push
+                                        ▼
+                         GitHub Actions: commitguard ci github (Phase 4)
+                                        │  same detectors + policy evaluator
+                                  ┌─────┴─────┐
+                                PASS         FAIL
+                                  │            │
+                           check passes   check fails ─▶ merge blocked
+                                                        (when branch protection
+                                                         requires "commitguard")
 ```
 
-- **pre-commit** checks the pending author/committer, **commit-msg** checks the
-  message, and **pre-push** checks every commit the push would introduce
-  (new branches, tags, force pushes, multiple refs, deduplicated). pre-push is
-  the authoritative local check.
-- Hooks contain no detection logic; they call the same engine as `scan`.
-- Existing hooks are never overwritten: they are preserved as
-  `<hook>.pre-commitguard` and run after CommitGuard. `uninstall` restores them.
-- Failures **block** (fail closed): invalid configuration or a missing
-  CommitGuard installation stops the commit or push with instructions.
-- `commitguard doctor` reports missing, modified or disabled hooks.
+| Layer | Purpose | Can be bypassed by the contributor? |
+|---|---|---|
+| Local hooks | stop accidents before they leave the machine | yes (`--no-verify`, deleting hooks) |
+| GitHub Actions check | server-side validation of every commit a PR introduces | no, but it only *reports* on its own |
+| Branch protection / rulesets | make the check a merge requirement | no (repository admins configure it) |
 
-**Local Git hooks can be bypassed by someone who controls the local repository**
-(`git commit --no-verify`, `git push --no-verify`, deleting hooks). They give
-fast feedback and stop accidents; authoritative protection requires
-server-side enforcement, which is Phase 4 (GitHub Actions as a required check,
-reading policy from the protected base branch). See
-[docs/git-hooks.md](docs/git-hooks.md) and
-[docs/github-enforcement.md](docs/github-enforcement.md).
+Why both: hooks give immediate feedback without waiting for CI; the GitHub
+check makes local bypasses visible and, with branch protection, unmergeable.
+
+**Local hooks** (`commitguard install`): pre-commit checks the pending identity,
+commit-msg the message, pre-push every outgoing commit. Existing hooks are
+preserved and chained; failures block. See [docs/git-hooks.md](docs/git-hooks.md).
+
+**GitHub check** (`commitguard ci github`, `action.yml`):
+
+- scans every commit a pull request introduces (`head ^base`), not just the
+  latest, plus merge queue entries and pushes (new branches, deletions, tags,
+  force pushes);
+- evaluates with the policy from the **base commit**, so a pull request cannot
+  relax `.commitguard.yaml` to approve itself; rules come from the installed
+  CommitGuard, never the repository;
+- needs only `contents: read`, no secrets, works for fork pull requests;
+- fails closed (exit 2) when policy cannot be evaluated;
+- a push-triggered run happens **after** commits reach GitHub: prevention needs
+  protected branches, required pull requests and the required check.
+
+See [docs/github-enforcement.md](docs/github-enforcement.md).
 
 ## What works today
 
@@ -233,7 +263,12 @@ reading policy from the protected base branch). See
 - Git hook enforcement: `install`/`uninstall` (per repository, or `--global`
   via a Git template directory), `hook pre-commit|commit-msg|pre-push`,
   chaining of existing hooks, integrity checksums, fail-closed wrappers
-- `doctor` with hook presence, integrity, interpreter and enforcement checks
+- `doctor` with hook presence, integrity, interpreter, enforcement and GitHub
+  workflow checks (branch protection is reported as unverifiable)
+- GitHub enforcement: `ci github` (pull_request, merge_group, push), trusted
+  policy source (base commit), bundled rules only, annotations, job summary,
+  step outputs, JSON report; composite `action.yml` with SHA-pinned actions and
+  hash-pinned dependencies; `init --github`; `github setup`
 - Commit model with parsed trailers; lenient, bounded trailer parser that
   records malformed and evasive variants instead of crashing
 - Four detectors (`coauthor`, `identity`, `trailer`, `bot`) driven by YAML rules
@@ -243,8 +278,8 @@ reading policy from the protected base branch). See
   replace objects, batched reads)
 - Terminal-safe output and ASCII-only JSON
 
-Not yet: GitHub enforcement (Phase 4), audit storage, signature verification,
-secret detection, dashboard.
+Not yet: GitHub App / Checks API / PR comments, SARIF, organisation policies,
+audit storage, signature verification, secret detection, dashboard.
 
 ## Development
 
@@ -268,12 +303,13 @@ detector interface · policy interface · testing foundation
 `Co-authored-by` parsing · AI identity rules · AI domain rules · identity
 detection · findings · blocking decisions
 
-**Phase 3 — Git enforcement** ✔ *(current)*
+**Phase 3 — Git enforcement** ✔
 `pre-commit` · `commit-msg` · `pre-push` · hook installation · hook management ·
 local repository enforcement
 
-**Phase 4 — GitHub enforcement**
-GitHub Actions · pull request checks · repository policies · branch protection integration
+**Phase 4 — GitHub enforcement** ✔ *(current)*
+GitHub Actions check · pull request, merge queue and push scanning · trusted policy source ·
+branch protection guidance (configuration via GitHub App/API: later)
 
 **Phase 5 — Security intelligence**
 Advanced bot detection · signed commit verification · secret detection ·

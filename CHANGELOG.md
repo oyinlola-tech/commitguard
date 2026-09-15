@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added (Phase 4 — GitHub server-side enforcement)
+
+- `commitguard ci github`: analyses commits introduced by `pull_request`
+  (`head ^base`), `merge_group` and `push` events (new branches, deletions,
+  annotated tags, force pushes), fails closed (exit 2) on any error, supports
+  `--config`, `--fail-on block|warn`, `--max-commits`, `--format json`,
+  `--report-file`; writes annotations, job summary and step outputs in Actions.
+- Trusted policy source: CI reads `.commitguard.yaml` from the base / before /
+  default-branch commit, never from the change; config changes are reported.
+- `CIContext` (provider-neutral), `GitHubPullRequestContext`,
+  `GitHubPushContext`, `GitHubMergeGroupContext`, `CommitRange`, `PolicySource`.
+- Composite `action.yml` (setup-python pinned, hash-pinned dependencies,
+  install from the Action's own source) and `requirements/ci.txt`.
+- `.github/workflows/commitguard.yml` now enforces on this repository,
+  installing CommitGuard from a trusted commit via `git worktree`.
+- `commitguard init --github` (pinned Action required, never overwrites) and
+  `commitguard github setup` (read-only guidance).
+- `commitguard doctor`: rules provenance, GitHub workflow inspection
+  (triggers, permissions, pinning, fetch-depth, secrets, cancel-in-progress)
+  and an enforcement summary that never claims branch protection.
+
+### Changed
+
+- All workflows pin third-party actions to commit SHAs.
+- `Repository.read_blob_at`, `ref_commit`, `object_exists`; pre-push planning
+  uses `CommitRange`.
+- Reports gain an optional `ci` section.
+
 ### Added (Phase 3 — Git hook enforcement)
 
 - `commitguard install` / `uninstall`: managed hooks with `# BEGIN/END COMMITGUARD`

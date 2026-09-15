@@ -105,10 +105,29 @@ Configuration decides **what to do** with findings. **What is detected** comes
 from the rule files in `rules/` (see [detection-engine.md](detection-engine.md)).
 Repository-specific rule extensions are not supported yet.
 
-## Trust caveat
+## Policy sources and trust
 
-Repository configuration is controlled by whoever can commit, including the
-author of the commit being checked, and a repository layer can loosen a global
-one. That is acceptable locally (local checks are advisory). For enforcement,
-Phase 4 reads the policy from the protected base branch, never from the pull
-request head. See [threat-model.md](threat-model.md).
+Where configuration is read from depends on where CommitGuard runs:
+
+| Context | Layers (lowest first) | Source kind |
+|---|---|---|
+| `scan`, `check`, `policy list`, Git hooks | built-in → global → work tree `.commitguard.yaml` → `--config` | `working_tree` |
+| `commitguard ci github` | built-in → `.commitguard.yaml` **in the trusted commit's tree** (or the `--config` path resolved there) | `revision` |
+| CI with no trusted commit (initial push) | built-in only | `builtin` |
+
+The trusted commit is the pull request / merge queue base, the commit before a
+push, or the default branch tip for new branches. The global configuration is
+not used in CI. A change to `.commitguard.yaml` in a pull request is therefore
+**not applied to that pull request**; CI reports it as a notice and it takes
+effect once merged.
+
+Locally, repository configuration is controlled by whoever can commit, and a
+repository layer can loosen a global one; that is acceptable because local
+checks are advisory. See [github-enforcement.md](github-enforcement.md#policy-trust-model)
+and [threat-model.md](threat-model.md).
+
+### Unknown fields
+
+Unknown keys, policy IDs, actions and enforcement fields are **errors**, never
+warnings, in every context. In CI an invalid trusted configuration fails the
+check (exit 2).

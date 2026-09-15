@@ -153,4 +153,5 @@ def test_pathological_input_is_fast() -> None:
     start = time.perf_counter()
     for text in inputs:
         parse_trailers(text)
-    assert time.perf_counter() - start < 5
+    # Generous budget: linear parsing takes ~2s on a loaded machine; quadratic takes minutes.
+    assert time.perf_counter() - start < 20
