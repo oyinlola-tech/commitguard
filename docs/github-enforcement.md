@@ -340,7 +340,7 @@ This is a GitHub platform property; CommitGuard cannot enforce it.
 | | Actions (this page) | GitHub App ([github-app.md](github-app.md)) |
 |---|---|---|
 | Advantages | simple, repository-local, no service or credentials | centralised and organisation-wide, webhook-driven, Checks API, mandatory policy |
-| Limitations | runs inside CI; per-repository setup; a PR can edit its own workflow | needs deployment, App credentials and a webhook endpoint; no merge queue support yet |
+| Limitations | runs inside CI; per-repository setup; a PR can edit its own workflow | needs deployment, App credentials and a webhook endpoint; merge queues need the optional Merge queues permission ([merge-queue.md](merge-queue.md)) |
 | Check name | `commitguard` | `commitguard-app` (pull requests), `commitguard-app/push` |
 | Dashboard | not recorded (results live in the workflow run) | scans, findings, violations, policy versions and audit history |
 

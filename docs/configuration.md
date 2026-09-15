@@ -199,6 +199,17 @@ The dashboard adds `COMMITGUARD_DASHBOARD_URL`, `COMMITGUARD_GITHUB_CLIENT_ID`,
 `COMMITGUARD_GITHUB_CLIENT_SECRET` (or `..._FILE`),
 `COMMITGUARD_DASHBOARD_STATIC_DIR`, `COMMITGUARD_DASHBOARD_ALLOWED_ORIGINS` and
 `COMMITGUARD_ENV`. See [dashboard.md#running-the-dashboard](dashboard.md#running-the-dashboard).
+
+Notification delivery is off unless configured:
+`COMMITGUARD_NOTIFICATIONS_MODE` (`off`, `deliver`, `test`), the SMTP settings
+(`COMMITGUARD_SMTP_HOST`, `_PORT`, `_SECURITY`, `_USERNAME`,
+`_PASSWORD`/`_PASSWORD_FILE`, `_FROM`),
+`COMMITGUARD_NOTIFICATION_SIGNING_KEY` (or `..._FILE`) for signed webhooks and
+`COMMITGUARD_NOTIFICATION_RETENTION_DAYS`. In-app notifications need none of
+them. `COMMITGUARD_ENV=test` always forces the recording test mode, so a test
+environment cannot send real notifications. See
+[notifications.md](notifications.md#configuration).
+
 Invalid values stop the service at start-up; error messages name the variable,
 never its value.
 

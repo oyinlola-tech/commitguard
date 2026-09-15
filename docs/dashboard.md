@@ -16,8 +16,8 @@ CommitGuard core (detection · policy · ScanResult)
 GitHub App worker ──► GitHub Check Run "commitguard-app"
         │
         ▼
-ScanResultRecorder ──► state database (scans · findings · violations · audit · policy versions)
-        │
+ScanResultRecorder ──► state database (scans · executions · findings · violations · audit
+        │                                   · policy versions · notification outbox)
         ▼
 /api/v1 (authentication · authorization · tenant scope)
         │
@@ -39,6 +39,7 @@ Contents:
 - [Repository protection and enforcement status](#repository-protection-and-enforcement-status)
 - [Security health](#security-health)
 - [Audit log](#audit-log)
+- [Notifications](#notifications)
 - [GitHub installations](#github-installations)
 - [API reference](#api-reference)
 - [Security controls](#security-controls)
@@ -178,6 +179,14 @@ repository does not see its scans or violations.
 | `github:manage` | | | ✓ | ✓ | Sync installation repositories |
 | `members:read` | | | ✓ | ✓ | Members list |
 | `members:manage` | | | | ✓ | Grant, change, remove roles |
+| `notifications:read` | ✓ | ✓ | ✓ | ✓ | Notification center, own notification preferences |
+| `policies:rollback` | | | ✓ | ✓ | Roll back organization policy |
+| `notifications:manage` | | | ✓ | ✓ | Organization notification settings, e-mail recipients, webhooks, delivery log |
+
+`policies:rollback` is checked separately from `policies:write`, so a future
+custom role can edit policy without restoring old versions (or the reverse).
+Which notifications a member receives depends on the type's permission; see
+[notifications.md](notifications.md).
 
 Member rules enforced by the server: the last owner cannot be removed or
 demoted; nobody changes their own role; the owner of a personal installation
@@ -200,8 +209,11 @@ is implicit and cannot be edited.
 
 ## Scans
 
-Each GitHub App scan job is a scan in the dashboard. Its **result** comes from
-the stored job and the core's decision; the dashboard never computes it.
+Each GitHub App scan job is a scan **execution** in the dashboard. Its
+**result** comes from the stored job and the core's decision; the dashboard
+never computes it. Executions of the same commits and check (a GitHub
+"Re-run", **Scan again**, an automatic retry) share one logical scan and are
+numbered; see [Executions](#executions).
 
 | Result | Meaning | GitHub check |
 |---|---|---|
@@ -211,7 +223,18 @@ the stored job and the core's decision; the dashboard never computes it.
 | `warning` | allowed, with `warn` findings | success |
 | `blocked` | policy result at or above `block` | failure |
 | `error` | could not be evaluated (fails closed) | failure / timed out |
-| `cancelled` | superseded, pull request closed, or monitoring paused | none / not updated |
+| `cancelled` | pull request closed, merge group removed, or monitoring paused | none / not updated |
+| `stale` | superseded: a newer execution or newer commit owns the check | not updated (the newer execution publishes) |
+
+| Trigger | Meaning |
+|---|---|
+| `push`, `pull_request`, `merge_group` | a GitHub webhook |
+| `rerun` | GitHub "Re-run" / "Re-run all checks" on a CommitGuard check |
+| `manual` | **Scan again** in the dashboard |
+| `retry` | automatic recovery after an infrastructure failure ([recovery.md](recovery.md)) |
+
+Merge group scans show **Failure source: merge queue** and the merge group
+(target branch, queued pull requests); see [merge-queue.md](merge-queue.md).
 
 Scan detail shows the commit range, timings, conclusion, every finding with
 evidence and remediation, notices (for example a policy-weakening attempt),
@@ -220,13 +243,24 @@ request or branch, and **reproducibility metadata**: organization policy
 version, effective policy fingerprint and entries, policy source, rules
 version and CommitGuard version.
 
-**Scan again** (`scans:trigger`) queues a new job for exactly the commits of
-the stored scan. The repository, SHA and event come from storage, never from
-the request, and the job goes through the normal worker path (GitHub
-authorization, trusted policy, check ownership). Only the newest scan of a pull
-request or branch can be repeated. The page polls while a scan is queued or
-running, starting at 2 seconds and backing off to 30 seconds, and announces
-the final result to screen readers.
+**Scan again** (`scans:trigger`) queues a new execution for exactly the
+commits of the stored scan, with the **current** effective policy (a caller
+cannot choose a historical policy). The repository, SHA and event come from
+storage, never from the request, and the execution goes through the normal
+worker path (GitHub authorization, trusted policy, check ownership). Only the
+newest scan of a pull request or branch can be repeated, and while an execution
+of the same scan is queued or running a second request is refused (`409`). The
+page polls while a scan is queued or running, starting at 2 seconds and
+backing off to 30 seconds, and announces the final result to screen readers.
+
+### Executions
+
+`GET /api/v1/scans/{id}/executions` lists every execution of the logical scan,
+newest first, with trigger, result, commit, organization policy version,
+effective policy fingerprint, rules version and duration. The newest execution
+determines the current GitHub check; earlier executions are never modified.
+When executions were evaluated under different policy or rules versions the
+page says so, because their results are not directly comparable.
 
 ## Violations and their lifecycle
 
@@ -242,6 +276,9 @@ A violation is *exposed* where CommitGuard saw it:
   `base..head` range, so absence means the commit left the pull request.
   Closing a pull request ends the exposure; merging moves it to the base
   branch; reopening an unchanged pull request restores it.
+- **Merge group exposure**: active while the merge queue's merge group commit
+  that contained the finding exists. A merged group's exposures move to the
+  target branch; an invalidated or dequeued group's end.
 - **Branch exposure**: push scans are incremental, so absence proves nothing.
   The exposure ends when a later push scan shows the commit is no longer
   reachable from the branch head (history rewritten), or when the branch is
@@ -292,13 +329,22 @@ Saving a policy:
    reason and a sign-in within 15 minutes (`401 REAUTHENTICATION_REQUIRED`).
 3. The update names the version it was based on. If another admin saved first,
    the server answers `409 CONFLICT` and nothing is overwritten.
-4. The new version row and its `organization_policy_changed` audit event are
-   written in one transaction.
+4. The new version row, its `organization_policy_changed` audit event and the
+   `policy_changed` notification are written in one transaction.
 
-Versions are immutable. Each scan stores the organization policy version and
-the effective policy it was evaluated with, so historical scans keep showing
-the policy that produced them. Rollback is a new version with an earlier
-document; there is no rollback button yet.
+Versions are immutable (database triggers refuse updates and deletes). Each
+scan stores the organization policy version and the effective policy it was
+evaluated with, so historical scans keep showing the policy that produced
+them.
+
+**Version history and rollback.** The history lists every version (newest is
+`ACTIVE`, older ones `ARCHIVED`) with its author, time, reason, a summary of the
+changes against the previous version, and rollback lineage. **Compare** shows
+a structured diff (added, changed, removed, weakening) from the active version.
+**Roll back to vN** (`policies:rollback`) opens a dialog with the current and
+target versions, the impact diff, a required reason and an acknowledgement; it
+publishes a *new* version that restores vN's document. See
+[policy-management.md](policy-management.md).
 
 ## Rules
 
@@ -316,7 +362,8 @@ Protection is never inferred from the App being installed.
 
 | Protection | Rule |
 |---|---|
-| `unprotected` | the installation is suspended or removed, the repository is no longer granted, monitoring is paused, or GitHub showed that no CommitGuard check is required |
+| `at_risk` | the GitHub App installation is suspended or removed, or the repository is no longer granted: CommitGuard checks no longer run, whatever the last scan said |
+| `unprotected` | monitoring is paused, or GitHub showed that no CommitGuard check is required |
 | `configuration_error` | the latest completed scan failed because the CommitGuard configuration is invalid |
 | `protected` | GitHub showed that the default branch requires `commitguard-app` or `commitguard` |
 | `unknown` | scanned by the App, but branch protection has not been verified |
@@ -328,6 +375,7 @@ The repository page shows the signals separately:
 | GitHub App | `connected`, `suspended`, `disconnected` | installation state and granted repositories |
 | GitHub Actions | `detected`, `not_detected`, `unknown` | workflow files on the default branch, read with Contents: read and inspected statically (never executed) |
 | Required check | `required`, `not_required`, `unknown` | `GET /repos/{o}/{r}/rules/branches/{b}` and `GET /repos/{o}/{r}/branches/{b}` |
+| Merge queue | `enabled`, `not_enabled`, `unknown` | a ruleset `merge_queue` rule on the default branch; a classically protected branch is `unknown` |
 | CommitGuard check | latest completed scan result | stored scans |
 | Local hooks | `not_verifiable` | a server cannot see developer machines |
 
@@ -352,7 +400,7 @@ The overview shows explicit checks, not a score:
 | Check | OK when | Attention when | Unknown when |
 |---|---|---|---|
 | GitHub integration | every visible installation is connected with required permissions | an installation is suspended or missing permissions | — |
-| Merge protection | every monitored repository is `protected` | any is `unprotected` or `configuration_error` | none unprotected, some `unknown`, or none monitored |
+| Merge protection | every monitored repository is `protected` | any repository is `at_risk`, or a monitored one is `unprotected` or `configuration_error` | none unprotected, some `unknown`, or none monitored |
 | Critical violations | 0 open critical violations | ≥ 1 | — |
 | Open violations | 0 open `block` violations | ≥ 1 | — |
 | Scan reliability | 0 `error` scans in the period | ≥ 1 | — |
@@ -360,7 +408,9 @@ The overview shows explicit checks, not a score:
 
 Counts are computed on the server from stored scans, violations and
 enforcement evidence for the selected period (24 hours, 7 days, 30 days) and
-organization. No number is estimated.
+organization. No number is estimated. When an installation is disconnected or
+any repository is `at_risk`, the overview shows **GitHub enforcement at risk**
+above everything else.
 
 ## Audit log
 
@@ -380,11 +430,25 @@ installation created, removed, suspended, unsuspended, permissions updated;
 repositories added and removed; webhook rejected; authorization denied; pull
 request merged.
 
-`SECURITY_ALERT_TYPES` in `commitguard.audit.models` lists the events a
-future notification channel (e-mail, Slack, webhooks) should deliver: policy
-violations, policy changes and modification attempts, installation removal or
-suspension, monitoring paused, and role grants. Notifications are not
-implemented.
+Phase 7 adds: organization policy rolled back (previous, target and new
+version, changes, reason, request ID); scan started (manual, re-run, retry),
+scan retry scheduled; check re-run requested and rejected (with the reason);
+merge group created, passed, blocked, scan failed, destroyed; notification
+created, delivered, delivery failed (masked destination), read; notification
+settings and personal preferences changed; notification webhook added and
+removed. Every audit event of an API request carries its `request_id`.
+
+## Notifications
+
+The bell in the top bar and **Notifications** in the navigation show the
+member's unread count (critical in a distinct colour; counts above 999 are
+capped). The notification center filters by all, unread, critical, category
+and archived; marking read, unread and archived affects only the member's own
+inbox. Links go to the violation, scan, policy, repository or installation,
+where authorization is checked again. **Settings → Notifications** holds
+personal in-app preferences and, for `notifications:manage`, organization
+delivery settings, e-mail recipients, signed webhooks and the delivery log.
+Details, deduplication, retries and security: [notifications.md](notifications.md).
 
 ## GitHub installations
 
@@ -422,7 +486,8 @@ All endpoints are under `/api/v1`, return JSON and require a session except
 | 403 | `FORBIDDEN`, `CSRF_FAILED`, `CORS_REJECTED` | role lacks the permission; missing CSRF token or foreign Origin |
 | 404 | `NOT_FOUND` | missing **or outside your access** |
 | 405 | `METHOD_NOT_ALLOWED` | with an `Allow` header |
-| 409 | `CONFLICT`, `CONFIRMATION_REQUIRED` | optimistic concurrency, invalid state change, unconfirmed weakening |
+| 409 | `CONFLICT`, `CONFIRMATION_REQUIRED` | optimistic concurrency, invalid state change, unconfirmed weakening or rollback |
+| 422 | `POLICY_VERSION_INVALID` | a stored policy version failed its integrity check and cannot be restored |
 | 411 / 413 / 415 | `LENGTH_REQUIRED`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE` | bodies are JSON, at most 64 KB |
 | 429 | `RATE_LIMITED` | with `Retry-After: 60` |
 | 500 | `INTERNAL_ERROR` | no details are returned; use `request_id` with the logs |
@@ -454,12 +519,14 @@ come from a fixed list per endpoint.
 | `DELETE /api/v1/organizations/{organization_id}/members/{user_id}` | `members:manage` | Remove a member |
 | `GET /api/v1/repositories` | `repositories:read` | Repositories (`organization`, `protection`, `q`, `sort`=`name`\|`risk`\|`recent`) |
 | `GET /api/v1/repositories/{repository_id}` | `repositories:read` | Repository detail with enforcement, policy, scans, violations, activity |
+| `GET /api/v1/repositories/{repository_id}/merge-queue` | `repositories:read` | Merge queue status, current and recent merge groups with results |
 | `PUT /api/v1/repositories/{repository_id}/monitoring` | `repositories:manage` | Pause (`enabled: false`, `confirm`, `reason`) or resume monitoring |
 | `POST /api/v1/repositories/{repository_id}/enforcement/refresh` | `repositories:manage` | Read enforcement evidence from GitHub |
 | `GET /api/v1/scans` | `scans:read` | Scans (`organization`, `repository`, `result`, `event`, `rule`, `severity`, `from`, `to`, `q`, `sort`) |
 | `GET /api/v1/scans/{scan_id}` | `scans:read` | Scan detail with findings |
 | `GET /api/v1/scans/{scan_id}/comparison` | `scans:read` | New, no longer present and unchanged findings versus the previous scan |
-| `POST /api/v1/scans/{scan_id}/rescan` | `scans:trigger` | Queue a new scan of the same commits (202) |
+| `GET /api/v1/scans/{scan_id}/executions` | `scans:read` | Every execution of the scan with trigger, result and policy/rules versions |
+| `POST /api/v1/scans/{scan_id}/rescan` | `scans:trigger` | Queue a new execution of the same commits (202; 409 while one is queued or running) |
 | `GET /api/v1/violations` | `violations:read` | Violations (`organization`, `repository`, `status`, `severity`, `rule`, `action`, `from`, `to`, `q`, `sort`=`newest`\|`oldest`\|`severity`\|`repository`) |
 | `GET /api/v1/violations/{violation_id}` | `violations:read` | Violation detail with evidence, remediation, exposures, detections |
 | `PUT /api/v1/violations/{violation_id}/acknowledgement` | `violations:manage` | Acknowledge (`note`) |
@@ -470,6 +537,8 @@ come from a fixed list per endpoint.
 | `POST /api/v1/policies/{organization_id}/preview` | `policies:read` | Classify changes (`floors`) without saving |
 | `GET /api/v1/policies/{organization_id}/versions` | `policies:read` | Version history |
 | `GET /api/v1/policies/{organization_id}/versions/{version}` | `policies:read` | One version |
+| `GET /api/v1/policies/{organization_id}/diff` | `policies:read` | Structured diff between two versions (`from`, `to`; 0 = no organization policy) |
+| `POST /api/v1/policies/{organization_id}/rollback` | `policies:rollback` | Publish a new version restoring `target_version` (`expected_current_version`, `reason`, `confirm`) |
 | `GET /api/v1/rules` | `rules:read` | Bundled rules |
 | `GET /api/v1/rules/{rule_id}` | `rules:read` | Rule detail |
 | `GET /api/v1/audit` | `audit:read` | Audit events (`organization`, `repository`, `type`, `actor`, `from`, `to`, `sort`) |
@@ -478,6 +547,20 @@ come from a fixed list per endpoint.
 | `GET /api/v1/github/installations/{installation_id}` | `repositories:read` | Installation detail and recent events |
 | `GET /api/v1/github/installations/{installation_id}/repositories` | `repositories:read` | Repositories of the installation you can access |
 | `POST /api/v1/github/installations/{installation_id}/sync` | `github:manage` | Refresh the installation's repositories from GitHub |
+| `GET /api/v1/notifications` | session | Your notifications (`state`=`unread`\|`read`\|`archived`\|`all`, `category`=`critical`\|`violations`\|`policy`\|`github`\|`scans`, `organization`, `cursor`); `meta.counts` |
+| `GET /api/v1/notifications/counts` | session | Unread and unread critical counts (bounded at 1,000) |
+| `POST /api/v1/notifications/read-all` | session | Mark your unread notifications read (optional `organization_id`) |
+| `GET /api/v1/notifications/{notification_id}` | session | One of your notifications |
+| `POST /api/v1/notifications/{notification_id}/read` | session | Mark read |
+| `POST /api/v1/notifications/{notification_id}/unread` | session | Mark unread |
+| `POST /api/v1/notifications/{notification_id}/archive` | session | Archive |
+| `GET /api/v1/notification-preferences` | `notifications:read` | Per organization: channels, type settings, your in-app choices (recipients and webhooks only for `notifications:manage`) |
+| `PATCH /api/v1/notification-preferences` | `notifications:read` | Mute or unmute non-mandatory types in your inbox (`organization_id`, `in_app`) |
+| `GET /api/v1/organizations/{organization_id}/notification-settings` | `notifications:read` | One organization's notification settings |
+| `PUT /api/v1/organizations/{organization_id}/notification-settings` | `notifications:manage` | Replace settings (`expected_version`, `types`, `email_recipients`, `confirm` when turning deliveries off) |
+| `POST /api/v1/organizations/{organization_id}/notification-webhooks` | `notifications:manage` | Add an HTTPS endpoint (`url`, `confirm`; recent sign-in); returns the signing secret once (201) |
+| `DELETE /api/v1/organizations/{organization_id}/notification-webhooks/{endpoint_id}` | `notifications:manage` | Remove an endpoint; pending deliveries are cancelled |
+| `GET /api/v1/organizations/{organization_id}/notification-deliveries` | `notifications:manage` | E-mail and webhook delivery records |
 
 Resource models are defined in `commitguard.controlplane.views` and mirrored
 in `web/src/api/types.ts`. There is no OpenAPI document; this table and the
@@ -499,7 +582,9 @@ implemented routes.
 | Open redirect | `return_to` limited to same-origin application paths |
 | Session theft | `HttpOnly` cookie, hashed at rest, 8 h lifetime, 2 h idle timeout, revocation, HSTS in production |
 | Token exposure | GitHub user tokens used during sign-in only, never stored or sent to the browser; installation tokens never leave the server |
-| Abuse | per-user rate limits: sign-in 20/min per address, reads 600/min, searches 120/min, writes 30/min, GitHub-calling actions 10/min |
+| Abuse | per-user rate limits: sign-in 20/min per address, reads 600/min, searches 120/min, writes 30/min, GitHub-calling actions 10/min, sensitive changes (rollback, notification settings, webhooks) 10/min |
+| Policy rollback abuse | `policies:rollback`, required reason, explicit confirmation, recent sign-in for weakening rollbacks, optimistic concurrency, immutable versions, audit and notification |
+| Notification leakage | inbox rows per user; type permission and GitHub repository visibility re-checked on every read; webhook secrets derived, shown once, never stored |
 | Clickjacking | `frame-ancestors 'none'`, `X-Frame-Options: DENY` |
 | Logs | request ID, method, route template, status, duration, user ID; never cookies, headers, tokens or query strings |
 
@@ -513,7 +598,7 @@ database transaction.
 | Concern | Choice |
 |---|---|
 | Routing | React Router; every resource is deep-linkable and survives refresh (the server returns `index.html` for application routes) |
-| Server state | TanStack Query: short staleness, refetch on focus, backoff polling for queued/running scans; filters and cursors live in the URL |
+| Server state | TanStack Query: short staleness, refetch on focus, backoff polling for queued/running scans, 60 s polling for notification counts; filters and cursors live in the URL |
 | UI state | local component state; no global store |
 | API client | `web/src/api/client.ts` is the only `fetch`; typed resource modules per area |
 | Errors | error boundaries per page and at the root; `401` redirects to sign-in once |
@@ -558,10 +643,11 @@ authorization page is simulated; github.com is never contacted. Set
 ## Performance
 
 `test_dashboard_performance.py` seeds 100 repositories, 10,000 scans, 50,000
-findings and 100,000 audit events, then requests every list and detail
-endpoint and a second cursor page, and checks that the default orderings use
-indexes. These are test targets, not a claim of production scale. Measured on
-the development machine (Linux, Python 3.13, SQLite 3.53):
+findings and 100,000 audit events, and separately 100,000 notifications,
+100,000 webhook event records and 10,000 policy versions. It requests every
+list and detail endpoint and a second cursor page, and checks that the default
+orderings use indexes. These are test targets, not a claim of production scale.
+Measured on the development machine (Linux, Python 3.13, SQLite 3.53):
 
 | Request | First page | Second page |
 |---|---:|---:|
@@ -572,7 +658,12 @@ the development machine (Linux, Python 3.13, SQLite 3.53):
 | Violations | 54 ms | 14 ms |
 | Violations by severity | 18 ms | 16 ms |
 | Audit log | 2 ms | 132 ms |
-| Scan / violation / repository detail | 1 ms / 1 ms / 5 ms | — |
+| Scan / violation / repository detail | 4 ms / 2 ms / 8 ms | — |
+| Notifications (100,000 in the inbox) | 13 ms | 11 ms |
+| Unread notifications / by category | 11 ms / 10 ms | 11 ms / 10 ms |
+| Notification counts (bounded) | 27 ms | — |
+| Policy versions (10,000) / diff | 1 ms / 0.4 ms | 1 ms |
+| Mark 10,000 notifications read | 314 ms | — |
 
 No endpoint returns more than 100 items; the browser never loads a
 collection. There is no server-side cache: security state is read fresh on
@@ -588,7 +679,9 @@ every request (`Cache-Control: no-store`).
 - Branch protection is `unknown` for classic protection rules whose required
   checks GitHub hides without Administration permission.
 - Single host: SQLite and in-process workers, as for the App.
-- Enforcement evidence is refreshed on request, not on a schedule.
-- No notifications, no policy rollback button, no SAML/SSO beyond GitHub
-  sign-in, no OpenAPI document.
+- Enforcement evidence (required check, merge queue) is refreshed on request,
+  not on a schedule.
+- Notification e-mail goes to organization-level recipients configured by
+  administrators; CommitGuard does not store members' e-mail addresses.
+- No SAML/SSO beyond GitHub sign-in, no OpenAPI document.
 - Members are added by numeric GitHub user ID.

@@ -48,6 +48,33 @@ branches, and every decision should be explainable with preserved evidence.
 
 ## Threats and mitigations
 
+### Notifications, merge queue, re-runs and policy recovery (Phase 7)
+
+```text
+domain change ─▶ outbox event (same transaction) ─▶ dispatcher ─▶ inbox rows / delivery records
+                                                                  ─▶ SMTP · signed HTTPS webhook
+GitHub event ─▶ signature ─▶ event record (delivery ID) ─▶ normalise ─▶ execution ─▶ Check Run
+```
+
+| Threat | Mitigation / limitation | Status |
+|---|---|---|
+| Notification spoofing (a forged "policy rolled back" reaching a receiver) | Outbound webhooks are signed with a per-endpoint HMAC-SHA256 secret over timestamp and body (`X-CommitGuard-Signature`), with a documented verification recipe; secrets are derived from a deployment key and never stored; e-mail goes through the operator's configured relay | **[done]** |
+| Webhook replay against a receiver | Signed timestamp with a five-minute acceptance window, plus a stable `X-CommitGuard-Delivery` idempotency key receivers use to discard repeats | **[done]** (receiver must check both) |
+| Notification spam / duplicate flooding | Domain keys with coalescing windows (one notification per pull request, rule and hour, however many commits); unique outbox and delivery keys; replayed GitHub deliveries are duplicates; bounded retries; rate limits on settings and webhook changes | **[done]** |
+| Notification IDOR | Inbox rows belong to one user; every read re-checks the row's user, the member's current role for the type, and the installation and repository GitHub reported for the session; anything else is `404` (tested across tenants and users) | **[done]** |
+| Silencing security notifications | Personal preferences affect only the caller's inbox; organization settings need `notifications:manage`; mandatory types (critical violations, policy changes and rollbacks, installation disconnects) cannot be muted or turned off in-app; turning a delivery off needs explicit confirmation and is audited | **[done]** |
+| Data exfiltration through a webhook endpoint | Only `notifications:manage` may add one, with explicit confirmation and a sign-in within 15 minutes; HTTPS only; the host is resolved at send time, refused unless public in production, and the connection is pinned to the checked address (no DNS rebinding); redirects are never followed; at most 10 endpoints; payloads carry no tokens or secrets | **[done]** |
+| E-mail header and HTML injection | Plain-text messages built with `EmailMessage` (line breaks in headers rejected); notification text is sanitised and truncated when the event is created; webhook JSON escapes `<`, `>` and `&` | **[done]** |
+| Policy rollback abuse (restoring a weak policy quietly) | Separate `policies:rollback` permission; required reason; explicit confirmation; recent sign-in when the rollback weakens a floor; optimistic concurrency; immutable versions (database triggers refuse `UPDATE`/`DELETE`); target integrity check by fingerprint; audit event and notification in the same transaction (tested, including concurrent rollback and publish) | **[done]** |
+| Merge queue confusion (validating the wrong commit) | Merge group refs must be GitHub's read-only queue refs for the event's base branch and the head commit must match; the scan covers `base_sha..head_sha` and publishes to that exact SHA; each merge group SHA has its own scan; a destroyed group is never revived and its queued scan is cancelled | **[done]** |
+| Stale merge group or check result | Check Run ownership per (repository, SHA, check name) with the newest execution winning; a re-run of a commit that is no longer the newest for its pull request or branch is refused and audited; an older scan finishing later changes no violation state | **[done]** |
+| Re-run privilege escalation | A re-run only executes a scan: it cannot change policy, rules or repository settings, and it uses the same trust model (policy from the trusted base) and the current effective policy, which is recorded per execution | **[done]** |
+| Replayed GitHub events | Delivery IDs are recorded with the payload hash; the same ID with the same payload is a duplicate, with a different payload is refused; one logical scan, notification and audit event result (tested) | **[done]** |
+| Lost events after an outage | Event records track processing; a failed or abandoned delivery is processed again when GitHub redelivers, instead of being dropped as a duplicate | **[done]** (needs a redelivery from GitHub) |
+| Installation disconnect going unnoticed | Connection transitions are detected against stored state and notified to `github:manage` members; repositories become **AT RISK** rather than "unprotected"; repeated events do not repeat the alert | **[done]** |
+| Notification delivery failure hiding a security event | The scan result, violation, check and in-app notification are stored before delivery is attempted; failures only change the delivery record, are retried with backoff and are audited | **[done]** |
+| Secrets in notification data | Payload text passes the secret redactor and is bounded; audit events mask e-mail addresses; provider credentials come from the environment or secret files and are registered for log redaction (tested) | **[done]** |
+
 ### Dashboard and control plane (Phase 6)
 
 ```text

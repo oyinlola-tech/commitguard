@@ -143,6 +143,49 @@ requests, authenticates, checks CSRF, rate limits and permissions, and calls
 those services. The browser receives only view models
 (`controlplane/views.py`) and renders them. See [dashboard.md](dashboard.md).
 
+### Operational layer (Phase 7)
+
+```text
+                              GitHub
+             ┌──────────────────┼──────────────────┐
+         PR / push       check_run / check_suite   merge_group
+             └──────────────────┼──────────────────┘
+                                ▼
+          GitHub App: signature → event record (delivery ID, status) → normalise
+                                │
+                  ┌─────────────┴─────────────┐
+                  ▼                           ▼
+        scan execution (worker)       installation state transition
+                  │                           │
+                  ▼                           │
+   CommitGuard core: detection · policy       │
+                  │                           │
+                  ▼                           ▼
+   ScanResultRecorder / OrganizationPolicyService / InstallationService
+        one transaction: state change + audit event + notification outbox
+                  │
+                  ├──► GitHub Check Run (exact repository, SHA, check, execution)
+                  ▼
+      notifications: dispatcher ──► in-app · e-mail (SMTP) · signed webhook
+                                         └─ bounded retries, delivery audit
+```
+
+The core security principle is unchanged: detection → policy → security
+decision → enforcement → notification → audit. Notifications, the dashboard
+and GitHub event handlers never decide; they orchestrate and report.
+
+| Component | Module | Role |
+|---|---|---|
+| Event processing | `github.app`, `github.events`, `github.storage` | normalised `MergeGroupEvent`, `CheckRunRerequestedEvent`, `CheckSuiteRerequestedEvent`; event records with processing status and safe redelivery |
+| Scan executions | `github.storage` (`create_execution`), `github.worker` | numbered executions of one logical scan (`push`, `pull_request`, `merge_group`, `manual`, `rerun`, `retry`); stale protection through Check Run ownership |
+| Merge queue | `github.app`, `github.worker`, `controlplane.results` | merge group records, scans of `base..merge group`, merge group exposures |
+| Policy recovery | `controlplane.policies` | immutable versions, diff, rollback as a new version |
+| Recovery | `github.recovery` | abandoned events, bounded automatic retry executions |
+| Notifications | `notifications` (`models`, `outbox`, `deduplication`, `dispatcher`, `retry`, `preferences`, `templates`, `channels/{in_app,email,webhook,sink}`, `service`, `settings`) and `controlplane.notifications` (API-facing center) | transactional outbox, fan-out, delivery with retries |
+
+See [notifications.md](notifications.md), [merge-queue.md](merge-queue.md),
+[policy-management.md](policy-management.md) and [recovery.md](recovery.md).
+
 The adapters differ only at the edges:
 
 ```text
@@ -169,10 +212,11 @@ The adapters differ only at the edges:
 | `git` | Git CLI wrapper, repository queries, commit model, `CommitRange` (`ranges`), pre-push input parsing, hook install/uninstall/integrity | implemented (staged diff inspection: planned) |
 | `config` | schema, layered loader, policy sources (`sources`: working tree / trusted revision / built-in), enforcement settings | implemented |
 | `ci` | provider-neutral `CIContext` | implemented |
-| `github` | Actions: event normalisation (`events`), output (`actions`), check model (`checks`), workflow template and inspection (`workflow`). App: `settings`, `auth`, `client`, `webhooks`, `installations`, `repositories` (mirrors), `storage`, `queue`, `worker`, `check_runs`, `app` (WSGI), `server` | implemented |
+| `github` | Actions: event normalisation (`events`), output (`actions`), check model (`checks`), workflow template and inspection (`workflow`). App: `settings`, `auth`, `client`, `webhooks`, `installations`, `repositories` (mirrors), `storage`, `queue`, `worker`, `check_runs`, `recovery`, `app` (WSGI), `server` | implemented |
 | `audit` | audit event model, storage interface, logger | implemented (recorded by the GitHub App) |
 | `observability` | structured JSON logs, correlation IDs, redaction, metrics | implemented |
 | `controlplane` | roles and access scope (`access`), sign-in and sessions (`identity`), members, scan result recording and violation lifecycle (`results`), versioned organization policy (`policies`), read services (`queries`), write commands (`commands`), rule catalogue, pagination, API view models (`views`) | implemented |
+| `notifications` | notification types and events, transactional outbox, deduplication, dispatcher, preferences, delivery worker with bounded retries, templates, channels (in-app, SMTP e-mail, signed webhooks, test sinks), settings | implemented |
 | `api` | framework-free WSGI `/api/v1` (`app`), HTTP primitives, dashboard settings, hosting of the built dashboard and composition with the webhook app (`hosting`) | implemented |
 | `web/` (repository root) | React + TypeScript dashboard: typed API client, pages, design system, unit and browser tests | implemented |
 | `security` | validation, sanitisation, hashing, strict safe YAML | implemented |
@@ -190,8 +234,11 @@ Enforced by `tests/unit/test_architecture.py`:
 - `github`, `ci` and `services/ci.py` never import detectors, the detection engine or the
   policy evaluator directly: CI enforcement cannot grow its own detection logic.
 - No module imports HTTP clients or AI SDKs (`requests`, `httpx`, `openai`, `anthropic`, …).
-- Network modules (`urllib.request`, `http.client`, `ssl`, `socket`, servers)
-  appear only in `github.client` (outbound) and `github.server` (inbound).
+- Network modules (`urllib.request`, `http.client`, `ssl`, `socket`, `smtplib`,
+  servers) appear only in `github.client` (outbound), `github.server`
+  (inbound), and the two notification channels
+  `notifications.channels.email` (SMTP) and `notifications.channels.webhook`
+  (signed HTTPS POST).
 - `cryptography` is used only by `github.auth`; importing the CLI loads neither
   it nor the App service, SQLite or HTTP modules, so hooks and the Action stay
   offline and dependency-light.

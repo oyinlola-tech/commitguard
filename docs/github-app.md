@@ -94,29 +94,47 @@ Repository permissions:
 | Metadata | Read-only | mandatory for all Apps; look repositories up by ID |
 | Pull requests | Read-only | receive `pull_request` events; confirm a PR is still open |
 
+Optional, for merge queue support only:
+
+| Permission | Level | Why |
+|---|---|---|
+| Merge queues | Read-only | receive `merge_group` events, so CommitGuard can validate the exact commit a merge queue tests ([merge-queue.md](merge-queue.md)) |
+
 Grant nothing else. CommitGuard does **not** need Contents write,
 Administration, Actions, Workflows, Members or any organisation permission.
-`commitguard github validate` reports missing permissions as errors and
-unnecessary ones as warnings.
+`commitguard github validate` reports missing required permissions as errors,
+unnecessary ones as warnings, and a missing optional permission as a warning
+saying which feature is off.
 
 Every installation token CommitGuard requests is additionally **down-scoped**
-to exactly these four permissions and to the single repository being scanned.
+to exactly the four required permissions and to the single repository being
+scanned; optional permissions are never requested for a token.
 
 ## 3. Subscribe to events
 
-Subscribe to **Pull request** and **Push**. GitHub always sends
-`installation` and `installation_repositories` events to Apps.
+Subscribe to **Pull request** and **Push**; also subscribe to **Check run**,
+**Check suite** and **Merge group** to support GitHub's re-run buttons and
+merge queues. GitHub always sends `installation` and
+`installation_repositories` events to Apps.
 
 | Event | Handling |
 |---|---|
-| `installation` (`created`, `deleted`, `suspend`, `unsuspend`, `new_permissions_accepted`) | record, disable or re-enable the installation |
+| `installation` (`created`, `deleted`, `suspend`, `unsuspend`, `new_permissions_accepted`) | record, disable or re-enable the installation; a connection change notifies administrators |
 | `installation_repositories` (`added`, `removed`) | record access; removed repositories lose their mirror and cached tokens |
 | `pull_request` `opened`, `synchronize`, `reopened` | scan `base..head` (all PR commits) |
 | `pull_request` `edited` with a base branch change | scan again |
 | `pull_request` `closed` | not merged: cancel queued scans; merged: audit event only |
 | `push` to a branch | scan `before..after` (new branch: limited by the default branch) |
 | `push` deleting a branch, tags | ignored |
-| everything else, including `ping` | acknowledged and ignored |
+| `merge_group` `checks_requested` | scan the merge group commit (`base_sha..head_sha`) and publish `commitguard-app` on it |
+| `merge_group` `destroyed` | cancel a queued scan, end the group's exposures (`merged`: move them to the target branch) |
+| `check_run` `rerequested` | "Re-run" on a CommitGuard check: a new execution of the stored scan |
+| `check_suite` `rerequested` | "Re-run all checks": a new execution per CommitGuard check on that commit |
+| everything else, including `ping`, `check_run` `created`/`completed` | acknowledged and ignored |
+
+Without the re-run subscriptions the buttons do nothing (use **Scan again** in
+the dashboard); without **Merge group** and its permission, merge groups are
+not validated.
 
 ## 4. Generate a private key
 
@@ -241,8 +259,14 @@ protection rule or ruleset for your protected branch:
    CommitGuard App as the expected source if GitHub offers that option;
 3. restrict direct pushes.
 
-CommitGuard cannot configure or verify these settings. `commitguard-app/push`
-is informational: a push event arrives after the commits are already on GitHub.
+If the branch also uses a **merge queue**, CommitGuard validates the merge
+group commit and reports `commitguard-app` on it; see
+[merge-queue.md](merge-queue.md).
+
+CommitGuard cannot configure these settings. It reads evidence about them
+(required checks, merge queue) only when an administrator refreshes the
+enforcement status in the dashboard. `commitguard-app/push` is informational:
+a push event arrives after the commits are already on GitHub.
 
 ## Check Runs
 
@@ -415,8 +439,21 @@ you. Keep the Action if you use merge queues.
 - **Monitoring paused.** A repository paused in the dashboard is ignored by
   webhooks and queued scans are cancelled; no Check Run is created for it.
 - **Job states.** `queued`, `running`, `passed`, `failed` (policy blocked),
-  `error` (could not complete), `cancelled`. `failed` and `error` both fail the
-  check, but they are recorded separately.
+  `error` (could not complete), `cancelled` (including superseded, shown as
+  `stale` in the dashboard). `failed` and `error` both fail the check, but they
+  are recorded separately.
+- **Executions.** A re-run, a dashboard **Scan again** and an automatic retry
+  create a new *execution* of the same logical scan: same repository, commits
+  and check name, a new row, `attempt` number and trigger. Earlier executions
+  are never modified; the newest one owns the Check Run.
+- **Event records.** Every verified delivery is stored with its processing
+  status (`processing` → `processed` / `ignored` / `failed`). A redelivery of a
+  processed event is a duplicate; a redelivery of a failed or abandoned one is
+  processed again ([recovery.md](recovery.md)).
+- **Notifications.** Blocked violations, policy changes and rollbacks,
+  installation disconnects and merge queue failures are written to a
+  notification outbox in the same transaction as the change and delivered
+  in-app, by e-mail and to signed webhooks ([notifications.md](notifications.md)).
 - **Retention.** Deliveries, finished jobs, Check Run ownership records, audit
   events, deleted installations and unused mirrors are purged after
   `COMMITGUARD_APP_RETENTION_DAYS` (default 30). Nothing is kept forever by
@@ -427,7 +464,11 @@ you. Keep the Action if you use merge queues.
   `webhooks_received`, `webhooks_rejected`, `webhooks_duplicate`,
   `scans_queued`, `scans_started`, `scans_completed`, `scans_failed`,
   `scans_cancelled`, `policy_violations`, `github_api_errors`,
-  `github_rate_limits`.
+  `github_rate_limits`, `github_events_received`, `github_events_failed`,
+  `github_events_replayed`, `check_reruns`, `scan_retries`,
+  `merge_groups_scanned`, `merge_groups_failed`, `policy_rollbacks`,
+  `policy_rollback_failures`, `notifications_created`, `notifications_sent`,
+  `notifications_failed`, `notification_retries`.
 
 ## Local development
 
@@ -452,16 +493,18 @@ For work without GitHub, the test suite contains a full offline model:
   covered by the offline model only.
 - **Branch protection.** It is not configured or verified. A failed check
   prevents nothing unless GitHub requires it.
-- **Merge queues.** `merge_group` is not handled by the App. If a queue
-  requires `commitguard-app`, entries will wait forever: use the Action for
-  merge queues.
+- **Merge queues.** Supported with the **Merge queues: read** permission and
+  the `merge_group` subscription. Without them the App does not see merge
+  groups, and a queue that requires `commitguard-app` waits for the queue's
+  check timeout: grant them, or use the Action for merge queues.
 - **Several open PRs with the same head.** When pull requests into different
   base branches share a head SHA, they share one `commitguard-app` check on
   that SHA; the most recently started scan owns it. This follows GitHub's model
   of checks per commit.
-- **Re-running a check.** "Re-run" from the GitHub UI (`check_run.rerequested`)
-  is not handled. Use **Scan again** on the scan in the dashboard, push a new
-  commit, or reopen the pull request.
+- **Re-running a check.** Supported with the **Check run** and **Check suite**
+  subscriptions. A re-run of a check whose commit is no longer the newest for
+  its pull request or branch is refused (and audited), so an old commit's
+  result can never become the current state.
 - **Single host.** The SQLite state store and the in-process queue support one
   host (several processes on that host share the database safely). Running
   several hosts needs a shared database implementation of the storage

@@ -57,7 +57,9 @@ the services. Neither is included today.
 - Git 2.45 or newer on the host. The service relies on `GIT_NO_LAZY_FETCH` and
   partial-clone fetches.
 - Outbound HTTPS to `api.github.com` and `github.com`, directly or through an
-  `HTTPS_PROXY` you set.
+  `HTTPS_PROXY` you set. For notifications: outbound SMTP to your relay and
+  outbound HTTPS to any webhook endpoints administrators register (both
+  optional).
 - Inbound HTTPS from GitHub's webhook addresses to your reverse proxy. GitHub
   publishes its IP ranges through its meta API if you want to restrict them.
 - A persistent, backed-up directory for `COMMITGUARD_APP_DATA_DIR`, owned by a
@@ -88,6 +90,26 @@ are valid.
 
 4. Grant the first organization owner:
    `commitguard dashboard members grant --organization <login> --user-id <id> --role owner`.
+5. Optional: enable notification delivery. In-app notifications work without
+   any of this; e-mail and webhooks need:
+
+   ```ini
+   Environment=COMMITGUARD_NOTIFICATIONS_MODE=deliver
+   Environment=COMMITGUARD_SMTP_HOST=smtp.example.com
+   Environment=COMMITGUARD_SMTP_FROM=commitguard@example.com
+   Environment=COMMITGUARD_SMTP_PASSWORD_FILE=/etc/commitguard/smtp-password
+   Environment=COMMITGUARD_NOTIFICATION_SIGNING_KEY_FILE=/etc/commitguard/notification-key
+   ```
+
+   The signing key (32+ random characters) derives each webhook endpoint's
+   signing secret; keep it as stable as the endpoints, because rotating it
+   invalidates every receiver's secret. Administrators then add e-mail
+   recipients and endpoints in **Settings → Notifications**. See
+   [notifications.md](notifications.md).
+6. Optional: for merge queue support, grant the App **Merge queues: read** and
+   subscribe to **Merge group**; for GitHub's re-run buttons, subscribe to
+   **Check run** and **Check suite**
+   ([merge-queue.md](merge-queue.md), [github-app.md](github-app.md#3-subscribe-to-events)).
 
 Frontend and API share one origin by design: the session cookie stays
 first-party, `SameSite` protects writes, and no CORS is needed. To serve the
@@ -189,7 +211,11 @@ secrets, repository names or configuration values.
 | Audit events | SQLite | retention |
 | Findings: rule, evidence value, commit SHA, author and committer of that commit | SQLite | retention, except findings of still-open violations |
 | Violations and where they were detected | SQLite | resolved violations purged after retention; open ones kept |
-| Organization policy versions (floors, author, reason) | SQLite | kept, to explain historical scans |
+| Organization policy versions (floors, author, reason, rollback lineage) | SQLite | kept, to explain historical scans; immutable (database triggers refuse updates and deletes) |
+| Merge groups (SHAs, target branch, queued pull request numbers, state) | SQLite | destroyed groups purged after retention |
+| Notification events and inbox entries (type, severity, title and summary text, repository, occurrence count) | SQLite | `COMMITGUARD_NOTIFICATION_RETENTION_DAYS` (default 90) |
+| Notification delivery records (channel, destination address or endpoint ID, status, attempts, failure code) | SQLite | with their notification event |
+| Notification settings: organization e-mail recipients and webhook endpoint URLs | SQLite | until removed by an administrator |
 | Members (GitHub user ID, login, role) | SQLite | until removed |
 | Sessions (token hash, user agent, times) and the repositories GitHub reported at sign-in | SQLite | deleted at sign-out, revocation or expiry |
 | Repository settings and enforcement evidence | SQLite | until the installation is purged |
@@ -197,8 +223,11 @@ secrets, repository names or configuration values.
 
 - **Never stored:** commit messages, file contents (apart from the CommitGuard
   configuration blobs inside mirrors), GitHub installation or user tokens,
-  JWTs, keys, the webhook secret, the client secret, session tokens (only their
-  hashes), or request headers. Author and committer identities are stored only
+  JWTs, keys, the webhook secret, the client secret, notification webhook
+  signing secrets (derived on demand from the signing key), SMTP credentials,
+  session tokens (only their hashes), or request headers. Notification e-mail
+  goes to organization addresses an administrator entered; members' personal
+  e-mail addresses are never read from GitHub or stored. Author and committer identities are stored only
   for commits that produced a finding, to explain the violation.
 - **Purging:** the maintenance thread runs retention purging hourly.
 - **Backups:** back up the SQLite file (WAL mode; use `sqlite3 .backup` or stop
@@ -209,7 +238,11 @@ secrets, repository names or configuration values.
 
 | Situation | Behaviour |
 |---|---|
-| Duplicate or replayed webhook | acknowledged; no second scan |
+| Duplicate or replayed webhook | acknowledged; no second scan, notification or audit event |
+| Webhook processing failed (database error, crash) | the event is recorded as failed; GitHub's redelivery of the same ID is processed again instead of being dropped |
+| Merge group destroyed before its scan | the queued scan is cancelled; nothing is published |
+| Re-run of an outdated commit's check | refused and audited; the newest execution keeps the check |
+| Notification provider unavailable | the security decision and in-app notification stand; delivery is retried (1 m, 5 m, 30 m, 2 h), then marked failed and audited |
 | Out-of-order events | a newer job owns the check; older scans cannot overwrite it |
 | Process crash or restart | queued jobs and jobs whose 30-minute lease expired are re-queued; each job gets at most 3 attempts, then `error` |
 | GitHub 5xx, network errors or timeouts | at most 3 attempts with exponential backoff, then the check fails closed |
@@ -219,7 +252,10 @@ secrets, repository names or configuration values.
 
 GitHub does not redeliver failed webhooks automatically. If the service was
 down, redeliver the events from the App's delivery log, push again, or reopen
-affected pull requests.
+affected pull requests. After an infrastructure failure CommitGuard also
+schedules up to two automatic retry executions (after 5 and 20 minutes) for
+scans that are still current. [recovery.md](recovery.md) lists every failure
+and its behaviour.
 
 ## Upgrades
 
@@ -227,8 +263,13 @@ affected pull requests.
 - The database schema is versioned and migrated automatically at start-up
   inside one transaction. Phase 5 databases (schema 1) are upgraded to schema 2
   (dashboard tables; existing repositories and audit events are backfilled
-  with their organization). A database from a newer CommitGuard is refused
-  rather than modified. Back up the database before upgrading.
+  with their organization), and schema 2 to schema 3 (scan executions, event
+  processing status, merge groups, policy version lineage and immutability
+  triggers, notification tables; existing scans are backfilled as execution 1
+  of their logical scan, manual re-scans as later executions). Migrations only
+  add data; no policy version, scan or audit event is deleted. A database from
+  a newer CommitGuard is refused rather than modified. Back up the database
+  before upgrading.
 - Detection rules ship with the package, and the rules version (a hash) is
   recorded with every scan.
 
@@ -246,3 +287,7 @@ affected pull requests.
 - [ ] Dashboard: client secret stored as a file, mode `600`; rotated if exposed
 - [ ] Dashboard: first owner granted by numeric user ID; members reviewed in **Settings**
 - [ ] Dashboard: `COMMITGUARD_DASHBOARD_ALLOWED_ORIGINS` unset unless a second origin is required
+- [ ] Notifications: `COMMITGUARD_NOTIFICATIONS_MODE` is `deliver` only where real delivery is intended (staging uses `test`)
+- [ ] Notifications: SMTP password and signing key stored as files, mode `600`
+- [ ] Notifications: webhook endpoints reviewed in **Settings → Notifications**; each receiver verifies the signature and timestamp
+- [ ] Notifications: organization e-mail recipients reviewed (they receive repository names and rule IDs)
