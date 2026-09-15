@@ -44,7 +44,7 @@ class AuditService:
             repository=repository,
             head_sha=head_sha,
             action=action,
-            **{**(extra or {}), **data},
+            extra={**(extra or {}), **data},
         )
         self._logger.record(event)
         return event
@@ -60,9 +60,11 @@ class AuditService:
         repository: str | None = None,
         head_sha: str | None = None,
         action: Action | None = None,
+        extra: Mapping[str, AuditValue] | None = None,
         **data: AuditValue,
     ) -> AuditEvent:
         """Create an event without storing it (for writes inside a larger transaction)."""
+        data = {**(extra or {}), **data}
         correlation = current_correlation()
 
         def _str(key: str) -> str | None:

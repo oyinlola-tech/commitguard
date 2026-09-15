@@ -34,7 +34,7 @@ event; only ``created`` makes it active again.
 """
 
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -103,6 +103,29 @@ class InstallationService:
         self._mirrors = mirrors
         self._audit = audit
         self._now = now
+        self._discovery_listeners: list[Callable[[int, int, Sequence[RepositoryRef]], None]] = []
+
+    def add_discovery_listener(
+        self, listener: Callable[[int, int, Sequence[RepositoryRef]], None]
+    ) -> None:
+        """Call ``listener(account_id, installation_id, repositories)`` for listed repositories.
+
+        Organization governance uses it to record newly discovered repositories
+        and apply the organization's onboarding defaults. A listener failure is
+        logged and never fails the GitHub event.
+        """
+        self._discovery_listeners.append(listener)
+
+    def _discovered(
+        self, account_id: int, installation_id: int, repositories: Sequence[RepositoryRef]
+    ) -> None:
+        if not repositories:
+            return
+        for listener in self._discovery_listeners:
+            try:
+                listener(account_id, installation_id, repositories)
+            except Exception as exc:  # noqa: BLE001 - discovery must not fail the event
+                log.error("repository_discovery_listener_failed", error_type=type(exc).__name__)
 
     # -- webhooks -------------------------------------------------------- #
     def handle_installation(self, event: InstallationEvent) -> None:
@@ -138,6 +161,7 @@ class InstallationService:
                 repository_selection=event.repository_selection,
                 repositories=len(event.repositories),
             )
+            self._discovered(event.account.id, installation_id, event.repositories)
         elif event.action is InstallationAction.DELETED:
             repositories = len(self._store.list_repositories(installation_id))
             self._apply(
@@ -320,6 +344,8 @@ class InstallationService:
                 installation_id=event.installation_id,
                 repositories=len(event.added),
             )
+            account_id = existing.account_id if existing is not None else event.account.id
+            self._discovered(account_id, event.installation_id, event.added)
         else:
             removed = [r.id for r in event.removed]
             self._store.remove_repositories(event.installation_id, removed, now)
@@ -414,8 +440,12 @@ class InstallationService:
         repositories = tuple(info.ref for info in listed)
         self._store.replace_repositories(installation_id, repositories, now)
         for repository_info in listed:
-            self._store.set_default_branch(
-                installation_id, repository_info.id, repository_info.default_branch
+            self._store.set_repository_details(
+                installation_id,
+                repository_info.id,
+                default_branch=repository_info.default_branch,
+                private=repository_info.private,
+                archived=repository_info.archived,
             )
         after = {r.id: r for r in repositories}
         added = tuple(r for rid, r in sorted(after.items()) if rid not in before)
@@ -431,6 +461,7 @@ class InstallationService:
             added=len(added),
             removed=len(removed),
         )
+        self._discovered(record.account_id, installation_id, repositories)
         return RepositorySync(installation_id, repositories, added, removed, now)
 
     def authorize(self, installation_id: int, repository: RepositoryRef) -> AuthorizedRepository:
@@ -454,7 +485,13 @@ class InstallationService:
             raise AuthorizationError("repository identity mismatch")
         canonical = info.ref
         self._store.add_repositories(installation_id, [canonical], self._now())
-        self._store.set_default_branch(installation_id, canonical.id, info.default_branch)
+        self._store.set_repository_details(
+            installation_id,
+            canonical.id,
+            default_branch=info.default_branch,
+            private=info.private,
+            archived=info.archived,
+        )
         return AuthorizedRepository(
             installation_id=installation_id,
             repository=canonical,

@@ -108,6 +108,52 @@ class AuditEventType(StrEnum):
     NOTIFICATION_PREFERENCES_CHANGED = "notification_preferences_changed"
     NOTIFICATION_WEBHOOK_ADDED = "notification_webhook_added"
     NOTIFICATION_WEBHOOK_REMOVED = "notification_webhook_removed"
+    # Phase 8: organization governance.
+    ORGANIZATION_SETTINGS_CHANGED = "organization_settings_changed"
+    REPOSITORY_DISCOVERED = "repository_discovered"
+    REPOSITORY_ONBOARDED = "repository_onboarded"
+    REPOSITORY_EXCLUDED = "repository_excluded"
+    REPOSITORY_MODE_CHANGED = "repository_mode_changed"
+    REPOSITORY_ARCHIVED = "repository_archived"
+    REPOSITORY_SYNC_FAILED = "repository_sync_failed"
+    REPOSITORY_GROUP_CREATED = "repository_group_created"
+    REPOSITORY_GROUP_UPDATED = "repository_group_updated"
+    REPOSITORY_GROUP_ARCHIVED = "repository_group_archived"
+    REPOSITORY_GROUP_MEMBERS_ADDED = "repository_group_members_added"
+    REPOSITORY_GROUP_MEMBERS_REMOVED = "repository_group_members_removed"
+    POLICY_DRAFT_CREATED = "policy_draft_created"
+    POLICY_DRAFT_UPDATED = "policy_draft_updated"
+    POLICY_DRAFT_CANCELLED = "policy_draft_cancelled"
+    POLICY_APPROVAL_REQUESTED = "policy_approval_requested"
+    POLICY_APPROVED = "policy_approved"
+    POLICY_REJECTED = "policy_rejected"
+    POLICY_PUBLISHED = "policy_published"
+    POLICY_EMERGENCY_PUBLISHED = "policy_emergency_published"
+    POLICY_ROLLED_BACK = "policy_rolled_back"
+    POLICY_SIMULATED = "policy_simulated"
+    POLICY_ROLLOUT_STARTED = "policy_rollout_started"
+    POLICY_ROLLOUT_ADVANCED = "policy_rollout_advanced"
+    POLICY_ROLLOUT_PAUSED = "policy_rollout_paused"
+    POLICY_ROLLOUT_RESUMED = "policy_rollout_resumed"
+    POLICY_ROLLOUT_COMPLETED = "policy_rollout_completed"
+    POLICY_ROLLOUT_ROLLED_BACK = "policy_rollout_rolled_back"
+    POLICY_PROPAGATION_FAILED = "policy_propagation_failed"
+    EXCEPTION_REQUESTED = "exception_requested"
+    EXCEPTION_APPROVED = "exception_approved"
+    EXCEPTION_REJECTED = "exception_rejected"
+    EXCEPTION_CANCELLED = "exception_cancelled"
+    EXCEPTION_REVOKED = "exception_revoked"
+    EXCEPTION_EXPIRED = "exception_expired"
+    ORGANIZATION_RULES_CHANGED = "organization_rules_changed"
+    SCAN_SCHEDULE_CREATED = "scan_schedule_created"
+    SCAN_SCHEDULE_CHANGED = "scan_schedule_changed"
+    SCAN_SCHEDULE_DISABLED = "scan_schedule_disabled"
+    SCHEDULED_SCANS_QUEUED = "scheduled_scans_queued"
+    BULK_OPERATION_REQUESTED = "bulk_operation_requested"
+    BULK_OPERATION_FINISHED = "bulk_operation_finished"
+    BULK_OPERATION_CANCELLED = "bulk_operation_cancelled"
+    SECURITY_EVENT_ACKNOWLEDGED = "security_event_acknowledged"
+    REPORT_EXPORTED = "report_exported"
 
 
 #: Security-relevant events. Notifications are not generated from this list: the
@@ -126,6 +172,16 @@ SECURITY_ALERT_TYPES = frozenset(
         AuditEventType.MEMBER_ROLE_CHANGED,
         AuditEventType.MERGE_GROUP_BLOCKED,
         AuditEventType.NOTIFICATION_SETTINGS_CHANGED,
+        AuditEventType.ORGANIZATION_SETTINGS_CHANGED,
+        AuditEventType.REPOSITORY_MODE_CHANGED,
+        AuditEventType.POLICY_PUBLISHED,
+        AuditEventType.POLICY_EMERGENCY_PUBLISHED,
+        AuditEventType.POLICY_ROLLED_BACK,
+        AuditEventType.POLICY_ROLLOUT_PAUSED,
+        AuditEventType.POLICY_PROPAGATION_FAILED,
+        AuditEventType.EXCEPTION_APPROVED,
+        AuditEventType.EXCEPTION_REVOKED,
+        AuditEventType.ORGANIZATION_RULES_CHANGED,
     }
 )
 

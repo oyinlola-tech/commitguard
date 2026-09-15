@@ -102,6 +102,10 @@ def test_every_type_has_a_definition_with_a_real_permission() -> None:
         NotificationType.POLICY_CHANGED,
         NotificationType.POLICY_ROLLED_BACK,
         NotificationType.INSTALLATION_DISCONNECTED,
+        NotificationType.POLICY_EMERGENCY_PUBLISHED,
+        NotificationType.POLICY_ROLLOUT_FAILED,
+        NotificationType.POLICY_PROPAGATION_FAILED,
+        NotificationType.REPOSITORY_UNPROTECTED,
     }
 
 

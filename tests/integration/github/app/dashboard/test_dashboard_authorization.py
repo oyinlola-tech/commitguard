@@ -273,7 +273,7 @@ def test_admin_changes_policy_and_it_is_audited(dash) -> None:  # type: ignore[n
     assert result.status == 200, result.raw
     assert result.data["version"] == 1
     assert result.meta["changes"] == [
-        {"policy_id": "bot_identity", "old": None, "new": "block", "weakening": False}
+        {"policy_id": "bot_identity", "old": None, "new": "block", "weakening": False, "enforcement": "mandatory"}
     ]
     alice = dash.sign_in(ALICE)
     [event] = alice.get("/api/v1/audit", type="organization_policy_changed").data

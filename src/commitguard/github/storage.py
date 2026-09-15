@@ -53,7 +53,7 @@ from commitguard.ci.context import CIContext
 from commitguard.exceptions.service import InfrastructureError
 from commitguard.github.identifiers import AccountType, RepositoryRef
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DATABASE_FILENAME = "commitguard-app.sqlite3"
 DEFAULT_MAX_ATTEMPTS = 3
 
@@ -773,7 +773,390 @@ CREATE TABLE notification_webhooks (
 CREATE INDEX notification_webhooks_account ON notification_webhooks (account_id, removed_at);
 """
 
-_MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
+# Version 4: organization governance (Phase 8). Governance rows are keyed by the
+# account (tenant) and GitHub's repository ID, which survives a reinstallation.
+_SCHEMA_V4 = """
+ALTER TABLE known_repositories ADD COLUMN private INTEGER;
+ALTER TABLE known_repositories ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE scan_jobs ADD COLUMN governance TEXT;
+ALTER TABLE scan_jobs ADD COLUMN governance_fingerprint TEXT;
+ALTER TABLE scan_jobs ADD COLUMN repository_policies TEXT;
+ALTER TABLE scan_jobs ADD COLUMN schedule_id TEXT;
+CREATE INDEX scan_jobs_repository_completed ON scan_jobs (repository_id, completed_at);
+CREATE TRIGGER audit_events_immutable
+    BEFORE UPDATE ON audit_events
+    BEGIN SELECT RAISE(ABORT, 'audit events are immutable'); END;
+
+CREATE TABLE organization_settings (
+    account_id INTEGER PRIMARY KEY,
+    version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    updated_at REAL NOT NULL,
+    updated_by_id INTEGER,
+    updated_by_login TEXT
+);
+
+CREATE TABLE repository_governance (
+    account_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    onboarding TEXT NOT NULL CHECK (onboarding IN ('discovered', 'onboarded', 'excluded')),
+    mode TEXT NOT NULL CHECK (mode IN ('monitor', 'enforce')),
+    discovered_at REAL NOT NULL,
+    onboarded_at REAL,
+    onboarded_by TEXT,
+    mode_changed_at REAL,
+    mode_changed_by TEXT,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (account_id, repository_id)
+);
+CREATE INDEX repository_governance_state ON repository_governance (account_id, onboarding, mode);
+INSERT OR IGNORE INTO repository_governance
+    (account_id, repository_id, onboarding, mode, discovered_at, onboarded_at, onboarded_by,
+     updated_at)
+    SELECT i.account_id, k.repository_id, 'onboarded', 'enforce', MIN(k.first_seen_at),
+           MIN(k.first_seen_at), 'migration', MIN(k.first_seen_at)
+    FROM known_repositories k JOIN installations i ON i.installation_id = k.installation_id
+    GROUP BY i.account_id, k.repository_id;
+
+CREATE TABLE repository_groups (
+    group_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    description TEXT,
+    created_at REAL NOT NULL,
+    created_by TEXT,
+    updated_at REAL NOT NULL,
+    archived_at REAL,
+    archived_by TEXT
+);
+CREATE UNIQUE INDEX repository_groups_name
+    ON repository_groups (account_id, name_key) WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX repository_groups_tenant ON repository_groups (group_id, account_id);
+CREATE TABLE repository_group_members (
+    group_id TEXT NOT NULL,
+    account_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    added_at REAL NOT NULL,
+    added_by TEXT,
+    PRIMARY KEY (group_id, repository_id),
+    FOREIGN KEY (group_id, account_id) REFERENCES repository_groups (group_id, account_id)
+);
+CREATE INDEX repository_group_members_repository
+    ON repository_group_members (account_id, repository_id);
+
+ALTER TABLE organization_policy_versions ADD COLUMN draft_id TEXT;
+ALTER TABLE organization_policy_versions ADD COLUMN emergency INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE scoped_policy_versions (
+    account_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL CHECK (target_type IN ('group', 'repository')),
+    target_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    created_by_id INTEGER,
+    created_by_login TEXT,
+    reason TEXT,
+    kind TEXT NOT NULL DEFAULT 'change',
+    rollback_of INTEGER,
+    restored_version INTEGER,
+    draft_id TEXT,
+    emergency INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, target_type, target_id, version)
+);
+CREATE TRIGGER scoped_policy_versions_immutable
+    BEFORE UPDATE ON scoped_policy_versions
+    BEGIN SELECT RAISE(ABORT, 'policy versions are immutable'); END;
+CREATE TRIGGER scoped_policy_versions_permanent
+    BEFORE DELETE ON scoped_policy_versions
+    BEGIN SELECT RAISE(ABORT, 'policy versions are immutable'); END;
+
+CREATE TABLE policy_drafts (
+    draft_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL CHECK (target_type IN ('organization', 'group', 'repository')),
+    target_id TEXT NOT NULL,
+    base_version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    title TEXT NOT NULL,
+    reason TEXT,
+    state TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    created_by_id INTEGER,
+    created_by_login TEXT,
+    updated_at REAL NOT NULL,
+    submitted_at REAL,
+    submitted_by_id INTEGER,
+    submitted_by_login TEXT,
+    published_version INTEGER,
+    published_at REAL,
+    published_by_login TEXT,
+    emergency INTEGER NOT NULL DEFAULT 0,
+    rollout_id TEXT
+);
+CREATE INDEX policy_drafts_account ON policy_drafts (account_id, state, updated_at);
+CREATE TABLE policy_approvals (
+    approval_id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL REFERENCES policy_drafts (draft_id),
+    account_id INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    requested_by_id INTEGER,
+    requested_by_login TEXT,
+    requested_at REAL NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+    decided_by_id INTEGER,
+    decided_by_login TEXT,
+    decided_at REAL,
+    reason TEXT
+);
+CREATE UNIQUE INDEX policy_approvals_pending
+    ON policy_approvals (draft_id) WHERE status = 'pending';
+CREATE INDEX policy_approvals_account ON policy_approvals (account_id, status, requested_at);
+
+CREATE TABLE policy_exceptions (
+    exception_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    rule_id TEXT NOT NULL,
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('organization', 'group', 'repository')),
+    scope_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('warn', 'allow')),
+    severity TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL
+        CHECK (status IN ('requested', 'active', 'rejected', 'cancelled', 'revoked', 'expired')),
+    requires_approval INTEGER NOT NULL,
+    permanent INTEGER NOT NULL DEFAULT 0,
+    expires_at REAL,
+    requested_at REAL NOT NULL,
+    requested_by_id INTEGER,
+    requested_by_login TEXT,
+    decided_at REAL,
+    decided_by_id INTEGER,
+    decided_by_login TEXT,
+    decision_note TEXT,
+    activated_at REAL,
+    revoked_at REAL,
+    revoked_by_login TEXT,
+    revoke_reason TEXT,
+    expired_at REAL,
+    warnings_sent TEXT NOT NULL DEFAULT '[]',
+    updated_at REAL NOT NULL,
+    CHECK (permanent = 1 OR expires_at IS NOT NULL)
+);
+CREATE INDEX policy_exceptions_status ON policy_exceptions (account_id, status, expires_at);
+CREATE INDEX policy_exceptions_due ON policy_exceptions (status, expires_at);
+CREATE UNIQUE INDEX policy_exceptions_open
+    ON policy_exceptions (account_id, rule_id, scope_type, scope_id)
+    WHERE status IN ('requested', 'active');
+CREATE TRIGGER policy_exceptions_permanent
+    BEFORE DELETE ON policy_exceptions
+    BEGIN SELECT RAISE(ABORT, 'policy exceptions are kept as history'); END;
+
+CREATE TABLE policy_rollouts (
+    rollout_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL CHECK (target_type IN ('organization', 'group')),
+    target_id TEXT NOT NULL,
+    from_version INTEGER NOT NULL,
+    to_version INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pilot', 'rollout', 'paused', 'active', 'rolled_back')),
+    stages TEXT NOT NULL,
+    current_stage INTEGER NOT NULL,
+    thresholds TEXT NOT NULL,
+    auto_pause INTEGER NOT NULL,
+    auto_rollback INTEGER NOT NULL,
+    created_at REAL NOT NULL,
+    created_by_id INTEGER,
+    created_by_login TEXT,
+    updated_at REAL NOT NULL,
+    stage_started_at REAL NOT NULL,
+    paused_at REAL,
+    paused_reason TEXT,
+    paused_from TEXT,
+    completed_at REAL,
+    rolled_back_at REAL,
+    rollback_version INTEGER
+);
+CREATE UNIQUE INDEX policy_rollouts_in_progress
+    ON policy_rollouts (account_id, target_type, target_id)
+    WHERE state IN ('pilot', 'rollout', 'paused');
+CREATE UNIQUE INDEX policy_rollouts_version
+    ON policy_rollouts (account_id, target_type, target_id, to_version);
+CREATE TABLE policy_rollout_repositories (
+    rollout_id TEXT NOT NULL REFERENCES policy_rollouts (rollout_id),
+    repository_id INTEGER NOT NULL,
+    stage INTEGER NOT NULL,
+    enrolled_at REAL NOT NULL,
+    PRIMARY KEY (rollout_id, repository_id)
+);
+
+CREATE TABLE policy_simulations (
+    simulation_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    draft_id TEXT,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    current_version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    parameters TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed')),
+    requested_by_id INTEGER,
+    requested_by_login TEXT,
+    requested_at REAL NOT NULL,
+    started_at REAL,
+    completed_at REAL,
+    lease_expires_at REAL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    result TEXT,
+    error TEXT
+);
+CREATE INDEX policy_simulations_account ON policy_simulations (account_id, requested_at);
+CREATE INDEX policy_simulations_state ON policy_simulations (state, requested_at);
+
+CREATE TABLE bulk_operations (
+    operation_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    parameters TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    requested_by_id INTEGER,
+    requested_by_login TEXT,
+    created_at REAL NOT NULL,
+    status TEXT NOT NULL CHECK (status IN
+        ('queued', 'running', 'completed', 'partial', 'failed', 'cancelled')),
+    total INTEGER NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    started_at REAL,
+    completed_at REAL,
+    updated_at REAL NOT NULL,
+    lease_expires_at REAL,
+    cancelled_by_login TEXT
+);
+CREATE UNIQUE INDEX bulk_operations_idempotency ON bulk_operations (account_id, idempotency_key);
+CREATE INDEX bulk_operations_status ON bulk_operations (status, created_at);
+CREATE INDEX bulk_operations_account ON bulk_operations (account_id, created_at);
+CREATE TABLE bulk_operation_items (
+    operation_id TEXT NOT NULL REFERENCES bulk_operations (operation_id),
+    repository_id INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN
+        ('pending', 'completed', 'failed', 'skipped', 'cancelled')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    detail TEXT,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (operation_id, repository_id)
+);
+CREATE INDEX bulk_operation_items_status ON bulk_operation_items (operation_id, status);
+
+CREATE TABLE scan_schedules (
+    schedule_id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL CHECK (target_type IN ('organization', 'group', 'repository')),
+    target_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    cadence TEXT NOT NULL CHECK (cadence IN ('daily', 'weekly')),
+    hour INTEGER NOT NULL,
+    minute INTEGER NOT NULL,
+    weekday INTEGER,
+    timezone TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    next_run_at REAL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    created_by_login TEXT,
+    updated_at REAL NOT NULL,
+    updated_by_login TEXT
+);
+CREATE INDEX scan_schedules_due ON scan_schedules (enabled, next_run_at);
+CREATE INDEX scan_schedules_account ON scan_schedules (account_id, created_at);
+CREATE TABLE scan_schedule_runs (
+    run_id TEXT PRIMARY KEY,
+    schedule_id TEXT NOT NULL REFERENCES scan_schedules (schedule_id),
+    account_id INTEGER NOT NULL,
+    slot REAL NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('running', 'completed', 'partial', 'failed')),
+    started_at REAL NOT NULL,
+    completed_at REAL,
+    repositories INTEGER NOT NULL DEFAULT 0,
+    queued INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    cursor INTEGER NOT NULL DEFAULT 0,
+    detail TEXT,
+    UNIQUE (schedule_id, slot)
+);
+CREATE INDEX scan_schedule_runs_state ON scan_schedule_runs (state, started_at);
+
+CREATE TABLE repository_effective_policies (
+    account_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('up_to_date', 'stale', 'syncing', 'error')),
+    fingerprint TEXT,
+    document TEXT,
+    computed_at REAL,
+    invalidated_at REAL,
+    valid_until REAL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    PRIMARY KEY (account_id, repository_id)
+);
+CREATE INDEX repository_effective_policies_state
+    ON repository_effective_policies (state, invalidated_at);
+
+CREATE TABLE organization_rule_versions (
+    account_id INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    created_by_id INTEGER,
+    created_by_login TEXT,
+    reason TEXT,
+    PRIMARY KEY (account_id, version)
+);
+CREATE TRIGGER organization_rule_versions_immutable
+    BEFORE UPDATE ON organization_rule_versions
+    BEGIN SELECT RAISE(ABORT, 'rule versions are immutable'); END;
+CREATE TRIGGER organization_rule_versions_permanent
+    BEFORE DELETE ON organization_rule_versions
+    BEGIN SELECT RAISE(ABORT, 'rule versions are immutable'); END;
+
+CREATE TABLE installation_sync_status (
+    installation_id INTEGER PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('healthy', 'syncing', 'degraded', 'failed')),
+    started_at REAL,
+    completed_at REAL,
+    last_success_at REAL,
+    repositories INTEGER,
+    added INTEGER,
+    removed INTEGER,
+    error TEXT,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE security_metric_snapshots (
+    account_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    computed_at REAL NOT NULL,
+    document TEXT NOT NULL,
+    PRIMARY KEY (account_id, day)
+);
+
+CREATE TABLE notification_acknowledgements (
+    event_id TEXT PRIMARY KEY REFERENCES notification_events (event_id) ON DELETE CASCADE,
+    account_id INTEGER NOT NULL,
+    acknowledged_by_id INTEGER NOT NULL,
+    acknowledged_by_login TEXT NOT NULL,
+    acknowledged_at REAL NOT NULL,
+    note TEXT
+);
+"""
+
+_MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4)
 
 
 _ORPHAN_DELETES = (
@@ -1168,6 +1551,29 @@ class SqliteStateStore(AuditStorage):
                 "UPDATE known_repositories SET default_branch = ? WHERE installation_id = ? "
                 "AND repository_id = ?",
                 (default_branch, int(installation_id), int(repository_id)),
+            )
+
+    def set_repository_details(
+        self,
+        installation_id: int,
+        repository_id: int,
+        *,
+        default_branch: str | None,
+        private: bool,
+        archived: bool,
+    ) -> None:
+        """Record GitHub's authoritative repository details (from the API, never a client)."""
+        with self._transaction() as db:
+            db.execute(
+                "UPDATE known_repositories SET default_branch = ?, private = ?, archived = ? "
+                "WHERE installation_id = ? AND repository_id = ?",
+                (
+                    default_branch,
+                    1 if private else 0,
+                    1 if archived else 0,
+                    int(installation_id),
+                    int(repository_id),
+                ),
             )
 
     def monitoring_enabled(self, installation_id: int, repository_id: int) -> bool:

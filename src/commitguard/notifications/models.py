@@ -20,7 +20,23 @@ Type                           Category     In-app recipients (permission)   Man
 ``installation_reconnected``   github       ``github:manage``
 ``merge_queue_failure``        scans        ``scans:read``
 ``check_rerun_failed``         scans        ``scans:read``
+``violation_digest``           violations   ``violations:read``
+``policy_approval_requested``  policy       ``policies:approve``
+``policy_emergency_published`` policy       ``audit:read``                   in-app
+``policy_rollout_failed``      policy       ``policies:publish``             in-app
+``policy_propagation_failed``  policy       ``policies:publish``             in-app
+``exception_requested``        policy       ``exceptions:approve``
+``exception_approved``         policy       ``exceptions:read``
+``exception_expiring``         policy       ``exceptions:read``
+``exception_ended``            policy       ``exceptions:read``
+``repository_unprotected``     github       ``repositories:manage``          in-app
+``organization_settings_changed`` policy    ``audit:read``
 =============================  ===========  ===============================  =========
+
+``violation_digest`` is the organization-level aggregation of violation
+alerts: when an organization enables it, one notification per rule and hour
+("blocked commits in 14 repositories") replaces the per-pull-request e-mails and
+webhooks; the dashboard keeps the per-repository detail.
 
 "Mandatory" in-app notifications cannot be muted by a user or turned off by an
 organization: they cover events after which enforcement may no longer be what
@@ -70,6 +86,18 @@ class NotificationType(StrEnum):
     INSTALLATION_RECONNECTED = "installation_reconnected"
     MERGE_QUEUE_FAILURE = "merge_queue_failure"
     CHECK_RERUN_FAILED = "check_rerun_failed"
+    # Phase 8: organization governance.
+    VIOLATION_DIGEST = "violation_digest"
+    POLICY_APPROVAL_REQUESTED = "policy_approval_requested"
+    POLICY_EMERGENCY_PUBLISHED = "policy_emergency_published"
+    POLICY_ROLLOUT_FAILED = "policy_rollout_failed"
+    POLICY_PROPAGATION_FAILED = "policy_propagation_failed"
+    EXCEPTION_REQUESTED = "exception_requested"
+    EXCEPTION_APPROVED = "exception_approved"
+    EXCEPTION_EXPIRING = "exception_expiring"
+    EXCEPTION_ENDED = "exception_ended"
+    REPOSITORY_UNPROTECTED = "repository_unprotected"
+    ORGANIZATION_SETTINGS_CHANGED = "organization_settings_changed"
 
 
 class NotificationCategory(StrEnum):
@@ -98,7 +126,17 @@ class DeliveryStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-ResourceType = Literal["violation", "scan", "policy", "installation", "repository"]
+ResourceType = Literal[
+    "violation",
+    "scan",
+    "policy",
+    "installation",
+    "repository",
+    "exception",
+    "draft",
+    "rollout",
+    "organization",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +249,130 @@ DEFINITIONS: dict[NotificationType, TypeDefinition] = {
             mandatory_in_app=False,
             default_email=False,
             default_webhook=False,
+        ),
+        TypeDefinition(
+            NotificationType.VIOLATION_DIGEST,
+            "Violation digests",
+            "Blocked violations across repositories, aggregated per rule and hour.",
+            NotificationCategory.VIOLATIONS,
+            Permission.VIOLATIONS_READ,
+            repository_scoped=False,
+            mandatory_in_app=False,
+            default_email=True,
+            default_webhook=True,
+            coalesce_seconds=3600,
+        ),
+        TypeDefinition(
+            NotificationType.POLICY_APPROVAL_REQUESTED,
+            "Policy approval requests",
+            "A policy change is waiting for approval.",
+            NotificationCategory.POLICY,
+            Permission.POLICIES_APPROVE,
+            repository_scoped=False,
+            mandatory_in_app=False,
+            default_email=True,
+            default_webhook=False,
+        ),
+        TypeDefinition(
+            NotificationType.POLICY_EMERGENCY_PUBLISHED,
+            "Emergency policy publications",
+            "A policy change was published without the approval workflow.",
+            NotificationCategory.POLICY,
+            Permission.AUDIT_READ,
+            repository_scoped=False,
+            mandatory_in_app=True,
+            default_email=True,
+            default_webhook=True,
+        ),
+        TypeDefinition(
+            NotificationType.POLICY_ROLLOUT_FAILED,
+            "Policy rollout failures",
+            "A staged policy rollout was paused or rolled back by its safety thresholds.",
+            NotificationCategory.POLICY,
+            Permission.POLICIES_PUBLISH,
+            repository_scoped=False,
+            mandatory_in_app=True,
+            default_email=True,
+            default_webhook=True,
+        ),
+        TypeDefinition(
+            NotificationType.POLICY_PROPAGATION_FAILED,
+            "Policy propagation failures",
+            "The effective policy of one or more repositories could not be updated.",
+            NotificationCategory.POLICY,
+            Permission.POLICIES_PUBLISH,
+            repository_scoped=False,
+            mandatory_in_app=True,
+            default_email=True,
+            default_webhook=True,
+            coalesce_seconds=3600,
+        ),
+        TypeDefinition(
+            NotificationType.EXCEPTION_REQUESTED,
+            "Exception requests",
+            "A policy exception for a high or critical rule is waiting for approval.",
+            NotificationCategory.POLICY,
+            Permission.EXCEPTIONS_APPROVE,
+            repository_scoped=False,
+            mandatory_in_app=False,
+            default_email=True,
+            default_webhook=False,
+        ),
+        TypeDefinition(
+            NotificationType.EXCEPTION_APPROVED,
+            "Exception approvals",
+            "A policy exception became active and lowers enforcement until it expires.",
+            NotificationCategory.POLICY,
+            Permission.EXCEPTIONS_READ,
+            repository_scoped=False,
+            mandatory_in_app=False,
+            default_email=True,
+            default_webhook=True,
+        ),
+        TypeDefinition(
+            NotificationType.EXCEPTION_EXPIRING,
+            "Exceptions expiring soon",
+            "An active policy exception expires soon; the policy applies again afterwards.",
+            NotificationCategory.POLICY,
+            Permission.EXCEPTIONS_READ,
+            repository_scoped=False,
+            mandatory_in_app=False,
+            default_email=False,
+            default_webhook=False,
+        ),
+        TypeDefinition(
+            NotificationType.EXCEPTION_ENDED,
+            "Exceptions ended",
+            "A policy exception expired or was revoked: the policy applies again.",
+            NotificationCategory.POLICY,
+            Permission.EXCEPTIONS_READ,
+            repository_scoped=False,
+            mandatory_in_app=False,
+            default_email=False,
+            default_webhook=True,
+        ),
+        TypeDefinition(
+            NotificationType.REPOSITORY_UNPROTECTED,
+            "Repositories losing protection",
+            "A repository that was protected is no longer protected by GitHub.",
+            NotificationCategory.GITHUB,
+            Permission.REPOSITORIES_MANAGE,
+            repository_scoped=False,
+            mandatory_in_app=True,
+            default_email=True,
+            default_webhook=True,
+            coalesce_seconds=3600,
+        ),
+        TypeDefinition(
+            NotificationType.ORGANIZATION_SETTINGS_CHANGED,
+            "Security settings changes",
+            "An administrator changed organization security settings.",
+            NotificationCategory.POLICY,
+            Permission.AUDIT_READ,
+            repository_scoped=False,
+            mandatory_in_app=False,
+            default_email=True,
+            default_webhook=True,
         ),
     )
 }

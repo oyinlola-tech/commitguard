@@ -26,7 +26,10 @@ it is reported as a notice and takes effect once it is on the trusted branch.
 A change that would *weaken* a policy (disable it or lower its action) is
 reported as a security policy modification. Detection rules always come from
 the installed CommitGuard package. A central service may add a mandatory
-policy (:mod:`commitguard.policies.mandatory`) that no repository can weaken.
+policy (:mod:`commitguard.policies.mandatory`) that no repository can weaken,
+or - for the GitHub App - the complete organization governance inputs
+(:mod:`commitguard.policies.governance`): policy layers, approved exceptions and
+monitor mode, resolved together with the trusted repository configuration.
 
 Planning (:func:`plan_ci`) and execution (:func:`execute_ci_plan`) are separate
 so a service can report the commit count before analysis starts.
@@ -47,6 +50,7 @@ from commitguard.core.context import ScanTrigger
 from commitguard.exceptions.configuration import ConfigurationError
 from commitguard.git.ranges import CommitRange, require_commit, resolve_commit_range
 from commitguard.git.repository import Repository
+from commitguard.policies.governance import EffectivePolicy, GovernanceInputs, resolve_policy
 from commitguard.policies.loader import build_policy_set
 from commitguard.policies.mandatory import apply_mandatory_policies
 from commitguard.policies.model import Policy, PolicySet
@@ -76,6 +80,9 @@ class CIRun(BaseModel):
     report: ScanReport
     policy_fingerprint: str  # effective policies (trusted config + mandatory floor)
     policies: tuple[Policy, ...] = ()  # the effective policies that evaluated the commits
+    #: The repository's own policies before governance (kept for policy simulation).
+    repository_policies: tuple[Policy, ...] = ()
+    effective: EffectivePolicy | None = None  # provenance, when governance applied
 
 
 def policy_set_fingerprint(policies: PolicySet) -> str:
@@ -277,12 +284,24 @@ def execute_ci_plan(
     *,
     rules: CompiledRules | None = None,
     mandatory: MandatoryPolicy | None = None,
+    governance: GovernanceInputs | None = None,
 ) -> CIRun:
-    """Analyse the planned commits with the planned (trusted) policy."""
+    """Analyse the planned commits with the planned (trusted) policy.
+
+    ``governance`` replaces ``mandatory`` when given (its service layer carries
+    the same floor): the effective policy is resolved from the governance inputs
+    and the trusted repository configuration.
+    """
     loaded = load_policy_source(repository, plan.policy_source)
-    policies = build_policy_set(*loaded.configs)
+    repository_policies = build_policy_set(*loaded.configs)
+    policies = repository_policies
     extra_sources: tuple[str, ...] = ()
-    if mandatory is not None:
+    effective: EffectivePolicy | None = None
+    if governance is not None:
+        effective = resolve_policy(governance, loaded.configs)
+        policies = effective.policy_set()
+        extra_sources = (f"organization governance: {governance.describe()}",)
+    elif mandatory is not None:
         policies = apply_mandatory_policies(policies, mandatory.config)
         extra_sources = (f"mandatory: {mandatory.description}",)
     analyzer = Analyzer.create(policies, rules)
@@ -292,7 +311,9 @@ def execute_ci_plan(
         for commit in repository.iter_commits(plan.range.commits)
     ]
     policy_source = str(plan.policy_source)
-    if mandatory is not None:
+    if governance is not None and not governance.empty:
+        policy_source += f" + {governance.describe()}"
+    elif mandatory is not None and governance is None:
         policy_source += f" + mandatory policy ({mandatory.description})"
     ci_report = CIReport(
         provider=context.provider.value,
@@ -328,6 +349,8 @@ def execute_ci_plan(
         report=report,
         policy_fingerprint=policy_set_fingerprint(policies),
         policies=tuple(policies.values()),
+        repository_policies=tuple(repository_policies.values()),
+        effective=effective,
     )
 
 

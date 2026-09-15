@@ -431,7 +431,11 @@ class PolicyRuleView(_View):
     organization_floor: Action | None
     minimum_action: Action | None  # strongest floor; None = repository decides
     repository_override: Literal["any", "stricter_only"]
-    source: Literal["built_in_default", "service_policy", "organization_policy"]
+    source: Literal[
+        "built_in_default", "service_policy", "organization_policy", "organization_default"
+    ]
+    #: A default-strength organization entry: the baseline repositories may change.
+    organization_default: Action | None = None
 
 
 class PolicyAuthor(_View):
@@ -456,6 +460,7 @@ class PolicyChange(_View):
     old: Action | None
     new: Action | None
     weakening: bool
+    enforcement: Literal["mandatory", "default"] = "mandatory"
 
 
 class PolicyVersionView(_View):
@@ -471,6 +476,9 @@ class PolicyVersionView(_View):
     restored_version: int | None  # rollback: the version whose document was restored
     changes: tuple[PolicyChange, ...]  # compared with the previous version
     summary: str
+    defaults: dict[str, Action] = {}  # default-strength entries (Phase 8)
+    draft_id: str | None = None  # the reviewed draft this version was published from
+    emergency: bool = False  # published without the approval workflow
 
 
 class PolicyDiffEntry(_View):
@@ -478,6 +486,7 @@ class PolicyDiffEntry(_View):
     old: Action | None = None
     new: Action | None = None
     weakening: bool = False
+    enforcement: Literal["mandatory", "default"] = "mandatory"
 
 
 class PolicyDiffView(_View):
@@ -487,6 +496,33 @@ class PolicyDiffView(_View):
     changed: tuple[PolicyDiffEntry, ...]
     removed: tuple[PolicyDiffEntry, ...]
     weakening: bool
+
+
+class PolicyTargetView(_View):
+    type: Literal["organization", "group", "repository"]
+    id: str  # "" for the organization, a group ID or a repository ID
+    label: str
+
+
+class ScopedRuleView(_View):
+    policy_id: str
+    name: str
+    mandatory: Action | None
+    default: Action | None
+
+
+class ScopedPolicyView(_View):
+    """A repository group's or repository's published policy."""
+
+    organization: OrganizationRef
+    target: PolicyTargetView
+    version: int  # 0: nothing published yet
+    fingerprint: str | None
+    updated_at: datetime | None
+    updated_by: PolicyAuthor | None
+    reason: str | None
+    rules: tuple[ScopedRuleView, ...]
+    can_write: bool
 
 
 class RuleView(_View):

@@ -19,6 +19,7 @@ from commitguard.ci.context import CIContext
 from commitguard.config.sources import MandatoryPolicy
 from commitguard.core.decision import Action
 from commitguard.git.repository import Repository
+from commitguard.policies.governance import EffectivePolicy, GovernanceInputs
 from commitguard.policies.model import Policy
 from commitguard.rules.loader import builtin_rules_fingerprint
 from commitguard.rules.matcher import CompiledRules
@@ -40,7 +41,11 @@ class ScanRequest(BaseModel):
     max_commits: int = Field(default=DEFAULT_CI_MAX_COMMITS, ge=1)
     fail_on: Action = Action.BLOCK
     mandatory_policy: MandatoryPolicy | None = None
+    #: Organization governance (GitHub App); replaces ``mandatory_policy`` when set.
+    governance: GovernanceInputs | None = None
     rules: CompiledRules | None = None  # None: the bundled, trusted rules
+    #: Version label of ``rules`` when they are not the bundled rules.
+    rules_version: str | None = None
 
     def model_post_init(self, __context: object) -> None:
         if self.config_path is not None:
@@ -83,6 +88,8 @@ class ScanResult(BaseModel):
     metadata: ScanMetadata
     enforcement: EnforcementDecision
     policies: tuple[Policy, ...] = ()  # effective policies, for reproducible history
+    repository_policies: tuple[Policy, ...] = ()  # before organization governance
+    effective: EffectivePolicy | None = None
 
     @property
     def action(self) -> Action:
@@ -117,8 +124,12 @@ class ScanService:
             plan,
             rules=request.rules,
             mandatory=request.mandatory_policy,
+            governance=request.governance,
         )
-        rules_version = builtin_rules_fingerprint() if request.rules is None else "custom"
+        if request.rules is None:
+            rules_version = builtin_rules_fingerprint()
+        else:
+            rules_version = request.rules_version or "custom"
         context = request.context
         scan_id = fingerprint(
             [
@@ -152,6 +163,8 @@ class ScanService:
             metadata=metadata,
             enforcement=EnforcementService(request.fail_on).decide(run.report),
             policies=run.policies,
+            repository_policies=run.repository_policies,
+            effective=run.effective,
         )
 
     def run(self, request: ScanRequest) -> ScanResult:

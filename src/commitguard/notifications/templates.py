@@ -26,6 +26,10 @@ _RESOURCE_PATHS = {
     "policy": "/policies/{id}",
     "installation": "/github/installations/{id}",
     "repository": "/repositories/{id}",
+    "exception": "/organization/exceptions/{id}",
+    "draft": "/organization/policies/drafts/{id}",
+    "rollout": "/organization/policies/rollouts/{id}",
+    "organization": "/organization",
 }
 
 

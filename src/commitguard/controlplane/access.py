@@ -22,18 +22,29 @@ Roles
 ==================  =========================================================
 Role                Adds
 ==================  =========================================================
-``viewer``          read repositories, scans, violations, policies, rules;
+``viewer``          read repositories, scans, violations, policies, rules,
+                    exceptions, the organization and its security posture;
                     receive in-app notifications about them
-``security_manager`` acknowledge violations, request re-scans, read the audit log
-``admin``           change and roll back organisation policy, stop/resume
-                    monitoring a repository, refresh enforcement status, sync
-                    installation repositories, list members, manage
-                    organisation notification settings and webhooks
-``owner``           grant, change and remove member roles
+``security_manager`` acknowledge violations, request re-scans, read the audit log,
+                    request policy exceptions
+``admin``           change, publish, approve and roll back policy, manage
+                    repository groups, onboarding, rollouts, scan schedules,
+                    organization rules and settings, approve and revoke
+                    exceptions, stop/resume monitoring a repository, refresh
+                    enforcement status, sync installation repositories, list
+                    members, manage organisation notification settings and webhooks
+``owner``           grant, change and remove member roles; emergency policy
+                    publication (bypassing approval, always audited)
 ==================  =========================================================
 
 Each role includes every permission of the roles above it. The owner of a
 personal (user-account) installation is always its ``owner``.
+
+Authorization is by permission, never by role name: routes and services check
+a :class:`Permission`, and the role table below is the only place that maps
+roles to permissions. There is no separate ``member`` role: ``viewer`` is the
+least-privileged member. Separation of duties (a policy change approved by
+someone other than its author) is enforced by the policy workflow, not by roles.
 """
 
 import json
@@ -60,6 +71,19 @@ class Permission(StrEnum):
     MEMBERS_MANAGE = "members:manage"
     NOTIFICATIONS_READ = "notifications:read"
     NOTIFICATIONS_MANAGE = "notifications:manage"
+    # Phase 8: organization governance.
+    ORGANIZATION_READ = "organization:read"
+    ORGANIZATION_MANAGE = "organization:manage"
+    POLICIES_PUBLISH = "policies:publish"
+    POLICIES_APPROVE = "policies:approve"
+    POLICIES_EMERGENCY = "policies:emergency"
+    RULES_MANAGE = "rules:manage"
+    EXCEPTIONS_READ = "exceptions:read"
+    EXCEPTIONS_CREATE = "exceptions:create"
+    EXCEPTIONS_APPROVE = "exceptions:approve"
+    EXCEPTIONS_REVOKE = "exceptions:revoke"
+    SECURITY_READ = "security:read"
+    SECURITY_MANAGE = "security:manage"
 
 
 class Role(StrEnum):
@@ -85,22 +109,33 @@ _VIEWER = frozenset(
         Permission.POLICIES_READ,
         Permission.RULES_READ,
         Permission.NOTIFICATIONS_READ,
+        Permission.ORGANIZATION_READ,
+        Permission.EXCEPTIONS_READ,
+        Permission.SECURITY_READ,
     }
 )
 _SECURITY_MANAGER = _VIEWER | {
     Permission.VIOLATIONS_MANAGE,
     Permission.SCANS_TRIGGER,
     Permission.AUDIT_READ,
+    Permission.EXCEPTIONS_CREATE,
 }
 _ADMIN = _SECURITY_MANAGER | {
     Permission.POLICIES_WRITE,
     Permission.POLICIES_ROLLBACK,
+    Permission.POLICIES_PUBLISH,
+    Permission.POLICIES_APPROVE,
     Permission.NOTIFICATIONS_MANAGE,
     Permission.REPOSITORIES_MANAGE,
     Permission.GITHUB_MANAGE,
     Permission.MEMBERS_READ,
+    Permission.ORGANIZATION_MANAGE,
+    Permission.RULES_MANAGE,
+    Permission.EXCEPTIONS_APPROVE,
+    Permission.EXCEPTIONS_REVOKE,
+    Permission.SECURITY_MANAGE,
 }
-_OWNER = _ADMIN | {Permission.MEMBERS_MANAGE}
+_OWNER = _ADMIN | {Permission.MEMBERS_MANAGE, Permission.POLICIES_EMERGENCY}
 
 ROLE_PERMISSIONS: Mapping[Role, frozenset[Permission]] = {
     Role.VIEWER: _VIEWER,
