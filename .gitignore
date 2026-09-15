@@ -36,3 +36,8 @@ node_modules
 */node_modules
 dist/
 */dist/
+
+# Dashboard (web/)
+web/test-results/
+web/playwright-report/
+web/node_modules/.tmp/
