@@ -88,7 +88,7 @@ const NEVER = [
   "Call a repository protected without GitHub confirming a required check",
   "Store GitHub tokens, passwords or full commit messages",
   "Let a pull request change the policy it is evaluated with",
-  "Decide in the browser: every verdict comes from the CommitGuard core",
+  "Decide anything in the browser: every verdict comes from the CommitGuard core",
 ];
 
 function CommitRecord() {
@@ -146,7 +146,7 @@ export default function Landing() {
               Every commit makes a claim about who wrote it.
             </h1>
             <p className="hero__lead">
-              CommitGuard reads that claim - author, committer, co-author trailers - and enforces your contribution policy before the commit merges. When it blocks one, it tells you exactly why.
+              CommitGuard reads that claim — author, committer, co-author trailers — and enforces your contribution policy before the commit merges. When it blocks one, it tells you exactly why.
             </p>
             <div className="hero__actions">
               {primary}

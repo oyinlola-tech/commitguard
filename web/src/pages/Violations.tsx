@@ -9,7 +9,7 @@ import { EmptyState, QueryBoundary } from "../components/States";
 import { ViolationsTable } from "../components/Tables";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { useUrlState } from "../hooks/useUrlState";
-import { RULE_OPTIONS, SEVERITY, SEVERITY_OPTIONS, VIOLATION_STATUS } from "../lib/labels";
+import { RULE_OPTIONS, SEVERITY, SEVERITY_OPTIONS, VIOLATION_STATUS, statusStyle } from "../lib/labels";
 
 const KEYS = ["q", "status", "severity", "rule", "action", "repository", "from", "to", "sort"] as const;
 
@@ -37,8 +37,8 @@ export default function Violations() {
       <PageHeader title="Violations" description="Findings a policy blocked or warned about, tracked across scans until they are no longer present." />
       <FilterBar active={active} onClear={() => update({ q: null, status: null, severity: null, rule: null, action: null, repository: null, from: null, to: null })}>
         <SearchField label="Search" value={values.q} onChange={(q) => update({ q })} placeholder="Rule, SHA, author or repository" />
-        <SelectField label="Status" value={values.status} onChange={(status) => update({ status })} options={["open", "acknowledged", "resolved"].map((s) => [s, VIOLATION_STATUS[s]!.label] as [string, string])} />
-        <SelectField label="Severity" value={values.severity} onChange={(severity) => update({ severity })} options={SEVERITY_OPTIONS.map((s) => [s, SEVERITY[s]!.label] as [string, string])} />
+        <SelectField label="Status" value={values.status} onChange={(status) => update({ status })} options={["open", "acknowledged", "resolved"].map((s) => [s, statusStyle(VIOLATION_STATUS, s).label] as [string, string])} />
+        <SelectField label="Severity" value={values.severity} onChange={(severity) => update({ severity })} options={SEVERITY_OPTIONS.map((s) => [s, statusStyle(SEVERITY, s).label] as [string, string])} />
         <SelectField label="Rule" value={values.rule} onChange={(rule) => update({ rule })} options={RULE_OPTIONS} />
         <SelectField label="Policy action" value={values.action} onChange={(action) => update({ action })} options={[["block", "BLOCK"], ["warn", "WARN"]]} />
         <DateField label="Detected from" value={values.from} onChange={(from) => update({ from })} />

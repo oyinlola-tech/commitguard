@@ -25,14 +25,12 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
   });
   const openViolations = overview.data?.summary.open_violations ?? 0;
   const items = NAV_ITEMS.filter((item) => !item.permission || can(item.permission));
-  let lastGroup: string | undefined;
   return (
     <nav aria-label="Primary" className="nav">
       <ul className="nav__list">
-        {items.map((item) => {
+        {items.map((item, index) => {
           const Icon = item.icon;
-          const heading = item.group && item.group !== lastGroup ? item.group : null;
-          lastGroup = item.group;
+          const heading = item.group && item.group !== items[index - 1]?.group ? item.group : null;
           return (
             <li key={item.to}>
               {heading ? <p className="nav__group">{heading}</p> : null}
@@ -147,7 +145,6 @@ function ThemeToggle() {
 
 function UserMenu() {
   const { session } = useSession();
-  const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   return (
     <div className="user-menu">
@@ -165,8 +162,8 @@ function UserMenu() {
           try {
             await signOut();
           } finally {
-            navigate("/login?reason=signed_out", { replace: true });
-            window.location.reload();
+            // A full page load drops every cached query along with the session.
+            window.location.assign("/login?reason=signed_out");
           }
         }}
       >
@@ -238,7 +235,6 @@ export function AppShell() {
   useUnauthenticatedRedirect();
   const [drawer, setDrawer] = useState(false);
   const location = useLocation();
-  useEffect(() => setDrawer(false), [location.pathname]);
   return (
     <div className="app">
       <a className="skip-link" href="#main">

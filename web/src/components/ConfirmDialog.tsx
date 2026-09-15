@@ -32,6 +32,11 @@ export function ConfirmDialog({
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
+  // Held in a ref so re-renders while the user types do not re-run the focus effect.
+  const cancel = useRef(onCancel);
+  useEffect(() => {
+    cancel.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     if (!open) return;
@@ -45,12 +50,12 @@ export function ConfirmDialog({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCancel();
+        cancel.current();
       } else if (event.key === "Tab") {
         const items = focusable();
-        if (items.length === 0) return;
-        const first = items[0]!;
-        const last = items[items.length - 1]!;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (!first || !last) return;
         if (event.shiftKey && document.activeElement === first) {
           event.preventDefault();
           last.focus();
@@ -65,7 +70,7 @@ export function ConfirmDialog({
       document.removeEventListener("keydown", onKeyDown);
       if (opener.current instanceof HTMLElement) opener.current.focus();
     };
-  }, [open, onCancel]);
+  }, [open]);
 
   if (!open) return null;
   return createPortal(

@@ -1,9 +1,9 @@
-import { LogIn, ShieldCheck } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { Link, Navigate, useSearchParams } from "react-router";
 
 import { signInUrl } from "../api/auth";
 import { useOptionalSession } from "../auth/session";
-import { Logo } from "../components/Logo";
+import { Logo, LogoMark } from "../components/Logo";
 import { Notice } from "../components/Primitives";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { routes } from "../lib/routes";
@@ -47,7 +47,7 @@ export default function Login() {
       </aside>
       <main id="main" className="login__main" tabIndex={-1}>
         <div className="login__card">
-          <ShieldCheck size={28} aria-hidden="true" className="login__icon" />
+          <LogoMark size={34} />
           <h1>Sign in to CommitGuard</h1>
           <p className="muted">Use your GitHub account. CommitGuard reads which installations and repositories you can access; it never asks for a password or a personal access token.</p>
           {reason === "expired" ? <Notice tone="warning">Your session expired. Sign in again to continue.</Notice> : null}

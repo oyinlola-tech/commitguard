@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
 
 import { getSession } from "../api/auth";
@@ -42,13 +42,19 @@ export function useOptionalSession() {
 export function useUnauthenticatedRedirect(): void {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const current = useRef(location);
+  useEffect(() => {
+    current.current = location;
+  }, [location]);
   useEffect(() => {
     const handler = (event: Event) => {
       const code = (event as CustomEvent<string>).detail;
+      const { pathname, search } = current.current;
+      if (pathname.startsWith("/login")) return; // never loop
       setCsrfToken(null);
       queryClient.clear();
-      const returnTo = `${window.location.pathname}${window.location.search}`;
-      if (window.location.pathname.startsWith("/login")) return; // never loop
+      const returnTo = `${pathname}${search}`;
       const params = new URLSearchParams({ return_to: returnTo });
       if (code === "SESSION_EXPIRED") params.set("reason", "expired");
       navigate(`/login?${params.toString()}`, { replace: true });

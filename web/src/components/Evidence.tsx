@@ -1,11 +1,11 @@
 import type { Evidence } from "../api/types";
 
 /** Evidence values are untrusted commit metadata; they are rendered as text only. */
-export function EvidenceList({ evidence }: { evidence: Evidence[] }) {
+export function EvidenceList({ evidence, heading = true }: { evidence: Evidence[]; heading?: boolean }) {
   if (evidence.length === 0) return null;
   return (
     <div className="evidence">
-      <p className="evidence__heading">Evidence</p>
+      {heading ? <p className="evidence__heading">Evidence</p> : null}
       <ul>
         {evidence.map((item, index) => (
           <li key={index} className="evidence__item">

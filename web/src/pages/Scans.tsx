@@ -11,7 +11,7 @@ import { ScansTable } from "../components/Tables";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { isInProgress, useBackoffPolling } from "../hooks/usePolling";
 import { useUrlState } from "../hooks/useUrlState";
-import { RESULT_OPTIONS, RULE_OPTIONS, SCAN_RESULT, SEVERITY, SEVERITY_OPTIONS } from "../lib/labels";
+import { RESULT_OPTIONS, RULE_OPTIONS, SCAN_RESULT, SEVERITY, SEVERITY_OPTIONS, statusStyle } from "../lib/labels";
 
 const KEYS = ["q", "result", "event", "rule", "severity", "from", "to", "repository", "sort"] as const;
 
@@ -43,10 +43,10 @@ export default function Scans() {
       <PageHeader title="Scans" description="Every GitHub App scan, with the result CommitGuard core reached." />
       <FilterBar active={active} onClear={() => update({ q: null, result: null, event: null, rule: null, severity: null, from: null, to: null, repository: null })}>
         <SearchField label="Repository or commit" value={values.q} onChange={(q) => update({ q })} placeholder="owner/name or SHA" />
-        <SelectField label="Result" value={values.result} onChange={(result) => update({ result })} options={RESULT_OPTIONS.map((r) => [r, SCAN_RESULT[r]!.label] as [string, string])} />
+        <SelectField label="Result" value={values.result} onChange={(result) => update({ result })} options={RESULT_OPTIONS.map((r) => [r, statusStyle(SCAN_RESULT, r).label] as [string, string])} />
         <SelectField label="Event" value={values.event} onChange={(event) => update({ event })} options={[["pull_request", "Pull request"], ["push", "Push"]]} />
         <SelectField label="Rule" value={values.rule} onChange={(rule) => update({ rule })} options={RULE_OPTIONS} />
-        <SelectField label="Severity" value={values.severity} onChange={(severity) => update({ severity })} options={SEVERITY_OPTIONS.map((s) => [s, SEVERITY[s]!.label] as [string, string])} />
+        <SelectField label="Severity" value={values.severity} onChange={(severity) => update({ severity })} options={SEVERITY_OPTIONS.map((s) => [s, statusStyle(SEVERITY, s).label] as [string, string])} />
         <DateField label="From" value={values.from} onChange={(from) => update({ from })} />
         <DateField label="To" value={values.to} onChange={(to) => update({ to })} />
         <SelectField label="Order" anyLabel="Newest first" value={values.sort} onChange={(sort) => update({ sort })} options={[["oldest", "Oldest first"]]} />

@@ -80,8 +80,8 @@ export default function ViolationDetail() {
           />
         </Panel>
         <Panel title="Evidence" id="evidence">
-          <EvidenceList evidence={detail.evidence} />
-          <p className="muted small">Only the commit metadata that triggered the finding is stored and shown - never file contents or full commit messages.</p>
+          <EvidenceList evidence={detail.evidence} heading={false} />
+          <p className="muted small">Only the commit metadata that triggered the finding is stored and shown — never file contents or full commit messages.</p>
         </Panel>
       </div>
 
