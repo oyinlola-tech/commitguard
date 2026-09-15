@@ -21,6 +21,7 @@ Security properties:
   idempotent requests are retried after a server or network error.
 """
 
+import base64
 import json
 import random
 import ssl
@@ -66,11 +67,13 @@ from commitguard.security.secrets import Secret, register_secret
 from commitguard.security.validation import validate_git_sha
 
 API_URL = "https://api.github.com"
+WEB_URL = "https://github.com"
 API_VERSION = "2022-11-28"
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 20.0
 MAX_PAGES = 100
 PER_PAGE = 100
+MAX_CONTENT_BYTES = 512 * 1024
 
 log = get_logger(__name__)
 
@@ -262,6 +265,74 @@ class CheckRunInfo(_Loose):
         return value
 
 
+class UserInfo(_Loose):
+    id: int
+    login: str
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, value: int) -> int:
+        if not 0 < value < MAX_GITHUB_ID:
+            raise ValueError("invalid user id")
+        return value
+
+    @field_validator("login")
+    @classmethod
+    def _login(cls, value: str) -> str:
+        return validate_login(value)
+
+
+class _StatusChecks(_Loose):
+    contexts: tuple[str, ...] = ()
+
+
+class _BranchProtectionSummary(_Loose):
+    enabled: bool | None = None
+    required_status_checks: _StatusChecks | None = None
+
+
+class BranchInfo(_Loose):
+    name: str
+    protected: bool
+    protection: _BranchProtectionSummary | None = None
+
+    @property
+    def required_contexts(self) -> tuple[str, ...]:
+        checks = self.protection.required_status_checks if self.protection else None
+        return checks.contexts if checks else ()
+
+
+class BranchRule(_Loose):
+    type: str
+    parameters: dict[str, Any] | None = None
+
+    @property
+    def required_contexts(self) -> tuple[str, ...]:
+        if self.type != "required_status_checks" or not self.parameters:
+            return ()
+        checks = self.parameters.get("required_status_checks")
+        if not isinstance(checks, list):
+            return ()
+        return tuple(
+            str(c["context"])[:200]
+            for c in checks
+            if isinstance(c, Mapping) and isinstance(c.get("context"), str)
+        )
+
+
+class ContentEntry(_Loose):
+    name: str
+    path: str
+    type: str
+    size: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class OAuthGrant:
+    access_token: Secret
+    expires_in: int | None
+
+
 @dataclass(frozen=True, slots=True)
 class InstallationTokenGrant:
     token: Secret
@@ -326,6 +397,7 @@ class GitHubClient:
         transport: Transport | None = None,
         *,
         api_url: str = API_URL,
+        web_url: str = WEB_URL,
         retry: RetryPolicy | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
@@ -335,6 +407,7 @@ class GitHubClient:
     ) -> None:
         self._transport = transport or UrllibTransport()
         self._api_url = _validate_api_url(api_url)
+        self._web_url = _validate_api_url(web_url)
         self._retry = retry or RetryPolicy()
         self._sleep = sleep
         self._clock = clock
@@ -607,3 +680,155 @@ class GitHubClient:
         url = self._url(f"{self._repo_path(repository)}/check-runs/{int(check_run_id)}")
         response = self._send(op, "PATCH", url, token, payload=payload, idempotent=True)
         return self._model(op, response, CheckRunInfo)
+
+    # -- enforcement evidence (installation token) ----------------------- #
+    def get_branch(self, token: Secret, repository: RepositoryRef, branch: str) -> BranchInfo:
+        op = "GET /repos/{owner}/{repo}/branches/{branch}"
+        url = self._url(f"{self._repo_path(repository)}/branches/{_segment(branch)}")
+        return self._model(op, self._send(op, "GET", url, token), BranchInfo)
+
+    def get_branch_rules(
+        self, token: Secret, repository: RepositoryRef, branch: str
+    ) -> list[BranchRule]:
+        """Active ruleset rules for a branch (``GET /repos/{o}/{r}/rules/branches/{b}``)."""
+        op = "GET /repos/{owner}/{repo}/rules/branches/{branch}"
+        items = self._paginate(
+            op, f"{self._repo_path(repository)}/rules/branches/{_segment(branch)}", token
+        )
+        try:
+            return [BranchRule.model_validate(item) for item in items]
+        except (ValidationError, ValueError):
+            raise GitHubAPIError(op, detail="unexpected response shape") from None
+
+    def list_directory(
+        self, token: Secret, repository: RepositoryRef, path: str, ref: str
+    ) -> list[ContentEntry]:
+        op = "GET /repos/{owner}/{repo}/contents/{path}"
+        encoded = "/".join(_segment(part) for part in path.split("/"))
+        url = self._url(f"{self._repo_path(repository)}/contents/{encoded}", {"ref": ref})
+        document = self._json(op, self._send(op, "GET", url, token))
+        if not isinstance(document, list):
+            return []  # a file, not a directory
+        try:
+            return [ContentEntry.model_validate(item) for item in document[:200]]
+        except (ValidationError, ValueError):
+            raise GitHubAPIError(op, detail="unexpected response shape") from None
+
+    def get_file_text(
+        self, token: Secret, repository: RepositoryRef, path: str, ref: str
+    ) -> str | None:
+        """A small UTF-8 file's contents, or None when it is too large or not text."""
+        op = "GET /repos/{owner}/{repo}/contents/{path}"
+        encoded = "/".join(_segment(part) for part in path.split("/"))
+        url = self._url(f"{self._repo_path(repository)}/contents/{encoded}", {"ref": ref})
+        document = self._json(op, self._send(op, "GET", url, token))
+        if not isinstance(document, dict) or document.get("encoding") != "base64":
+            return None
+        content = document.get("content")
+        size = document.get("size")
+        if not isinstance(content, str) or not isinstance(size, int) or size > MAX_CONTENT_BYTES:
+            return None
+        try:
+            return base64.b64decode(content, validate=False).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+
+    # -- user authorization (OAuth web flow of the GitHub App) ----------- #
+    def authorize_url(
+        self, *, client_id: str, redirect_uri: str, state: str, code_challenge: str
+    ) -> str:
+        query = urlencode(
+            {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "state": state,
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+                "allow_signup": "false",
+            }
+        )
+        return f"{self._web_url}/login/oauth/authorize?{query}"
+
+    def exchange_oauth_code(
+        self,
+        *,
+        client_id: str,
+        client_secret: Secret,
+        code: str,
+        redirect_uri: str,
+        code_verifier: str,
+    ) -> OAuthGrant:
+        """Exchange an authorization code for a user access token (never retried)."""
+        op = "POST /login/oauth/access_token"
+        body = urlencode(
+            {
+                "client_id": client_id,
+                "client_secret": client_secret.reveal(),
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "code_verifier": code_verifier,
+            }
+        ).encode("ascii")
+        request = HttpRequest(
+            "POST",
+            f"{self._web_url}/login/oauth/access_token",
+            {
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": f"CommitGuard-App/{__version__}",
+            },
+            body,
+        )
+        try:
+            response = self._transport.send(request, timeout=self._timeout)
+        except TransportError as exc:
+            raise GitHubUnavailableError(
+                op, detail="request timed out" if exc.timeout else "network error"
+            ) from None
+        if response.status != 200:
+            self._metrics.increment(GITHUB_API_ERRORS, category=str(response.status))
+            raise GitHubAPIError(op, status=response.status, detail="token exchange failed")
+        document = self._json(op, response)
+        if not isinstance(document, dict) or "error" in document:
+            raise GitHubUnauthorizedError(op, status=401, detail="authorization code rejected")
+        token = document.get("access_token")
+        if not isinstance(token, str) or not token or len(token) > 1024:
+            raise GitHubAPIError(op, status=response.status, detail="invalid token response")
+        expires = document.get("expires_in")
+        grant = OAuthGrant(
+            access_token=Secret(token),
+            expires_in=expires if isinstance(expires, int) else None,
+        )
+        register_secret(grant.access_token)
+        return grant
+
+    def get_authenticated_user(self, user_token: Secret) -> UserInfo:
+        op = "GET /user"
+        return self._model(op, self._send(op, "GET", self._url("/user"), user_token), UserInfo)
+
+    def list_user_installations(self, user_token: Secret) -> list[InstallationInfo]:
+        """Installations of this App the signed-in user can access."""
+        op = "GET /user/installations"
+        items = self._paginate(op, "/user/installations", user_token, key="installations")
+        try:
+            return [InstallationInfo.model_validate(item) for item in items]
+        except (ValidationError, ValueError):
+            raise GitHubAPIError(op, detail="unexpected response shape") from None
+
+    def list_user_installation_repository_ids(
+        self, user_token: Secret, installation_id: int
+    ) -> list[int]:
+        """IDs of repositories in an installation that the signed-in user can access."""
+        op = "GET /user/installations/{installation_id}/repositories"
+        items = self._paginate(
+            op,
+            f"/user/installations/{int(installation_id)}/repositories",
+            user_token,
+            key="repositories",
+        )
+        ids: list[int] = []
+        for item in items:
+            if isinstance(item, Mapping) and isinstance(item.get("id"), int):
+                if 0 < item["id"] < MAX_GITHUB_ID:
+                    ids.append(item["id"])
+        return ids

@@ -144,6 +144,10 @@ class InstallationTokenProvider:
         self._lock = threading.Lock()
         self._cache: dict[tuple[int, int | None], InstallationToken] = {}
 
+    def app_jwt(self) -> Secret:
+        """A short-lived App JWT for App-level API calls (e.g. installation details)."""
+        return self._credentials.create_jwt()
+
     def token(self, installation_id: int, repository_id: int | None) -> InstallationToken:
         """A token for one repository (or, with ``None``, the whole installation)."""
         key = (int(installation_id), None if repository_id is None else int(repository_id))
