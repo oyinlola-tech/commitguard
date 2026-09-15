@@ -273,3 +273,95 @@ def render_commit_hook_text(report: ScanReport, *, stage: str, verbose: bool) ->
                 "(git config user.name / user.email, or --author)."
             )
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# CI output
+# --------------------------------------------------------------------------- #
+MAX_CI_FINDINGS = 50
+_CI_REMEDIATION = (
+    "Please update the listed commits so that they comply with the repository's "
+    "contribution policy, then push the updated branch. CommitGuard does not "
+    "automatically rewrite Git history."
+)
+
+
+def render_ci_text(report: ScanReport, *, failed: bool) -> str:
+    ok, cross, bang = _symbols()
+    rule = "━" * 40 if supports_unicode() else "-" * 40
+    ci = report.ci
+    commits = report.commits
+    counts = {action: sum(1 for c in commits if c.action is action) for action in Action}
+    lines = ["CommitGuard", rule]
+    if ci is not None:
+        if ci.repository:
+            lines.append(f"Repository: {_s(ci.repository, 200)}")
+        event = _s(ci.event, 60)
+        if ci.pull_request_number:
+            event += f" (PR #{ci.pull_request_number}{', from a fork' if ci.from_fork else ''})"
+        lines.append(f"Event: {event}")
+        if ci.head_sha:
+            base = ci.base_sha[:12] if ci.base_sha else "(none)"
+            lines.append(f"Range: {base}..{ci.head_sha[:12]}")
+        lines.append(f"Policy: {_s(ci.policy_source, 200)}")
+    lines += [
+        f"{ok} policy loaded",
+        f"{ok} commits scanned: {len(commits)}",
+        f"{ok if not any(c.failures for c in commits) else cross} detection completed",
+    ]
+    by_rule: dict[str, int] = {}
+    for commit in commits:
+        for item in commit.findings:
+            by_rule[item.finding.rule_id] = by_rule.get(item.finding.rule_id, 0) + 1
+    if by_rule:
+        lines.append("Findings:")
+        lines.extend(f"  {rule_id}: {count}" for rule_id, count in sorted(by_rule.items()))
+    else:
+        lines.append("Findings: 0")
+    lines += [
+        f"Violations: {counts[Action.BLOCK]}",
+        f"Warnings: {counts[Action.WARN]}",
+        f"Allowed: {counts[Action.ALLOW]}",
+    ]
+    if ci is not None:
+        for notice in ci.notices:
+            lines.append(f"{bang} {_s(notice, 400)}")
+
+    shown = 0
+    omitted = 0
+    for commit in sorted(commits, key=lambda c: -c.action.rank):
+        for failure in commit.failures:
+            lines += [
+                "",
+                f"{cross} Detector failure (analysis incomplete)",
+                f"  Commit:   {commit.short_sha}",
+                f"  Detector: {failure.failure.detector}",
+                f"  Error:    {_s(failure.failure.message, 200)}",
+            ]
+        for item in commit.findings:
+            if shown >= MAX_CI_FINDINGS:
+                omitted += 1
+                continue
+            shown += 1
+            finding = item.finding
+            evidence = finding.evidence[0]
+            lines += [
+                "",
+                f"{_commit_marker(item.action)} {_s(finding.title, 120)}",
+                f"  Commit:   {commit.short_sha}  {_s(commit.subject, 72)}",
+                f"  Evidence: {_s(evidence.value, 200)} ({evidence.source.label})",
+                f"  Rule:     {finding.rule_id}",
+                f"  Severity: {finding.severity.value}",
+                f"  Action:   {item.action.value}",
+            ]
+    if omitted:
+        lines.append(f"\n... {omitted} more finding(s) omitted; use --format json for all")
+
+    if failed:
+        result = "BLOCK" if report.action is Action.BLOCK else "FAILED (fail-on: warn)"
+    else:
+        result = "PASS (with warnings)" if report.action is Action.WARN else "PASS"
+    lines += ["", f"Result: {result}"]
+    if report.action is Action.BLOCK:
+        lines += ["", f"Remediation: {_CI_REMEDIATION}"]
+    return "\n".join(lines)

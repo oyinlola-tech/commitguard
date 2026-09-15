@@ -57,3 +57,13 @@ def load_yaml(text: str) -> object:
     """
     # SafeLoader subclass: no object construction (see tests for !!python tags).
     return yaml.load(text, Loader=_StrictSafeLoader)  # noqa: S506  # nosec B506
+
+
+def load_yaml_for_inspection(text: str) -> object:
+    """Parse third-party YAML (e.g. GitHub workflow files) for read-only inspection.
+
+    Uses ``yaml.SafeLoader`` (no object construction) but, unlike
+    :func:`load_yaml`, accepts anchors and duplicate keys, which GitHub accepts
+    in workflows. Never use this for CommitGuard configuration or rules.
+    """
+    return yaml.safe_load(text)
