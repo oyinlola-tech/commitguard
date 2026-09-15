@@ -20,6 +20,7 @@ import typer
 from commitguard.cli.output import ExitCode, OutputFormat, error
 from commitguard.cli.render import render_ci_text, render_json
 from commitguard.core.decision import Action
+from commitguard.git.repository import Repository
 from commitguard.github.actions import (
     annotation_commands,
     append_file,
@@ -31,7 +32,7 @@ from commitguard.github.actions import (
 )
 from commitguard.github.checks import build_check_output
 from commitguard.github.events import load_github_event
-from commitguard.git.repository import Repository
+from commitguard.security.sanitization import sanitize_for_terminal
 from commitguard.security.validation import validate_repository_path
 from commitguard.services.ci import DEFAULT_CI_MAX_COMMITS, run_ci
 from commitguard.utils.filesystem import atomic_write_text
@@ -112,12 +113,19 @@ def github_command(
                     title="CommitGuard could not verify repository policy",
                 )
             )
-        error(
+        text = (
             "CommitGuard could not verify repository policy.\n"
-            f"Reason: {message}\n"
+            f"Reason: {sanitize_for_terminal(message, max_length=4000, keep_newlines=True)}\n"
             "Security validation could not be completed.\n"
             "Result: FAILED"
         )
+        if in_actions:
+            # The reason can quote untrusted YAML or payload text: print it to stdout
+            # with workflow commands disabled (stdout/stderr ordering is not guaranteed).
+            with commands_stopped(_emit):
+                _emit(text)
+        else:
+            error(text)
         raise typer.Exit(code=int(ExitCode.ERROR)) from None
 
     report = run.report

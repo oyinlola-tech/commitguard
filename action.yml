@@ -1,0 +1,90 @@
+# CommitGuard GitHub Action (composite).
+#
+# Reference it pinned to a full commit SHA:
+#   - uses: OWNER/commitguard@<40-character commit sha>
+#
+# It installs CommitGuard from the Action's own source (the commit you pinned),
+# never from the repository being checked, with hash-pinned dependencies, then
+# runs `commitguard ci github`. Requires a prior actions/checkout with
+# fetch-depth: 0. Needs only `contents: read`; uses no secrets or token.
+name: CommitGuard
+description: Fail pull requests and pushes whose commits carry AI agent attribution or other contribution policy violations.
+author: CommitGuard contributors
+
+inputs:
+  config:
+    description: >-
+      Repository-relative policy file. It is read from the trusted commit (the
+      pull request base, or the commit before a push), never from the change
+      being checked. Default: .commitguard.yaml or .commitguard.yml.
+    required: false
+    default: ""
+  fail-on:
+    description: Fail the check at this policy action or above. `block` (default) or `warn`.
+    required: false
+    default: block
+  max-commits:
+    description: Fail (rather than analyse partially) if more commits would be analysed.
+    required: false
+    default: "10000"
+  python-version:
+    description: Python version used to run CommitGuard (3.12 or newer).
+    required: false
+    default: "3.12"
+
+outputs:
+  result:
+    description: allow, warn or block.
+    value: ${{ steps.scan.outputs.result }}
+  commits:
+    description: Number of commits analysed.
+    value: ${{ steps.scan.outputs.commits }}
+  violations:
+    description: Number of blocked commits.
+    value: ${{ steps.scan.outputs.violations }}
+  warnings:
+    description: Number of commits with warnings.
+    value: ${{ steps.scan.outputs.warnings }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      id: python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        update-environment: false
+
+    - name: Install CommitGuard
+      id: install
+      shell: bash
+      env:
+        COMMITGUARD_BASE_PYTHON: ${{ steps.python.outputs.python-path }}
+        COMMITGUARD_SOURCE: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        venv="${RUNNER_TEMP}/commitguard-venv"
+        "${COMMITGUARD_BASE_PYTHON}" -m venv "${venv}"
+        if [ -x "${venv}/bin/python" ]; then py="${venv}/bin/python"; else py="${venv}/Scripts/python.exe"; fi
+        "${py}" -m pip install --disable-pip-version-check --no-input \
+          --require-hashes --no-deps -r "${COMMITGUARD_SOURCE}/requirements/ci.txt"
+        "${py}" -m pip install --disable-pip-version-check --no-input \
+          --no-deps --no-build-isolation "${COMMITGUARD_SOURCE}"
+        echo "python=${py}" >> "${GITHUB_OUTPUT}"
+
+    - name: Check commits
+      id: scan
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        COMMITGUARD_PYTHON: ${{ steps.install.outputs.python }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_MAX_COMMITS: ${{ inputs.max-commits }}
+      run: |
+        set -euo pipefail
+        args=(ci github --fail-on "${INPUT_FAIL_ON}" --max-commits "${INPUT_MAX_COMMITS}")
+        if [ -n "${INPUT_CONFIG}" ]; then args+=(--config "${INPUT_CONFIG}"); fi
+        # -P: never import a `commitguard` directory from the checked-out repository.
+        "${COMMITGUARD_PYTHON}" -P -m commitguard "${args[@]}"

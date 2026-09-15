@@ -1,45 +1,89 @@
-# CommitGuard repository enforcement - PLACEHOLDER (Phase 4).
+# CommitGuard server-side enforcement for this repository (dogfooding).
 #
-# Intended behaviour once `commitguard scan` exists:
-#   * run on every pull_request against protected branches;
-#   * check out with full history and scan base..head (every commit, not just HEAD);
-#   * load the policy from the BASE branch so a PR cannot relax its own policy;
-#   * fail the job on BLOCK and be configured as a required status check.
+# Required status check name: commitguard
+# The check only prevents merges when branch protection or a ruleset requires it
+# (see docs/github-enforcement.md). A push-triggered run happens after the
+# commits are already on GitHub.
 #
-# Until then this workflow only verifies the CLI installs and runs. It does NOT
-# enforce any policy, so it is manual-trigger only to avoid a misleading green
-# check on pull requests.
-
+# CommitGuard is installed from a TRUSTED commit of this repository (the pull
+# request base, the commit before a push, or the default branch) using
+# `git worktree`, so a pull request cannot weaken the scanner or its bundled
+# rules. Policy is likewise read from the trusted commit by the scanner itself.
 name: CommitGuard
 
 on:
-  workflow_dispatch:
+  pull_request:
+  merge_group:
+  push:
 
+# Only reads Git objects. No write access, no secrets.
 permissions:
   contents: read
 
+# No `concurrency: cancel-in-progress`: a cancelled push check would leave that
+# push's commits unchecked.
+
 jobs:
   commitguard:
-    name: CommitGuard (placeholder)
+    name: commitguard
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      # TODO: pin third-party actions to full commit SHAs.
-      - uses: actions/checkout@v4
+      - name: Check out full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        id: python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
+          update-environment: false
 
-      - name: Install CommitGuard
-        run: python -m pip install .
+      - name: Install CommitGuard from a trusted commit
+        id: install
+        shell: bash
+        env:
+          BASE_PYTHON: ${{ steps.python.outputs.python-path }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          is_commit() { [[ "$1" =~ ^[0-9a-f]{40}$ ]] && [[ "$1" != 0000000000000000000000000000000000000000 ]] && git cat-file -e "$1^{commit}" 2>/dev/null; }
+          trusted=""
+          case "${EVENT_NAME}" in
+            pull_request) trusted="${PR_BASE_SHA}" ;;
+            merge_group) trusted="${MERGE_GROUP_BASE_SHA}" ;;
+            push)
+              if is_commit "${PUSH_BEFORE_SHA}"; then trusted="${PUSH_BEFORE_SHA}";
+              else trusted="$(git rev-parse --verify --quiet "refs/remotes/origin/${DEFAULT_BRANCH}^{commit}" || true)"; fi ;;
+          esac
+          if ! is_commit "${trusted}"; then
+            echo "::error title=CommitGuard::no trusted commit available to install CommitGuard from"
+            exit 2
+          fi
+          src="${RUNNER_TEMP}/commitguard-trusted"
+          git worktree add --detach "${src}" "${trusted}"
+          if [ ! -f "${src}/requirements/ci.txt" ] || [ ! -f "${src}/src/commitguard/cli/commands/ci.py" ]; then
+            # Bootstrap only: the trusted commit predates CI enforcement.
+            echo "::warning title=CommitGuard::trusted commit ${trusted} has no CI support; installing from the checked-out change"
+            src="${GITHUB_WORKSPACE}"
+          fi
+          "${BASE_PYTHON}" -m venv "${RUNNER_TEMP}/commitguard-venv"
+          py="${RUNNER_TEMP}/commitguard-venv/bin/python"
+          "${py}" -m pip install --disable-pip-version-check --no-input --require-hashes --no-deps -r "${src}/requirements/ci.txt"
+          "${py}" -m pip install --disable-pip-version-check --no-input --no-deps --no-build-isolation "${src}"
+          echo "python=${py}" >> "${GITHUB_OUTPUT}"
 
-      - name: Diagnose
-        run: commitguard doctor
-
-      - name: Show effective policy
-        run: commitguard policy list
-
-      # TODO(phase-4): commitguard scan "origin/${{ github.base_ref }}..HEAD"
+      - name: Check commits
+        shell: bash
+        env:
+          COMMITGUARD_PYTHON: ${{ steps.install.outputs.python }}
+        run: |
+          set -euo pipefail
+          "${COMMITGUARD_PYTHON}" -P -m commitguard ci github

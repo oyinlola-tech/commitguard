@@ -29,8 +29,10 @@ from commitguard.git.hooks import (
     repository_hooks_dir,
 )
 from commitguard.git.repository import Repository
+from commitguard.github.workflow import WorkflowIssueLevel, inspect_repository_workflows
 from commitguard.policies.loader import build_policy_set
 from commitguard.provenance.author import Identity
+from commitguard.rules.loader import builtin_rules_dir, load_builtin_rules
 from commitguard.security.sanitization import sanitize_for_terminal
 from commitguard.services.analysis import Analyzer, pending_commit
 from commitguard.utils.platform import MINIMUM_PYTHON, python_version, python_version_supported
@@ -39,6 +41,7 @@ from commitguard.utils.subprocess import run_command
 
 class Status(StrEnum):
     OK = "ok"
+    INFO = "info"  # neutral fact; never changes the overall status
     WARN = "warn"
     FAIL = "fail"
 
@@ -250,14 +253,83 @@ def _run_checks() -> list[Check]:
         if not blocking:
             checks.append(Check("Policies", Status.WARN, "no policy is set to block"))
 
+    checks.extend(_rule_checks(repository))
     checks.extend(_hook_checks(repository, loaded))
+    checks.extend(_github_checks(repository))
+    return checks
+
+
+def _rule_checks(repository: Repository) -> list[Check]:
+    try:
+        rules_dir = builtin_rules_dir()
+        rules = load_builtin_rules()
+    except CommitGuardError as exc:
+        return [Check("Rules", Status.FAIL, str(exc), "reinstall CommitGuard")]
+    checks = [
+        Check(
+            "Rules",
+            Status.OK,
+            f"bundled rules available ({len(rules.rules.ai_identities.agents)} AI agents, "
+            f"{len(rules.rules.bots.bots)} bots) from {rules_dir}",
+        )
+    ]
+    repo_rules = repository.root / "rules" / "ai-identities.yaml"
+    try:
+        same = repo_rules.exists() and repo_rules.resolve().parent == rules_dir.resolve()
+    except OSError:
+        same = False
+    if repo_rules.exists() and not same:
+        checks.append(
+            Check(
+                "Rules",
+                Status.INFO,
+                "this repository's rules/ directory is not used; detection rules always come "
+                "from the installed CommitGuard package",
+            )
+        )
+    return checks
+
+
+def _github_checks(repository: Repository) -> list[Check]:
+    section = "GitHub enforcement"
+    inspections = inspect_repository_workflows(repository.root)
+    if not inspections:
+        return [
+            Check(
+                section,
+                Status.INFO,
+                "no GitHub workflow runs CommitGuard (local enforcement only)",
+                "commitguard init --github --action-repository OWNER/REPO --action-ref <sha>",
+            )
+        ]
+    checks = []
+    for inspection in inspections:
+        path = inspection.path.relative_to(repository.root).as_posix()
+        names = ", ".join(inspection.check_names)
+        checks.append(Check(section, Status.OK, f"workflow exists: {path} (check: {names})"))
+        for issue in inspection.issues:
+            status = {
+                WorkflowIssueLevel.OK: Status.INFO,
+                WorkflowIssueLevel.WARN: Status.WARN,
+                WorkflowIssueLevel.FAIL: Status.FAIL,
+            }[issue.level]
+            checks.append(Check(section, status, f"{path}: {issue.message}", "commitguard github setup"))
+    checks.append(
+        Check(
+            section,
+            Status.INFO,
+            "branch protection cannot be verified locally; the check only blocks merges when "
+            "it is required on protected branches",
+            "commitguard github setup",
+        )
+    )
     return checks
 
 
 def doctor_command() -> None:
     """Check installation, configuration, detection engine and hook enforcement."""
     ok, cross, bang = ("✓", "✗", "⚠") if supports_unicode() else ("OK", "X", "!")
-    symbol = {Status.OK: ok, Status.WARN: bang, Status.FAIL: cross}
+    symbol = {Status.OK: ok, Status.INFO: "i", Status.WARN: bang, Status.FAIL: cross}
     checks = _run_checks()
 
     info("CommitGuard Doctor")
@@ -268,15 +340,32 @@ def doctor_command() -> None:
             info("")
             info(section)
         info(f"{symbol[check.status]} {sanitize_for_terminal(check.detail, max_length=1000)}")
-        if check.remediation and check.status is not Status.OK:
+        if check.remediation and check.status in (Status.WARN, Status.FAIL):
             info(f"    Fix: {sanitize_for_terminal(check.remediation, max_length=300)}")
 
     hook_problem = any(
-        c.section in ("Hooks", "Enforcement") and c.status is not Status.OK for c in checks
+        c.section in ("Hooks", "Enforcement") and c.status in (Status.WARN, Status.FAIL)
+        for c in checks
+    )
+    local_ready = any(c.section == "Hooks" for c in checks) and not hook_problem
+    github_ready = any(
+        c.section == "GitHub enforcement" and c.detail.startswith("workflow exists")
+        for c in checks
+    ) and not any(
+        c.section == "GitHub enforcement" and c.status in (Status.WARN, Status.FAIL)
+        for c in checks
     )
     info("")
     if hook_problem:
         info("Security enforcement is incomplete.")
+    enforcement = {
+        (True, True): "LOCAL + GITHUB ENFORCEMENT READY (branch protection not verified)",
+        (True, False): "LOCAL ENFORCEMENT ONLY",
+        (False, True): "GITHUB WORKFLOW READY, LOCAL ENFORCEMENT INCOMPLETE "
+        "(branch protection not verified)",
+        (False, False): "NO COMPLETE ENFORCEMENT LAYER",
+    }[(local_ready, github_ready)]
+    info(f"Enforcement: {enforcement}")
     if any(c.status is Status.FAIL for c in checks):
         info("Status: UNHEALTHY")
         raise typer.Exit(code=int(ExitCode.ERROR))
