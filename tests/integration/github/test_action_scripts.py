@@ -98,6 +98,8 @@ def test_action_installs_hashed_and_blocks_violation(hub, gh, tmp_path: Path) ->
     # The installed copy uses its bundled rules, not a source tree.
     probe = subprocess.run(
         [python, "-c", "from commitguard.rules.loader import builtin_rules_dir as d; print(d())"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "site-packages" in probe.stdout

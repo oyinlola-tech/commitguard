@@ -86,15 +86,21 @@ def plan_ci(
     notices: list[str] = []
 
     if context.event in (CIEventKind.PULL_REQUEST, CIEventKind.MERGE_GROUP):
-        assert context.base_sha is not None and context.head_sha is not None  # validated model
+        if context.base_sha is None or context.head_sha is None:  # guaranteed by CIContext
+            raise ValueError("pull request context without base and head commits")
         base = require_commit(repository, context.base_sha, role="base")
         head = require_commit(repository, context.head_sha, role="head")
         commit_range = resolve_commit_range(
             repository, head, [base], base=base, max_count=max_commits
         )
-        label = "pull request base" if context.event is CIEventKind.PULL_REQUEST else "merge queue base"
+        label = (
+            "pull request base" if context.event is CIEventKind.PULL_REQUEST else "merge queue base"
+        )
         source = PolicySource(
-            kind=PolicySourceKind.REVISION, revision=base, description=label, config_path=config_path
+            kind=PolicySourceKind.REVISION,
+            revision=base,
+            description=label,
+            config_path=config_path,
         )
         changes = tuple(config_differs(repository, base, head))
         if changes:
@@ -115,8 +121,8 @@ def plan_ci(
         )
     if not repository.object_exists(context.after_sha):
         require_commit(repository, context.after_sha, role="pushed")  # raises a clear error
-    head = repository.peel_to_commit(context.after_sha)
-    if head is None:
+    pushed = repository.peel_to_commit(context.after_sha)
+    if pushed is None:
         return CIPlan(
             range=CommitRange(),
             policy_source=PolicySource(kind=PolicySourceKind.BUILTIN, description="not needed"),
@@ -137,7 +143,7 @@ def plan_ci(
             description="commit before the push",
             config_path=config_path,
         )
-        changes = tuple(config_differs(repository, before, head))
+        changes = tuple(config_differs(repository, before, pushed))
     else:
         is_default = bool(context.default_branch) and context.ref == (
             f"refs/heads/{context.default_branch}"
@@ -151,7 +157,7 @@ def plan_ci(
                 description="default branch",
                 config_path=config_path,
             )
-            changes = tuple(config_differs(repository, tip, head))
+            changes = tuple(config_differs(repository, tip, pushed))
         else:
             exclude = []
             source = PolicySource(
@@ -170,7 +176,7 @@ def plan_ci(
             f"{source.description} was used."
         )
     commit_range = resolve_commit_range(
-        repository, head, exclude, base=exclude[0] if exclude else None, max_count=max_commits
+        repository, pushed, exclude, base=exclude[0] if exclude else None, max_count=max_commits
     )
     return CIPlan(
         range=commit_range, policy_source=source, config_changes=changes, notices=tuple(notices)

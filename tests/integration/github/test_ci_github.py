@@ -189,7 +189,8 @@ def test_config_input_is_read_from_trusted_commit(hub, run_ci, gh) -> None:  # t
 
 def test_rule_tampering_in_repository_has_no_effect(hub, run_ci, gh) -> None:  # type: ignore[no-untyped-def]
     weakened = (
-        "schema_version: 1\nagents:\n  - id: nobody\n    display_name: Nobody\n    names: [Nobody]\n"
+        "schema_version: 1\nagents:\n"
+        "  - id: nobody\n    display_name: Nobody\n    names: [Nobody]\n"
     )
     dev = hub.dev
     base = dev.git("rev-parse", "main")

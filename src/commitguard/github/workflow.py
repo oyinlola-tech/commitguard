@@ -126,7 +126,9 @@ def _permission_issues(permissions: Any, where: str) -> list[WorkflowIssue]:
     if isinstance(permissions, str):
         if permissions in ("read-all", "{}"):
             return []
-        return [WorkflowIssue(level=WorkflowIssueLevel.WARN, message=f"{where} grants {permissions}")]
+        return [
+            WorkflowIssue(level=WorkflowIssueLevel.WARN, message=f"{where} grants {permissions}")
+        ]
     if isinstance(permissions, dict):
         writes = sorted(str(k) for k, v in permissions.items() if v == "write")
         if writes:

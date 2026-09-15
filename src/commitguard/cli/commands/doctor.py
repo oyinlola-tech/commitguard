@@ -313,7 +313,9 @@ def _github_checks(repository: Repository) -> list[Check]:
                 WorkflowIssueLevel.WARN: Status.WARN,
                 WorkflowIssueLevel.FAIL: Status.FAIL,
             }[issue.level]
-            checks.append(Check(section, status, f"{path}: {issue.message}", "commitguard github setup"))
+            checks.append(
+                Check(section, status, f"{path}: {issue.message}", "commitguard github setup")
+            )
     checks.append(
         Check(
             section,
@@ -349,11 +351,9 @@ def doctor_command() -> None:
     )
     local_ready = any(c.section == "Hooks" for c in checks) and not hook_problem
     github_ready = any(
-        c.section == "GitHub enforcement" and c.detail.startswith("workflow exists")
-        for c in checks
+        c.section == "GitHub enforcement" and c.detail.startswith("workflow exists") for c in checks
     ) and not any(
-        c.section == "GitHub enforcement" and c.status in (Status.WARN, Status.FAIL)
-        for c in checks
+        c.section == "GitHub enforcement" and c.status in (Status.WARN, Status.FAIL) for c in checks
     )
     info("")
     if hook_problem:

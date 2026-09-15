@@ -42,7 +42,9 @@ class Clone:
     def git(self, *args: str, env: dict[str, str] | None = None) -> str:
         return git(self.path, *args, env=env)
 
-    def commit(self, message: str, *, files: dict[str, str] | None = None, author: str | None = None) -> str:
+    def commit(
+        self, message: str, *, files: dict[str, str] | None = None, author: str | None = None
+    ) -> str:
         for name, content in (files or {}).items():
             target = self.path / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -68,7 +70,9 @@ class Hub:
     dev: Clone
     tmp: Path
 
-    def ci_clone(self, *, checkout: str | None = None, name: str = "ci", depth: int | None = None) -> Clone:
+    def ci_clone(
+        self, *, checkout: str | None = None, name: str = "ci", depth: int | None = None
+    ) -> Clone:
         path = self.tmp / name
         args = ["clone", "--quiet", "--no-local"]
         if depth:
@@ -83,9 +87,19 @@ class Hub:
         """Create and check out a merge commit like refs/pull/N/merge."""
         clone.git("checkout", "--quiet", "--detach", base)
         clone.git(
-            "merge", "--quiet", "--no-ff", "--no-verify", "-m", f"Merge {head} into {base}", head,
-            env={"GIT_AUTHOR_NAME": "GitHub", "GIT_AUTHOR_EMAIL": "noreply@github.com",
-                 "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com"},
+            "merge",
+            "--quiet",
+            "--no-ff",
+            "--no-verify",
+            "-m",
+            f"Merge {head} into {base}",
+            head,
+            env={
+                "GIT_AUTHOR_NAME": "GitHub",
+                "GIT_AUTHOR_EMAIL": "noreply@github.com",
+                "GIT_COMMITTER_NAME": "GitHub",
+                "GIT_COMMITTER_EMAIL": "noreply@github.com",
+            },
         )
         return clone.git("rev-parse", "HEAD")
 
@@ -93,9 +107,13 @@ class Hub:
 @pytest.fixture
 def hub(tmp_path: Path) -> Hub:
     bare = tmp_path / "github.git"
-    subprocess.run(["git", "init", "--quiet", "--bare", "--initial-branch=main", str(bare)], check=True)
+    subprocess.run(
+        ["git", "init", "--quiet", "--bare", "--initial-branch=main", str(bare)], check=True
+    )
     dev_path = tmp_path / "dev"
-    subprocess.run(["git", "clone", "--quiet", str(bare), str(dev_path)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "clone", "--quiet", str(bare), str(dev_path)], check=True, capture_output=True
+    )
     dev = Clone(dev_path)
     dev.git("config", "commit.gpgsign", "false")
     dev.git("checkout", "--quiet", "-B", "main")
@@ -194,9 +212,7 @@ def run_ci_process(
         errors="replace",
         check=False,
     )
-    parsed = dict(
-        line.split("=", 1) for line in outputs.read_text().splitlines() if "=" in line
-    )
+    parsed = dict(line.split("=", 1) for line in outputs.read_text().splitlines() if "=" in line)
     return CIResult(result.returncode, result.stdout, result.stderr, summary.read_text(), parsed)
 
 

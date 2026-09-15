@@ -100,9 +100,7 @@ def github_command(
             event_name or os.environ.get("GITHUB_EVENT_NAME"),
             event_path or _env_path("GITHUB_EVENT_PATH"),
         )
-        run = run_ci(
-            Repository.discover(), context, config_path=config, max_commits=max_commits
-        )
+        run = run_ci(Repository.discover(), context, config_path=config, max_commits=max_commits)
     except Exception as exc:  # noqa: BLE001 - any failure must fail the check
         message = f"{type(exc).__name__}: {exc}" if not str(exc) else str(exc)
         if in_actions:

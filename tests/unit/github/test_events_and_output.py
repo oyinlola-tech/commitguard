@@ -42,10 +42,14 @@ def test_fork_detection() -> None:
 
 
 def test_push_new_and_deleted_refs() -> None:
-    new = parse_github_event("push", {"ref": "refs/heads/x", "before": Z, "after": A, "repository": REPO})
+    new = parse_github_event(
+        "push", {"ref": "refs/heads/x", "before": Z, "after": A, "repository": REPO}
+    )
     assert new.before_sha is None
     assert new.after_sha == A
-    gone = parse_github_event("push", {"ref": "refs/heads/x", "before": A, "after": Z, "deleted": True})
+    gone = parse_github_event(
+        "push", {"ref": "refs/heads/x", "before": A, "after": Z, "deleted": True}
+    )
     assert gone.ref_deleted
     assert gone.after_sha is None
 
@@ -61,7 +65,10 @@ def test_merge_group() -> None:
         ("pull_request_target", pr()),
         ("issue_comment", {}),
         ("pull_request", []),
-        ("pull_request", {"pull_request": {"number": 1, "base": {"sha": "HEAD"}, "head": {"sha": B}}}),
+        (
+            "pull_request",
+            {"pull_request": {"number": 1, "base": {"sha": "HEAD"}, "head": {"sha": B}}},
+        ),
         ("push", {"ref": "refs/heads/x", "before": Z, "after": "-p"}),
         ("push", {"ref": "refs/heads/x" + chr(10), "before": Z, "after": A}),
         ("push", {"ref": "refs/heads/x", "before": A, "after": B, "deleted": True}),
@@ -141,7 +148,9 @@ def _report(rules_by_commit: list[list[tuple[str, Action]]]):  # type: ignore[no
 
 
 def test_check_output_and_annotation_caps() -> None:
-    report = _report([[("ai_coauthor", Action.BLOCK)] for _ in range(15)] + [[("bot_identity", Action.WARN)]])
+    report = _report(
+        [[("ai_coauthor", Action.BLOCK)] for _ in range(15)] + [[("bot_identity", Action.WARN)]]
+    )
     output = build_check_output(report)
     assert output.conclusion == "failure"
     assert output.counts["block"] == 15

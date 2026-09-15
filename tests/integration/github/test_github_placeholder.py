@@ -15,7 +15,15 @@ GITHUB_MODULES = [
     "commitguard.github.workflow",
     "commitguard.services.ci",
 ]
-NETWORK_MODULES = ("http.client", "urllib.request", "ssl", "requests", "httpx", "urllib3", "aiohttp")
+NETWORK_MODULES = (
+    "http.client",
+    "urllib.request",
+    "ssl",
+    "requests",
+    "httpx",
+    "urllib3",
+    "aiohttp",
+)
 
 
 @pytest.mark.parametrize("module", GITHUB_MODULES)
@@ -29,5 +37,7 @@ def test_cli_and_github_layer_load_no_network_modules() -> None:
         "import sys, commitguard.cli.app, commitguard.services.ci\n"
         f"print(sorted(m for m in {NETWORK_MODULES!r} if m in sys.modules))"
     )
-    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
     assert result.stdout.strip() == "[]"

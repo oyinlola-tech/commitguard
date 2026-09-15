@@ -49,21 +49,35 @@ def test_defense_in_depth(hub, run_ci, gh, get_remote_refs) -> None:  # type: ig
     # Step 3: clean commit passes the local hook ...
     local = subprocess.run(
         ["git", "commit", "--allow-empty", "-m", "feat: implement authentication"],
-        cwd=dev.path, capture_output=True, text=True, check=False,
+        cwd=dev.path,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert local.returncode == 0, local.stderr
     clean_sha = dev.git("rev-parse", "HEAD")
-    assert subprocess.run(
-        ["git", "push", "--quiet", "origin", "feature"], cwd=dev.path, capture_output=True, check=False
-    ).returncode == 0
+    assert (
+        subprocess.run(
+            ["git", "push", "--quiet", "origin", "feature"],
+            cwd=dev.path,
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
     # ... and the GitHub check.
-    first = run_ci(hub.ci_clone(checkout=clean_sha, name="ci-1"), "pull_request", gh.pr_event(base, clean_sha))
+    first = run_ci(
+        hub.ci_clone(checkout=clean_sha, name="ci-1"), "pull_request", gh.pr_event(base, clean_sha)
+    )
     assert first.returncode == 0, first.output
 
     # Step 4: AI-attributed commit is blocked locally.
     blocked = subprocess.run(
         ["git", "commit", "--allow-empty", "-m", ai_message],
-        cwd=dev.path, capture_output=True, text=True, check=False,
+        cwd=dev.path,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert blocked.returncode != 0
     assert "COMMIT BLOCKED" in blocked.stderr
@@ -73,7 +87,10 @@ def test_defense_in_depth(hub, run_ci, gh, get_remote_refs) -> None:  # type: ig
     ai_sha = dev.git("rev-parse", "HEAD")
     push = subprocess.run(
         ["git", "push", "--no-verify", "origin", "feature"],
-        cwd=dev.path, capture_output=True, text=True, check=False,
+        cwd=dev.path,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert push.returncode == 0, push.stderr
 
@@ -94,18 +111,26 @@ def test_defense_in_depth(hub, run_ci, gh, get_remote_refs) -> None:  # type: ig
     # Step 11: the developer corrects the commit (local hooks run and pass).
     amend = subprocess.run(
         ["git", "commit", "--amend", "--allow-empty", "-m", "feat: add payments"],
-        cwd=dev.path, capture_output=True, text=True, check=False,
+        cwd=dev.path,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert amend.returncode == 0, amend.stderr
     fixed_sha = dev.git("rev-parse", "HEAD")
     push = subprocess.run(
         ["git", "push", "--force-with-lease", "origin", "feature"],
-        cwd=dev.path, capture_output=True, text=True, check=False,
+        cwd=dev.path,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert push.returncode == 0, push.stderr
 
     # Step 12: the check passes.
-    passing = run_ci(hub.ci_clone(checkout=fixed_sha, name="ci-3"), "pull_request", gh.pr_event(base, fixed_sha))
+    passing = run_ci(
+        hub.ci_clone(checkout=fixed_sha, name="ci-3"), "pull_request", gh.pr_event(base, fixed_sha)
+    )
     assert passing.returncode == 0, passing.output
     assert "commits scanned: 2" in passing.stdout
 
@@ -114,13 +139,21 @@ def test_defense_in_depth(hub, run_ci, gh, get_remote_refs) -> None:  # type: ig
     assert required_check_gate({"commitguard": conclusion(passing.returncode)}) is True
     subprocess.run(
         ["git", "push", "--quiet", "--no-verify", "origin", f"{fixed_sha}:refs/heads/main"],
-        cwd=dev.path, check=True, capture_output=True,
+        cwd=dev.path,
+        check=True,
+        capture_output=True,
     )
     assert get_remote_refs(hub.bare)["refs/heads/main"] == fixed_sha
-    post = run_ci(hub.ci_clone(checkout=fixed_sha, name="ci-4"), "push", gh.push_event(base, fixed_sha))
+    post = run_ci(
+        hub.ci_clone(checkout=fixed_sha, name="ci-4"), "push", gh.push_event(base, fixed_sha)
+    )
     assert post.returncode == 0, post.output
     remote_main = subprocess.run(
-        ["git", "rev-list", "refs/heads/main"], cwd=hub.bare, capture_output=True, text=True, check=True
+        ["git", "rev-list", "refs/heads/main"],
+        cwd=hub.bare,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.split()
     assert ai_sha not in remote_main
     assert fixed_sha in remote_main

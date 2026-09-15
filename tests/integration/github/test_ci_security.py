@@ -12,7 +12,9 @@ INJECTIONS = [
     "&& touch /tmp/commitguard-pwned",
     "| touch /tmp/commitguard-pwned",
 ]
-KNOWN_COMMANDS = re.compile(r"^::(error|warning|notice)( title=[^:]*)?::|^::stop-commands::[0-9a-f]{32}$")
+KNOWN_COMMANDS = re.compile(
+    r"^::(error|warning|notice)( title=[^:]*)?::|^::stop-commands::[0-9a-f]{32}$"
+)
 
 
 def _command_lines(stdout: str) -> list[str]:
@@ -50,11 +52,11 @@ def test_malicious_metadata_is_never_executed_or_interpreted(hub, run_ci, gh) ->
     assert len(token_lines) == 1
     token = lines[token_lines[0]].split("::")[2]
     resume = lines.index(f"::{token}::")
-    for line in lines[:token_lines[0]] + lines[resume + 1 :]:
+    for line in lines[: token_lines[0]] + lines[resume + 1 :]:
         if line.startswith("::"):
             assert KNOWN_COMMANDS.match(line), line
             assert "set-output" not in line.split("::", 2)[1]
-    assert "::set-output" not in "\n".join(lines[:token_lines[0]] + lines[resume + 1 :])
+    assert "::set-output" not in "\n".join(lines[: token_lines[0]] + lines[resume + 1 :])
     # Step outputs contain only fixed keys and enum/integer values.
     assert set(result.outputs) == {"result", "conclusion", "commits", "violations", "warnings"}
     assert result.outputs["result"] == "block"
@@ -92,7 +94,9 @@ def test_json_mode_keeps_stdout_pure_json(hub, run_ci, gh) -> None:  # type: ign
     hub.dev.git("checkout", "--quiet", "-B", "f", base)
     head = hub.dev.commit(gh.AI)
     hub.dev.push("f")
-    result = run_ci(hub.ci_clone(checkout=head), "pull_request", gh.pr_event(base, head), "-f", "json")
+    result = run_ci(
+        hub.ci_clone(checkout=head), "pull_request", gh.pr_event(base, head), "-f", "json"
+    )
     data = result.json()  # raises if annotations were mixed into stdout
     assert data["schema_version"] == 1
     assert "message" not in data["commits"][0]  # full messages are not included
@@ -102,7 +106,11 @@ def test_report_file(hub, run_ci, gh, tmp_path: Path) -> None:  # type: ignore[n
     base = hub.dev.git("rev-parse", "main")
     report = tmp_path / "commitguard.json"
     result = run_ci(
-        hub.ci_clone(checkout=base), "pull_request", gh.pr_event(base, base), "--report-file", str(report)
+        hub.ci_clone(checkout=base),
+        "pull_request",
+        gh.pr_event(base, base),
+        "--report-file",
+        str(report),
     )
     assert result.returncode == 0
     assert '"action": "allow"' in report.read_text()

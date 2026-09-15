@@ -51,10 +51,10 @@ class CIContext(BaseModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> "CIContext":
-        if self.event in (CIEventKind.PULL_REQUEST, CIEventKind.MERGE_GROUP):
-            if self.base_sha is None or self.head_sha is None:
-                raise ValueError(f"{self.event.value} requires base and head commits")
-        elif self.event is CIEventKind.PUSH:
-            if self.ref_deleted != (self.after_sha is None):
-                raise ValueError("push: after commit must be absent exactly when the ref is deleted")
+        needs_both = self.event in (CIEventKind.PULL_REQUEST, CIEventKind.MERGE_GROUP)
+        if needs_both and (self.base_sha is None or self.head_sha is None):
+            raise ValueError(f"{self.event.value} requires base and head commits")
+        push_mismatch = self.ref_deleted != (self.after_sha is None)
+        if self.event is CIEventKind.PUSH and push_mismatch:
+            raise ValueError("push: after commit must be absent exactly when the ref is deleted")
         return self

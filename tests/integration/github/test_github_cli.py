@@ -115,11 +115,11 @@ def test_doctor_notes_unused_repository_rules(git_repo) -> None:  # type: ignore
 def test_ci_command_outside_actions_prints_plain_text(git_repo, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     sha = git_repo.commit("clean\n")
     event = tmp_path / "event.json"
-    event.write_text(
-        '{"pull_request": {"number": 1, "base": {"sha": "%s"}, "head": {"sha": "%s"}}}' % (sha, sha)
-    )
+    payload = {"pull_request": {"number": 1, "base": {"sha": sha}, "head": {"sha": sha}}}
+    event.write_text(__import__("json").dumps(payload))
     result = runner.invoke(
-        app, ["ci", "github", "--event-name", "pull_request", "--event-path", str(event)],
+        app,
+        ["ci", "github", "--event-name", "pull_request", "--event-path", str(event)],
         env={"GITHUB_ACTIONS": ""},
     )
     assert result.exit_code == 0, result.output

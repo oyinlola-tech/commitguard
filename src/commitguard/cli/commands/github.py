@@ -41,7 +41,11 @@ CommitGuard cannot verify these settings locally."""
 def setup_command() -> None:
     """Show GitHub workflow status, the required check name and setup steps."""
     ok, cross, bang = ("✓", "✗", "⚠") if supports_unicode() else ("OK", "X", "!")
-    symbol = {WorkflowIssueLevel.OK: "-", WorkflowIssueLevel.WARN: bang, WorkflowIssueLevel.FAIL: cross}
+    symbol = {
+        WorkflowIssueLevel.OK: "-",
+        WorkflowIssueLevel.WARN: bang,
+        WorkflowIssueLevel.FAIL: cross,
+    }
     with handled_errors():
         repository = Repository.discover()
         inspections = inspect_repository_workflows(repository.root)
@@ -63,7 +67,9 @@ def setup_command() -> None:
             info(f"    Required check name: {sanitize_for_terminal(name)}")
         for issue in inspection.issues:
             failed = failed or issue.level is WorkflowIssueLevel.FAIL
-            info(f"    {symbol[issue.level]} {sanitize_for_terminal(issue.message, max_length=300)}")
+            info(
+                f"    {symbol[issue.level]} {sanitize_for_terminal(issue.message, max_length=300)}"
+            )
     info("")
     info(GUIDANCE.format(check=CHECK_NAME))
     if failed:

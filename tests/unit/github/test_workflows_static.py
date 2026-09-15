@@ -127,7 +127,9 @@ def test_template_requires_owner_repo_and_full_sha(repository: str, ref: str) ->
         render_workflow(repository, ref)
 
 
-def _job(steps: str, *, on: str = "  pull_request:\n", top: str = "permissions:\n  contents: read\n") -> str:
+def _job(
+    steps: str, *, on: str = "  pull_request:\n", top: str = "permissions:\n  contents: read\n"
+) -> str:
     return (
         f"name: X\non:\n{on}{top}jobs:\n  guard:\n    runs-on: ubuntu-latest\n    steps:\n{steps}"
     )
@@ -148,13 +150,25 @@ GOOD_STEPS = (
         (_job(GOOD_STEPS, top="permissions:\n  contents: write\n"), "write access"),
         (_job(GOOD_STEPS, top=""), "no permissions block"),
         (_job(GOOD_STEPS.replace("fetch-depth: 0", "fetch-depth: 1")), "fetch-depth: 0"),
-        (_job(GOOD_STEPS.replace("@11bd71901bbe5b1630ceea73d27597364c9af683", "@v4")), "not pinned"),
+        (
+            _job(GOOD_STEPS.replace("@11bd71901bbe5b1630ceea73d27597364c9af683", "@v4")),
+            "not pinned",
+        ),
         (_job(GOOD_STEPS, on="  push:\n"), "does not run on pull_request"),
         (
-            _job(GOOD_STEPS, top="permissions:\n  contents: read\nconcurrency:\n  group: x\n  cancel-in-progress: true\n"),
+            _job(
+                GOOD_STEPS,
+                top=(
+                    "permissions:\n  contents: read\n"
+                    "concurrency:\n  group: x\n  cancel-in-progress: true\n"
+                ),
+            ),
             "cancel-in-progress",
         ),
-        (_job(GOOD_STEPS + "        env:\n          T: ${{ secrets.TOKEN }}\n"), "references secrets"),
+        (
+            _job(GOOD_STEPS + "        env:\n          T: ${{ secrets.TOKEN }}\n"),
+            "references secrets",
+        ),
     ],
 )
 def test_inspection_flags_unsafe_workflows(text: str, expected: str) -> None:
