@@ -163,16 +163,44 @@ policies:
 Reports list it in `config_sources` as `mandatory: <file name>`, and the policy
 source reads `… + mandatory policy (…)`.
 
-The intended future hierarchy is global mandatory policy → organisation
-mandatory policy → trusted repository configuration → local developer
-configuration. Each mandatory level may only tighten. Organisation-hosted
-policies are not implemented yet.
+## Organization policy (dashboard)
 
-## GitHub App environment
+Admins set an **organization policy** in the dashboard: per rule, a floor of
+"Repository decides", "At least WARN" or "Always BLOCK". The GitHub App
+combines it with the mandatory policy file (the stricter floor wins) and
+applies the result exactly like a mandatory policy. The hierarchy is:
+
+```text
+service mandatory policy (file)  ─┐
+organization policy (dashboard)  ─┴─ floors: only tighten
+trusted repository configuration      .commitguard.yaml at the base / before commit
+built-in defaults
+```
+
+| Repository (trusted) | Organization floor | Service floor | Effective |
+|---|---|---|---|
+| `ai_coauthor: allow` | Always BLOCK | — | **block** |
+| `bot_identity: allow` | At least WARN | — | **warn** |
+| `bot_identity: block` | At least WARN | — | **block** |
+| — | Repository decides | `ai_identity: block` | **block** |
+
+Organization policies are versioned; removing or lowering a floor needs a
+confirmation, a reason and a recent sign-in. Local hooks and the GitHub
+Action do not read the organization policy: it applies to App scans. See
+[dashboard.md#policies](dashboard.md#policies).
+
+## GitHub App and dashboard environment
 
 The App is configured through environment variables only (App ID, private key,
 webhook secret, data directory, mandatory policy, workers, retention, commit
 limit). See [github-app.md](github-app.md#5-configure-the-environment).
+
+The dashboard adds `COMMITGUARD_DASHBOARD_URL`, `COMMITGUARD_GITHUB_CLIENT_ID`,
+`COMMITGUARD_GITHUB_CLIENT_SECRET` (or `..._FILE`),
+`COMMITGUARD_DASHBOARD_STATIC_DIR`, `COMMITGUARD_DASHBOARD_ALLOWED_ORIGINS` and
+`COMMITGUARD_ENV`. See [dashboard.md#running-the-dashboard](dashboard.md#running-the-dashboard).
+Invalid values stop the service at start-up; error messages name the variable,
+never its value.
 
 ### Unknown fields
 

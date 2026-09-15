@@ -273,6 +273,13 @@ Developer ─▶ PR ─▶ CommitGuard ─▶ PASS ─▶ Merge
 `commitguard doctor` reports "branch protection cannot be verified locally":
 it inspects workflow files only.
 
+With the GitHub App installed, the [dashboard](dashboard.md#repository-protection-and-enforcement-status)
+can read evidence of this configuration: whether a workflow on the default
+branch runs CommitGuard (**GitHub Actions: detected**), and whether a ruleset
+or visible branch protection requires `commitguard` or `commitguard-app`
+(**Required check: required**). It reports `unknown` whenever GitHub does not
+show enough to be sure, and it never changes these settings.
+
 ### Push checks run after the fact
 
 ```text
@@ -335,6 +342,7 @@ This is a GitHub platform property; CommitGuard cannot enforce it.
 | Advantages | simple, repository-local, no service or credentials | centralised and organisation-wide, webhook-driven, Checks API, mandatory policy |
 | Limitations | runs inside CI; per-repository setup; a PR can edit its own workflow | needs deployment, App credentials and a webhook endpoint; no merge queue support yet |
 | Check name | `commitguard` | `commitguard-app` (pull requests), `commitguard-app/push` |
+| Dashboard | not recorded (results live in the workflow run) | scans, findings, violations, policy versions and audit history |
 
 Both use `ScanService` and the same trust model, so for the same commits,
 policy and rules they reach the same ALLOW, WARN or BLOCK decision (covered by

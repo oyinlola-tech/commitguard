@@ -6,6 +6,62 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added (Phase 6 — security dashboard and control plane)
+
+- Web dashboard (`web/`, React 19 + TypeScript + Vite) served by the App
+  service from the same origin: landing page, sign-in, overview, repositories
+  and repository detail, scans and scan detail, violations and violation
+  detail, policies, rules and rule detail, audit log, GitHub installations and
+  installation detail, settings, and a 404 page. Loading, empty, success and
+  error states on every page; responsive layouts with a navigation drawer and
+  stacked table cards; light and dark themes; WCAG 2.2 AA checks.
+- Dashboard API `/api/v1` (framework-free WSGI, `commitguard.api`):
+  consistent `data`/`meta` and `error` envelopes, cursor pagination,
+  server-side filtering, allow-listed sorting and search, security headers,
+  CORS allow-list, per-user rate limits, request IDs and structured request logs.
+- Sign-in with the GitHub App's user authorization (state bound to the
+  browser, PKCE); server-side sessions with hashed tokens, absolute and idle
+  expiry, revocation; session-derived CSRF tokens; re-authentication for
+  weakening changes.
+- Roles (viewer, security manager, admin, owner) with explicit permissions;
+  tenant isolation by GitHub account plus the installations and repositories
+  GitHub reports for the user; `commitguard dashboard members list|grant|revoke`.
+- Control plane (`commitguard.controlplane`): scan result recording with
+  findings, evidence and commit identities; violation lifecycle (open,
+  acknowledged, resolved) driven by pull request and branch exposures;
+  versioned organization policy floors with optimistic concurrency, applied to
+  App scans through the mandatory-policy floor; reproducibility metadata per
+  scan (organization policy version, effective policy, rules and CommitGuard
+  versions); scan comparison; re-scans; repository monitoring pause/resume;
+  enforcement evidence (Actions workflow detection, required check from
+  rulesets and branch protection); installation repository sync; rule catalogue.
+- Audit events with actors and organization scope for sign-in, sessions,
+  members, policy changes, violation lifecycle, monitoring, sync, enforcement
+  checks and re-scans; `SECURITY_ALERT_TYPES` for future notifications.
+- Tests: two-tenant authorization and IDOR tests for every route, security
+  tests (CSRF, CORS, injection, XSS, traversal, secrets in responses and logs,
+  rate limits, headers), policy, lifecycle and end-to-end API tests, a
+  performance test (100 repositories, 10k scans, 50k findings, 100k audit
+  events), Vitest component and page tests, and Playwright browser tests
+  (primary scenario, responsive, axe accessibility, CSP, cookies).
+- Docs: `dashboard.md`; deployment, architecture, GitHub App, GitHub
+  enforcement, configuration, threat model, README and SECURITY updated.
+
+### Changed (Phase 6)
+
+- State database schema 2 with ordered, transactional migrations; Phase 5
+  databases are upgraded in place.
+- The worker records results through `ScanResultRecorder` and evaluates each
+  installation with its organization's policy floor.
+- `CIRun` and `ScanResult` carry the effective policies; `Repository.is_ancestor`.
+- Audit events gain `actor_type`, `actor_id`, `actor_login` and `account_id`;
+  audit storage fills the account from the installation.
+- Findings now store the author and committer of commits with findings
+  (previously no identities were stored); commit messages are still never stored.
+- `RequestRateLimiter` moved to `commitguard.security.rate_limit`.
+- `commitguard github serve` and `wsgi_app_from_environment` serve the dashboard
+  when `COMMITGUARD_DASHBOARD_URL` is set.
+
 ### Added (Phase 5 — GitHub App and centralised enforcement)
 
 - GitHub App service (`commitguard github serve`, optional `app` extra):

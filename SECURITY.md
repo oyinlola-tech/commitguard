@@ -59,6 +59,26 @@ In scope in addition to the above:
 Operators: rotate the App private key and webhook secret in GitHub if you
 suspect exposure, and report the circumstances if CommitGuard was the cause.
 
+## Dashboard
+
+In scope in addition to the above:
+
+- reading or changing another organization's data, or data for a repository
+  GitHub does not let the user see;
+- performing an action the user's role does not allow (for example weakening
+  policy as a viewer or security manager), or granting a role;
+- CSRF, XSS (including through commit metadata), open redirects, session
+  fixation or theft;
+- a GitHub token, client secret or session token reaching the browser, logs or
+  the database in clear text;
+- the dashboard showing a result different from the one CommitGuard reached
+  (for example PASS for a blocked scan, or a violation marked resolved while
+  the commit is still present).
+
+Rotate the client secret in the GitHub App settings if you suspect exposure;
+existing sessions can be revoked from **Settings** or by deleting the
+`sessions` rows.
+
 ## Out of scope
 
 - Bypassing **local** hooks (`--no-verify`, deleting hooks): documented and

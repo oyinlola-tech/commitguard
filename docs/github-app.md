@@ -1,6 +1,7 @@
 # CommitGuard GitHub App
 
-> Status: Phase 5, pre-alpha. The App service is implemented and tested against
+> Status: Phase 6, pre-alpha. Results are also stored for the
+> [dashboard](dashboard.md). The App service is implemented and tested against
 > real Git repositories and an offline model of the GitHub API. It has **not**
 > yet been exercised against github.com by this project's test suite. Treat a
 > first deployment as a trial next to the existing GitHub Action.
@@ -74,8 +75,13 @@ its UI):
 - **Webhook secret:** a long random value, for example
   `python -c "import secrets; print(secrets.token_hex(32))"`. CommitGuard
   refuses secrets shorter than 16 characters.
-- **Callback URL / user authorization:** not used. CommitGuard never acts on
-  behalf of a user, so no client secret or OAuth flow is needed.
+- **Callback URL / user authorization:** needed only for the
+  [dashboard](dashboard.md): set the callback URL to
+  `https://<your-host>/api/v1/auth/callback` and generate a client secret.
+  The user token is used during sign-in to identify the user and the
+  installations and repositories they can access, then discarded. CommitGuard
+  never acts on behalf of a user on GitHub, and scanning needs no client
+  secret. Leave "Request user authorization during installation" off.
 
 ## 2. Permissions (least privilege)
 
@@ -314,6 +320,11 @@ The App uses the Phase 4 trust model unchanged, through the same code:
   ```
 
   If a repository sets `ai_coauthor: allow`, the result is still **BLOCK**.
+- **Organization policy** (dashboard, per GitHub account, versioned) is
+  combined with the service policy into one floor using the same rules: the
+  stricter floor wins, and it can only tighten. Each scan records the
+  organization policy version and the effective policy it used. See
+  [dashboard.md#policies](dashboard.md#policies).
 
 ## Fork pull requests
 
@@ -392,10 +403,17 @@ you. Keep the Action if you use merge queues.
 - **Audit events.** Types include installation created or removed, repositories
   added or removed, webhook rejected, scan queued, repository scanned, scan
   passed, failed, cancelled or errored, policy violation, policy modification,
-  configuration error, authorization denied, and pull request merged. They are
-  stored in the state database, scoped by installation and repository, and
-  contain IDs, SHAs, rule IDs, fingerprints and counts. They never contain
-  commit messages, names or e-mail addresses.
+  configuration error, authorization denied, pull request merged, and the
+  dashboard's events (sign-in, policy and role changes, violation lifecycle,
+  monitoring). They are stored in the state database with an actor and scoped
+  by organization, installation and repository. They never contain commit
+  messages or tokens.
+- **Scan results.** Each completed scan stores its findings (evidence,
+  and the author and committer of commits with findings), updates the
+  violation lifecycle and records policy and rules versions, in one
+  transaction with its final state.
+- **Monitoring paused.** A repository paused in the dashboard is ignored by
+  webhooks and queued scans are cancelled; no Check Run is created for it.
 - **Job states.** `queued`, `running`, `passed`, `failed` (policy blocked),
   `error` (could not complete), `cancelled`. `failed` and `error` both fail the
   check, but they are recorded separately.
@@ -442,7 +460,8 @@ For work without GitHub, the test suite contains a full offline model:
   that SHA; the most recently started scan owns it. This follows GitHub's model
   of checks per commit.
 - **Re-running a check.** "Re-run" from the GitHub UI (`check_run.rerequested`)
-  is not handled. After an error, push a new commit or reopen the pull request.
+  is not handled. Use **Scan again** on the scan in the dashboard, push a new
+  commit, or reopen the pull request.
 - **Single host.** The SQLite state store and the in-process queue support one
   host (several processes on that host share the database safely). Running
   several hosts needs a shared database implementation of the storage

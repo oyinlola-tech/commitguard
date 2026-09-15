@@ -1,7 +1,8 @@
-# Deploying the CommitGuard GitHub App
+# Deploying CommitGuard: GitHub App service and dashboard
 
-This page covers running the App service. Creating and configuring the App on
-GitHub is in [github-app.md](github-app.md).
+This page covers running the App service and the dashboard it serves.
+Creating and configuring the App on GitHub is in [github-app.md](github-app.md);
+using the dashboard is in [dashboard.md](dashboard.md).
 
 ## Architecture
 
@@ -22,6 +23,8 @@ Production:
               │ CommitGuard App process  │
               │  WSGI: /webhooks/github  │──▶ GitHub REST API (HTTPS, installation tokens)
               │        /health /ready    │
+              │        /api/v1/...       │──▶ github.com OAuth (sign-in only)
+              │        /  (web/dist)     │    dashboard, same origin
               │  GitHub client           │
               │  event queue (in-process)│
               │  scan workers (threads)  │──▶ git fetch (HTTPS, metadata only)
@@ -30,7 +33,9 @@ Production:
                            │
                            ▼
               COMMITGUARD_APP_DATA_DIR
-              ├── commitguard-app.sqlite3   deliveries · installations · jobs · audit
+              ├── commitguard-app.sqlite3   deliveries · installations · scans · findings ·
+              │                             violations · policy versions · members ·
+              │                             sessions · audit
               └── mirrors/<installation>/<repository>.git
 ```
 
@@ -57,6 +62,40 @@ the services. Neither is included today.
   publishes its IP ranges through its meta API if you want to restrict them.
 - A persistent, backed-up directory for `COMMITGUARD_APP_DATA_DIR`, owned by a
   dedicated unprivileged user.
+- SQLite with JSON functions (3.38 or newer; the version bundled with current
+  Python releases qualifies).
+- For the dashboard: Node.js 20.19+ **at build time only** (`web/`), the App's
+  client ID and client secret, and a public HTTPS origin.
+
+## Dashboard
+
+The dashboard is optional. It is enabled when `COMMITGUARD_DASHBOARD_URL` is
+set, and the service then refuses to start unless the client ID and secret
+are valid.
+
+1. On GitHub, in the App settings: set the **Callback URL** to
+   `https://<host>/api/v1/auth/callback` and generate a client secret.
+2. Build the static files: `cd web && npm ci && npm run build`. Copy `web/dist`
+   to the host; it contains no configuration and no secrets.
+3. Add to the service environment:
+
+   ```ini
+   Environment=COMMITGUARD_DASHBOARD_URL=https://commitguard.example.com
+   Environment=COMMITGUARD_GITHUB_CLIENT_ID=Iv23li...
+   Environment=COMMITGUARD_GITHUB_CLIENT_SECRET_FILE=/etc/commitguard/client-secret
+   Environment=COMMITGUARD_DASHBOARD_STATIC_DIR=/opt/commitguard/web/dist
+   ```
+
+4. Grant the first organization owner:
+   `commitguard dashboard members grant --organization <login> --user-id <id> --role owner`.
+
+Frontend and API share one origin by design: the session cookie stays
+first-party, `SameSite` protects writes, and no CORS is needed. To serve the
+static files from another host, keep it on the same **site** (for example
+`app.example.com` with the API on `api.example.com`), set
+`COMMITGUARD_DASHBOARD_URL` to the origin users visit, and list any other
+calling origin in `COMMITGUARD_DASHBOARD_ALLOWED_ORIGINS`. A different site
+cannot use the `SameSite=Lax` session cookie and is not supported.
 
 ## Option 1: built-in server behind a reverse proxy
 
@@ -94,8 +133,10 @@ WantedBy=multi-user.target
 The reverse proxy should:
 
 - terminate TLS;
-- forward only `POST /webhooks/github`, and `GET /health` and `GET /ready`
-  from your monitoring;
+- forward `POST /webhooks/github`; `GET /health` and `GET /ready` from your
+  monitoring; and, when the dashboard is enabled, `/api/v1/` and the dashboard
+  paths (everything else under `/`);
+- pass the `Origin`, `Cookie` and `X-CSRF-Token` headers through unchanged;
 - set a request body limit of at least 25 MB, GitHub's maximum payload size;
 - apply timeouts (about 10 seconds is ample, because the service answers
   webhooks without scanning).
@@ -143,14 +184,22 @@ secrets, repository names or configuration values.
 |---|---|---|
 | Webhook delivery IDs and payload digests | SQLite | `COMMITGUARD_APP_RETENTION_DAYS` |
 | Installations and granted repositories (IDs, names) | SQLite | until removed; deleted installations are purged after retention |
-| Scan jobs (SHAs, states, counts, rule IDs, safe error text) | SQLite | finished jobs purged after retention |
+| Scan jobs and results (SHAs, states, counts, rules and policy versions, effective policy, safe error text) | SQLite | finished scans purged after retention |
 | Check Run ownership (repository, SHA, check name, run ID) | SQLite | retention |
 | Audit events | SQLite | retention |
+| Findings: rule, evidence value, commit SHA, author and committer of that commit | SQLite | retention, except findings of still-open violations |
+| Violations and where they were detected | SQLite | resolved violations purged after retention; open ones kept |
+| Organization policy versions (floors, author, reason) | SQLite | kept, to explain historical scans |
+| Members (GitHub user ID, login, role) | SQLite | until removed |
+| Sessions (token hash, user agent, times) and the repositories GitHub reported at sign-in | SQLite | deleted at sign-out, revocation or expiry |
+| Repository settings and enforcement evidence | SQLite | until the installation is purged |
 | Repository mirrors (commits, trees, config blobs) | `mirrors/` | removed when a repository or installation is removed, or when unused for the retention period |
 
-- **Never stored:** commit messages, author names or e-mail addresses, file
-  contents (apart from the CommitGuard configuration blobs inside mirrors),
-  tokens, JWTs, keys, the webhook secret, or request headers.
+- **Never stored:** commit messages, file contents (apart from the CommitGuard
+  configuration blobs inside mirrors), GitHub installation or user tokens,
+  JWTs, keys, the webhook secret, the client secret, session tokens (only their
+  hashes), or request headers. Author and committer identities are stored only
+  for commits that produced a finding, to explain the violation.
 - **Purging:** the maintenance thread runs retention purging hourly.
 - **Backups:** back up the SQLite file (WAL mode; use `sqlite3 .backup` or stop
   the service first). Mirrors do not need backups: they are fetched again as
@@ -175,8 +224,11 @@ affected pull requests.
 ## Upgrades
 
 - Stop the service, upgrade the package, and start it again.
-- The database schema is versioned. An unknown schema version fails at start-up
-  rather than being silently migrated.
+- The database schema is versioned and migrated automatically at start-up
+  inside one transaction. Phase 5 databases (schema 1) are upgraded to schema 2
+  (dashboard tables; existing repositories and audit events are backfilled
+  with their organization). A database from a newer CommitGuard is refused
+  rather than modified. Back up the database before upgrading.
 - Detection rules ship with the package, and the rules version (a hash) is
   recorded with every scan.
 
@@ -190,3 +242,7 @@ affected pull requests.
 - [ ] `commitguard github validate` reports READY
 - [ ] Branch protection or rulesets require `commitguard-app` on protected branches
 - [ ] Logs are shipped somewhere access-controlled (they contain repository names and SHAs)
+- [ ] Dashboard: `COMMITGUARD_DASHBOARD_URL` is `https://` and `COMMITGUARD_ENV` is `production` (the default)
+- [ ] Dashboard: client secret stored as a file, mode `600`; rotated if exposed
+- [ ] Dashboard: first owner granted by numeric user ID; members reviewed in **Settings**
+- [ ] Dashboard: `COMMITGUARD_DASHBOARD_ALLOWED_ORIGINS` unset unless a second origin is required

@@ -28,7 +28,10 @@ branches, and every decision should be explainable with preserved evidence.
 - GitHub App credentials: the App private key, the webhook secret, JWTs and
   installation tokens (Phase 5);
 - the App's state (installations, scan jobs, audit events) and tenant isolation
-  between the accounts and organisations that install it.
+  between the accounts and organisations that install it;
+- dashboard sessions, organization policy and its version history, member
+  roles, violation state, and the evidence and identities stored with findings
+  (Phase 6).
 
 ## Adversaries
 
@@ -39,8 +42,38 @@ branches, and every decision should be explainable with preserved evidence.
 | Malicious repository content | abuse config/rules to execute code or weaken policy |
 | Automated agent | add attribution that evades detection, or strip it |
 | Internet attacker (GitHub App) | forge or replay webhooks, reach other tenants' repositories, exhaust the service, steal credentials |
+| Dashboard user of another organization | read or change data of a tenant they do not belong to |
+| Low-privilege member | weaken policy, hide violations, or grant themselves a role |
+| Malicious web page visited by a signed-in user | make the browser perform writes (CSRF) or read dashboard data |
 
 ## Threats and mitigations
+
+### Dashboard and control plane (Phase 6)
+
+```text
+browser ─▶ same-origin cookie session ─▶ CSRF (Origin + token) ─▶ rate limit
+        ─▶ route permission ─▶ AccessScope (role ∩ GitHub-reported installations/repositories)
+        ─▶ control plane service ─▶ parameterised SQL ─▶ state store
+```
+
+| Threat | Mitigation / limitation | Status |
+|---|---|---|
+| Unauthorized dashboard access | GitHub App user authorization with state bound to the browser and PKCE; every non-sign-in route returns `401` without a valid session (tested for every route) | **[done]** |
+| IDOR (guessing scan, violation, repository, installation, policy, member or audit IDs) | Every lookup runs inside the caller's access scope; out-of-scope resources are `404`, indistinguishable from missing ones; writes resolve the target inside the scope before checking the permission (tested per route with two tenants) | **[done]** |
+| Cross-tenant data leakage | Tenant = GitHub account; queries filter by installations whose account grants the permission **and** that GitHub listed for the user, and by the repositories GitHub listed; aggregates (overview, counts) use the same scope (tested) | **[done]** |
+| Stale GitHub access (user removed from a repository or organization on GitHub) | Access lists are read at sign-in; sessions last at most 8 hours, 2 hours idle; revocable from settings | partially mitigated (up to the session lifetime) |
+| Policy privilege escalation | `policies:write` checked on the server per organization; floors can only tighten repository policy; weakening needs confirmation, a reason and a sign-in within 15 minutes; optimistic concurrency; version and audit event written in one transaction (tested: viewer denied, security manager denied, admin audited, stale sign-in, conflict, forced audit failure rolls back) | **[done]** |
+| Hiding a violation | No "resolve" or "ignore" action; resolution is computed from scans and GitHub events; acknowledgement does not change enforcement and is audited (tested) | **[done]** |
+| Role escalation | Only owners manage members; nobody changes their own role; the last owner cannot be removed; grants use immutable GitHub user IDs; every change audited (tested) | **[done]** |
+| XSS through Git metadata (author names, trailers, repository names, evidence) | Stored as text with control characters made visible and secrets redacted; React text rendering only (no raw HTML, enforced by lint rule and test); API responses are JSON with `nosniff`; dashboard CSP allows only same-origin scripts and styles, no `unsafe-inline` or `unsafe-eval` (tested in unit, API and browser tests) | **[done]** |
+| CSRF | `SameSite=Lax` session cookie; writes require an allowed `Origin` and an `X-CSRF-Token` derived from the session; JSON-only bodies (tested: missing, wrong, other session's token, foreign and missing Origin, form content type) | **[done]** |
+| CORS misuse | No cross-origin access by default; optional explicit allow-list; `*` refused at start-up (tested) | **[done]** |
+| Stolen session | `HttpOnly`, `Secure`, `__Host-` cookie; only the SHA-256 is stored; absolute and idle expiry; server-side sign-out and revocation; HSTS in production; HTTPS required in production (tested) | **[done]** (a stolen cookie works until it expires or is revoked) |
+| Open redirect after sign-in | `return_to` limited to same-origin application paths (tested) | **[done]** |
+| SQL injection, command injection, path traversal | Parameterised SQL built only from constant fragments; allow-listed filters and sort keys; escaped `LIKE`; route parameters matched by strict patterns; static file serving resolves inside the build directory and rejects dot segments; no subprocess in the API (tested) | **[done]** |
+| API abuse and large responses | Per-user rate limits by operation class; bounded page sizes (≤ 100); 64 KB request bodies; JSON depth and duplicate-key limits; performance test with 100k audit events | **[done]** |
+| Secrets reaching the browser or logs | The browser receives view models only; GitHub user tokens are discarded after sign-in, installation tokens and keys stay server-side; request logs exclude headers, cookies and query strings (tested by inspecting responses, logs and the database) | **[done]** |
+| Personal data in findings | Author and committer identities are stored only for commits with findings and removed with retention; commit messages are not stored | **[done]** (documented data inventory) |
 
 ### GitHub App (Phase 5)
 
@@ -76,7 +109,7 @@ GitHub ─▶ webhook boundary (size, content type, rate limit)
 | Reduced App permissions silently pass | Token requests ask for the required permissions and verify the granted ones; missing permissions stop the scan without publishing success (tested) | **[done]** |
 | Denial of service | Request body limit (25 MB, checked from `Content-Length` before reading), JSON depth limit, duplicate-key rejection, per-client rate limit, bounded queue with durable recovery, commit limit per scan, fetch and Git timeouts, pagination page limit, output caps (20 findings, 60,000 characters) | **[done]** (per-message size limit: not implemented) |
 | SSRF | No URLs are taken from payloads: the API base and Git host are fixed, paths are built from validated segments, pagination links must stay on the API host, only the HTTPS handler is installed | **[done]** |
-| Cross-tenant data access | All storage keyed by installation and repository IDs; tenant-scoped listing APIs; mirrors under numeric installation and repository directories | **[done]** (no external API yet) |
+| Cross-tenant data access | All storage keyed by installation and repository IDs; tenant-scoped listing APIs; mirrors under numeric installation and repository directories; the dashboard API adds per-session access scopes (see Phase 6) | **[done]** |
 | Plain-HTTP interception of webhooks | The service binds to localhost; TLS is required at the reverse proxy (documented). GitHub requires HTTPS webhook URLs for signature verification to be meaningful | limitation documented |
 | Check exists but merges are not blocked | Branch protection or rulesets must require `commitguard-app`; not configured or verified by CommitGuard | limitation documented |
 
@@ -172,8 +205,11 @@ GitHub ─▶ webhook boundary (size, content type, rate limit)
 
 ### Information disclosure
 
-The GitHub App stores IDs, repository names, SHAs, states, counts, rule IDs and
-finding fingerprints for a bounded retention period (default 30 days). Mirrors
+The GitHub App stores IDs, repository names, SHAs, states, counts, rule IDs,
+finding evidence and, for commits with findings, author and committer
+identities for a bounded retention period (default 30 days); open violations
+are kept while they are open, and organization policy versions are kept to
+explain historical scans. Mirrors
 hold commit and tree objects (file names, not file contents) of repositories
 while they are installed. See [github-app.md](github-app.md#operational-notes).
 

@@ -1,8 +1,8 @@
 # Architecture
 
-> Status: Phase 5. Detection, policy, local Git hook enforcement, GitHub
-> Actions enforcement and the webhook-driven GitHub App (Checks API) are
-> implemented. No dashboard or management API yet.
+> Status: Phase 6. Detection, policy, local Git hook enforcement, GitHub
+> Actions enforcement, the webhook-driven GitHub App (Checks API), and the
+> control plane (`/api/v1` and the web dashboard) are implemented.
 
 ## Goals
 
@@ -88,6 +88,61 @@ Both paths reach the same `services.analysis.Analyzer`; only the inputs differ
        services/audit.py ─▶ audit events · observability/ ─▶ JSON logs, metrics
 ```
 
+### Control plane and dashboard (Phase 6)
+
+```text
+                                  Developer
+                                      │ Git workflow
+                                      ▼
+                             Git hooks (Phase 3)
+                                      │
+                                      ▼
+                                   GitHub
+                      ┌───────────────┴────────────────┐
+                      ▼                                ▼
+            GitHub Actions (Phase 4)          GitHub App (Phase 5)
+                      └───────────────┬────────────────┘
+                                      ▼
+                   CommitGuard core: detection · policy · Finding · ScanResult
+                                      │
+                                      ▼
+                               ScanService
+                                      │
+                   ┌──────────────────┴──────────────────┐
+                   ▼                                     ▼
+   Persistence (controlplane/results.py)       Audit system (services/audit.py)
+   scans · findings · violations · policy        actor · tenant · transactional
+   versions · members · sessions
+                   └──────────────────┬──────────────────┘
+                                      ▼
+            CommitGuard API  api/app.py   authentication → CSRF → rate limit
+                                          → permission → AccessScope → service
+                                      │
+                                      ▼
+            Security dashboard  web/  (React; renders server results only)
+```
+
+The dashboard is not the security engine:
+
+```text
+                    CommitGuard core
+                          │
+                          ▼
+                     ScanResult
+            ┌─────────────┼─────────────┐
+            ▼             ▼             ▼
+           CLI       GitHub Check    Dashboard
+         terminal       GitHub        Web UI
+```
+
+`controlplane` stores what the worker produced (`ScanResultRecorder`),
+versions organization policy (`OrganizationPolicyService`, applied through the
+existing mandatory-policy floor), tracks whether each violation is still
+present, and answers queries for one `AccessScope` at a time. `api` parses
+requests, authenticates, checks CSRF, rate limits and permissions, and calls
+those services. The browser receives only view models
+(`controlplane/views.py`) and renders them. See [dashboard.md](dashboard.md).
+
 The adapters differ only at the edges:
 
 ```text
@@ -117,6 +172,9 @@ The adapters differ only at the edges:
 | `github` | Actions: event normalisation (`events`), output (`actions`), check model (`checks`), workflow template and inspection (`workflow`). App: `settings`, `auth`, `client`, `webhooks`, `installations`, `repositories` (mirrors), `storage`, `queue`, `worker`, `check_runs`, `app` (WSGI), `server` | implemented |
 | `audit` | audit event model, storage interface, logger | implemented (recorded by the GitHub App) |
 | `observability` | structured JSON logs, correlation IDs, redaction, metrics | implemented |
+| `controlplane` | roles and access scope (`access`), sign-in and sessions (`identity`), members, scan result recording and violation lifecycle (`results`), versioned organization policy (`policies`), read services (`queries`), write commands (`commands`), rule catalogue, pagination, API view models (`views`) | implemented |
+| `api` | framework-free WSGI `/api/v1` (`app`), HTTP primitives, dashboard settings, hosting of the built dashboard and composition with the webhook app (`hosting`) | implemented |
+| `web/` (repository root) | React + TypeScript dashboard: typed API client, pages, design system, unit and browser tests | implemented |
 | `security` | validation, sanitisation, hashing, strict safe YAML | implemented |
 | `exceptions`, `utils` | error types, subprocess/filesystem/platform helpers | implemented |
 
@@ -143,6 +201,11 @@ Enforced by `tests/unit/test_architecture.py`:
 - YAML is only parsed through `security.safe_yaml`.
 - Every module imports cleanly in a fresh interpreter (no import cycles).
 - No `shell=True` anywhere.
+- `controlplane` and `api` never import detectors, the detection engine, the
+  policy evaluator or the analyzer: the dashboard has no second engine.
+- `api` contains no SQL; data access goes through `controlplane` services and
+  the state store.
+- Importing the CLI loads neither `api` nor `controlplane`.
 
 ## Key design decisions
 
@@ -194,6 +257,21 @@ answering. The queue only wakes workers, so crashes and restarts lose nothing.
 **Checks are per commit, writes are owned.** A newer job owns the Check Run for
 a (repository, SHA, check name) slot, and every write verifies ownership under
 a lock.
+
+**One database, versioned schema.** The control plane adds tables to the
+App's SQLite store through ordered migrations. Findings, violations and the
+job's final state are written in one transaction with their audit events, so
+the dashboard never shows a result without its findings or a policy version
+without its audit record.
+
+**Tenant scope is a type.** Read services require an `AccessScope` built from
+the session; SQL binds the scope as JSON (`json_each`) and joins the
+session's GitHub-reported repositories. Queries are assembled only from
+constant fragments.
+
+**The server decides every status.** Scan results, violation status and
+repository protection are computed in `controlplane` from stored facts. The
+frontend maps each value to a label and never derives one from findings.
 
 **CI context is provider-neutral.** GitHub-specific JSON stops at
 `github.events`; `services.ci` works on `ci.context.CIContext`, so GitLab or

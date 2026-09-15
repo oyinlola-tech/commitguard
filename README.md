@@ -2,9 +2,10 @@
 
 **Git commit provenance and contribution policy enforcement.**
 
-> **Status: pre-alpha (Phase 5 — GitHub App).** Local Git hooks stop violations
+> **Status: pre-alpha (Phase 6 — security dashboard).** Local Git hooks stop violations
 > during `git commit` / `git push`; a GitHub Actions check and a webhook-driven
-> GitHub App run the same engine on pull requests and pushes.
+> GitHub App run the same engine on pull requests and pushes; a web dashboard
+> explains what was scanned, what is blocked and why.
 > **A failing GitHub check blocks merges only when branch protection requires it** —
 > CommitGuard cannot configure or verify that. See [What works today](#what-works-today).
 
@@ -296,6 +297,33 @@ Actions or App? Actions: simplest, no service. App: organisation-wide,
 webhook-driven, central policy, but you operate it. Both can run together. See
 [docs/github-app.md](docs/github-app.md) and [docs/deployment.md](docs/deployment.md).
 
+## Dashboard
+
+```text
+CommitGuard core ──► ScanResult ──┬──► CLI (terminal)
+                                  ├──► GitHub Check (GitHub enforces it)
+                                  └──► /api/v1 ──► Dashboard (explains it)
+```
+
+The GitHub App service also serves a web dashboard (`web/`) and its API:
+
+- **Overview** — monitored repositories, scans in a period, blocked scans,
+  open and critical violations, explicit security checks (no invented score);
+- **Repositories** — protection shown only with evidence from GitHub, and
+  separate signals for the App, Actions, required check, latest check and
+  local hooks (reported as not verifiable);
+- **Scans** — every result with its commit range, findings, evidence and the
+  policy, rules and CommitGuard versions that produced it; scan again;
+- **Violations** — open, acknowledged or resolved, where resolution happens
+  only when the commit is no longer present; remediation guidance; history kept;
+- **Policies** — versioned organization floors that repositories cannot lower,
+  with confirmation for weakening changes; **Rules**; **Audit log**;
+  **GitHub installations**; **Settings** (sessions, members).
+
+Sign-in uses the GitHub App's user authorization; roles (viewer, security
+manager, admin, owner) are granted in CommitGuard, and users only see
+repositories GitHub lets them see. See [docs/dashboard.md](docs/dashboard.md).
+
 ## What works today
 
 - `scan`, `check` (including `--message-file`, `--format json`, `--quiet`,
@@ -324,10 +352,15 @@ webhook-driven, central policy, but you operate it. Both can run together. See
   retention, audit events, structured logs with correlation IDs,
   `/health` and `/ready`, `github validate`, `github webhook-test`, `github serve`
 
-Not yet: PR comments, SARIF, organisation-hosted policies, merge queue support
-in the App, a management API, signature verification, secret detection,
-dashboard. The App has not yet been tested against github.com itself (only an
-offline model of the API plus real Git).
+- Dashboard and `/api/v1`: GitHub sign-in, roles and tenant isolation,
+  overview, repositories with enforcement evidence, scans, violations with a
+  lifecycle, versioned organization policy, rules, audit log, installations
+  and sync, sessions and members; `commitguard dashboard members`
+
+Not yet: PR comments, SARIF, merge queue support in the App, notifications,
+signature verification, secret detection. The App and dashboard have not yet
+been tested against github.com itself (only an offline model of the API and
+OAuth flow plus real Git).
 
 ## Development
 
@@ -339,6 +372,11 @@ source .venv/bin/activate
 pytest
 ruff check . && ruff format --check .
 mypy
+
+# Dashboard (Node.js 20.19+)
+cd web && npm ci
+npm test && npm run typecheck && npm run lint
+npm run build && npm run e2e      # browser tests against the full stack
 ```
 
 ## Roadmap
@@ -359,13 +397,18 @@ local repository enforcement
 GitHub Actions check · pull request, merge queue and push scanning · trusted policy source ·
 branch protection guidance
 
-**Phase 5 — GitHub App** ✔ *(current)*
+**Phase 5 — GitHub App** ✔
 Webhooks · App authentication · installation lifecycle · Check Runs · ScanService ·
 EnforcementService · audit events · mandatory policy · deployment docs
 
-**Phase 6 — Web dashboard**
-Repositories · security status · blocked commits · findings · policies · rules ·
-audit history · organisation policy administration. (`web/` is a placeholder.)
+**Phase 6 — Security dashboard and control plane** ✔ *(current)*
+GitHub sign-in · roles and tenant isolation · repositories and enforcement evidence ·
+scans · violation lifecycle · versioned organization policy · rules · audit log ·
+installations · `/api/v1`
+
+**Phase 7 — Notifications and integrations** *(proposed)*
+Alerts for critical violations, policy changes and disconnected installations ·
+merge queue support in the App · check re-run requests · policy rollback
 
 **Later — Security intelligence**
 Advanced bot detection · signed commit verification · secret detection ·
@@ -380,6 +423,7 @@ provenance analysis · SARIF · advanced rules
 - [Git hooks](docs/git-hooks.md)
 - [GitHub enforcement (Actions)](docs/github-enforcement.md)
 - [GitHub App](docs/github-app.md)
+- [Dashboard and API](docs/dashboard.md)
 - [Deployment](docs/deployment.md)
 - [Threat model](docs/threat-model.md)
 
