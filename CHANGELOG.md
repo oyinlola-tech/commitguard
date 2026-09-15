@@ -6,6 +6,90 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added (Phase 7 — notifications, merge queue, check re-runs and policy recovery)
+
+- Notification subsystem (`commitguard.notifications`): typed notification
+  events written to a transactional outbox in the same database transaction as
+  the change that caused them; a dispatcher that fans out to per-user in-app
+  inbox rows and e-mail/webhook delivery records; a delivery worker with leases,
+  bounded retries (1 m, 5 m, 30 m, 2 h; 5 attempts), idempotency keys and
+  delivery audit events.
+- Notification types: `critical_violation`, `high_violation` (newly blocked
+  violations, one per rule per pull request/branch/merge group per hour),
+  `policy_changed`, `policy_rolled_back`, `installation_disconnected`,
+  `installation_reconnected` (state transitions only), `merge_queue_failure`,
+  `check_rerun_failed`.
+- Channels: in-app notification center (`/notifications`, bell with bounded
+  unread counts), SMTP e-mail (`EmailProvider` interface, plain text), and
+  HMAC-SHA256 signed webhooks with timestamps, per-endpoint derived secrets
+  shown once, public-address checks with pinned connections, and no redirects.
+  `COMMITGUARD_NOTIFICATIONS_MODE=test` records deliveries without sending.
+- Preferences: versioned organization settings (`notifications:manage`,
+  confirmation to turn deliveries off), organization e-mail recipients and
+  webhooks, personal in-app mutes for non-mandatory types; delivery log.
+- GitHub App merge queue support: `merge_group` `checks_requested` scans
+  `base_sha..head_sha` and publishes `commitguard-app` on the merge group
+  commit; `destroyed` cancels queued scans and ends exposures; refs and head
+  commit validated; out-of-order and duplicate events handled; merge queue
+  status (`enabled`/`not_enabled`/`unknown`) from rulesets; repository merge
+  queue view and `GET /api/v1/repositories/{id}/merge-queue`.
+- Check re-runs: `check_run` and `check_suite` `rerequested` create a new
+  execution of the stored scan (matched by `external_id`, installation,
+  repository, SHA and check name; other Apps ignored); stale re-runs of
+  outdated commits refused and audited; duplicates collapse.
+- Scan executions: `scan_key`, execution number, trigger (`push`,
+  `pull_request`, `merge_group`, `manual`, `rerun`, `retry`) and previous
+  execution on every job; `GET /api/v1/scans/{id}/executions`; scan detail
+  shows execution history and flags differing policy or rules versions.
+- Organization policy rollback (`POST /api/v1/policies/{id}/rollback`,
+  `policies:rollback`): a new immutable version restoring an earlier document,
+  with reason, confirmation, recent sign-in for weakening rollbacks, optimistic
+  concurrency, integrity check, audit event and notification in one
+  transaction; `GET /api/v1/policies/{id}/diff`; version history with status,
+  lineage, change summaries, compare and rollback dialog in the dashboard.
+- Event records: webhook deliveries store provider, action, processing status,
+  attempts and tenant IDs; a failed or abandoned delivery is processed again
+  on redelivery.
+- Recovery service: marks abandoned event processing failed and schedules up
+  to two automatic retry executions for infrastructure failures; jobs that
+  exhaust their attempts are audited and fail their check.
+- Metrics: `github_events_received`, `github_events_failed`,
+  `github_events_replayed`, `check_reruns`, `scan_retries`,
+  `merge_groups_scanned`, `merge_groups_failed`, `policy_rollbacks`,
+  `policy_rollback_failures`, `notifications_created`, `notifications_sent`,
+  `notifications_failed`, `notification_retries`.
+- Audit events for scan starts and retries, re-run requests and rejections,
+  merge groups, policy rollbacks, notification creation, delivery, failure,
+  reads, settings, preferences and webhooks; audit events carry the API
+  `request_id`.
+- Documentation: `docs/notifications.md`, `docs/merge-queue.md`,
+  `docs/policy-management.md`, `docs/recovery.md`.
+- Tests: notification units, event normalisation, storage and migration,
+  merge queue and re-run integration, notification and recovery API tests, the
+  Phase 7 lifecycle scenario, Phase 7 performance volumes (100,000
+  notifications, 100,000 event records, 10,000 policy versions), frontend
+  tests and a browser scenario.
+
+### Changed (Phase 7)
+
+- State database schema 3, migrated automatically: scan executions (existing
+  re-scans backfilled as manual executions), event processing status, merge
+  groups, policy version kind and rollback lineage with triggers that refuse
+  updates and deletes of published versions, notification tables.
+- Repositories whose GitHub App installation is suspended or removed, or that
+  are no longer granted, are `at_risk` instead of `unprotected`; the overview
+  warns that GitHub enforcement is at risk.
+- Superseded scans are shown with the result `stale` instead of `cancelled`.
+- Dashboard **Scan again** creates a new execution of the same scan and is
+  refused while one is already queued or running.
+- A late `suspend`, `unsuspend` or `new_permissions_accepted` event no longer
+  revives a deleted installation.
+- The optional `merge_queues: read` permission and `check_run`, `check_suite`
+  and `merge_group` subscriptions are reported by `commitguard github validate`
+  as warnings when missing; installation tokens remain down-scoped to the
+  required permissions.
+- Policy page success messages survive the editor remounting after a save.
+
 ### Added (Phase 6 — security dashboard and control plane)
 
 - Web dashboard (`web/`, React 19 + TypeScript + Vite) served by the App

@@ -79,6 +79,33 @@ Rotate the client secret in the GitHub App settings if you suspect exposure;
 existing sessions can be revoked from **Settings** or by deleting the
 `sessions` rows.
 
+## Notifications, merge queue and policy recovery
+
+In scope in addition to the above:
+
+- reading, marking or archiving another user's notification, or receiving a
+  notification about a repository or organization you cannot access;
+- muting mandatory security notifications, or changing organization
+  notification settings, e-mail recipients or webhooks without
+  `notifications:manage`;
+- forging a CommitGuard webhook that passes signature and timestamp
+  verification, obtaining an endpoint's signing secret after creation, or
+  making CommitGuard send a webhook to a private or internal address in
+  production;
+- injecting headers or HTML through notification content;
+- rolling back organization policy without `policies:rollback`, without
+  confirmation, over a concurrent change, or to a tampered version; modifying
+  or deleting a published policy version;
+- a merge group or re-run result published to the wrong repository or commit,
+  an outdated commit's result becoming current, or a GitHub event processed
+  twice into duplicate scans or notifications;
+- any path where an error, outage or notification failure produces a passing
+  CommitGuard check.
+
+Rotate `COMMITGUARD_NOTIFICATION_SIGNING_KEY` if you suspect exposure (every
+endpoint's secret changes; re-register receivers), and rotate SMTP credentials
+at your provider.
+
 ## Out of scope
 
 - Bypassing **local** hooks (`--no-verify`, deleting hooks): documented and

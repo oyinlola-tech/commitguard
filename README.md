@@ -2,10 +2,11 @@
 
 **Git commit provenance and contribution policy enforcement.**
 
-> **Status: pre-alpha (Phase 6 — security dashboard).** Local Git hooks stop violations
-> during `git commit` / `git push`; a GitHub Actions check and a webhook-driven
-> GitHub App run the same engine on pull requests and pushes; a web dashboard
-> explains what was scanned, what is blocked and why.
+> **Status: pre-alpha (Phase 7 — notifications, merge queue, re-runs, policy recovery).**
+> Local Git hooks stop violations during `git commit` / `git push`; a GitHub
+> Actions check and a webhook-driven GitHub App run the same engine on pull
+> requests, pushes and merge queues; a web dashboard explains what was scanned,
+> what is blocked and why, and notifies the people who need to act.
 > **A failing GitHub check blocks merges only when branch protection requires it** —
 > CommitGuard cannot configure or verify that. See [What works today](#what-works-today).
 
@@ -316,9 +317,14 @@ The GitHub App service also serves a web dashboard (`web/`) and its API:
   policy, rules and CommitGuard versions that produced it; scan again;
 - **Violations** — open, acknowledged or resolved, where resolution happens
   only when the commit is no longer present; remediation guidance; history kept;
-- **Policies** — versioned organization floors that repositories cannot lower,
-  with confirmation for weakening changes; **Rules**; **Audit log**;
-  **GitHub installations**; **Settings** (sessions, members).
+- **Policies** — versioned, immutable organization floors that repositories
+  cannot lower, with confirmation for weakening changes, a structured diff and
+  audited **rollback** to an earlier version; **Rules**; **Audit log**;
+  **GitHub installations**;
+- **Notifications** — blocked violations, policy changes and rollbacks,
+  installation disconnects, merge queue and re-run failures, deduplicated, in
+  the dashboard and optionally by e-mail and signed webhooks; **Settings**
+  (sessions, members, notification preferences).
 
 Sign-in uses the GitHub App's user authorization; roles (viewer, security
 manager, admin, owner) are granted in CommitGuard, and users only see
@@ -356,9 +362,17 @@ repositories GitHub lets them see. See [docs/dashboard.md](docs/dashboard.md).
   overview, repositories with enforcement evidence, scans, violations with a
   lifecycle, versioned organization policy, rules, audit log, installations
   and sync, sessions and members; `commitguard dashboard members`
+- Notifications: transactional outbox, in-app notification center,
+  organization and personal preferences, deduplication, SMTP e-mail and
+  HMAC-signed webhooks with bounded retries, delivery records and audit
+- GitHub App merge queue validation (`merge_group`), GitHub "Re-run" and
+  "Re-run all checks" handling with numbered scan executions, stale re-run
+  protection, event processing records with safe redelivery, automatic retry
+  of infrastructure failures
+- Organization policy rollback (immutable versions, rollback lineage, diff,
+  optimistic concurrency, audit and notification in one transaction)
 
-Not yet: PR comments, SARIF, merge queue support in the App, notifications,
-signature verification, secret detection. The App and dashboard have not yet
+Not yet: PR comments, SARIF, signature verification, secret detection. The App and dashboard have not yet
 been tested against github.com itself (only an offline model of the API and
 OAuth flow plus real Git).
 
@@ -401,14 +415,15 @@ branch protection guidance
 Webhooks · App authentication · installation lifecycle · Check Runs · ScanService ·
 EnforcementService · audit events · mandatory policy · deployment docs
 
-**Phase 6 — Security dashboard and control plane** ✔ *(current)*
+**Phase 6 — Security dashboard and control plane** ✔
 GitHub sign-in · roles and tenant isolation · repositories and enforcement evidence ·
 scans · violation lifecycle · versioned organization policy · rules · audit log ·
 installations · `/api/v1`
 
-**Phase 7 — Notifications and integrations** *(proposed)*
-Alerts for critical violations, policy changes and disconnected installations ·
-merge queue support in the App · check re-run requests · policy rollback
+**Phase 7 — Notifications, merge queue, re-runs and policy recovery** ✔ *(current)*
+Notification outbox · in-app, e-mail and signed webhook delivery · preferences ·
+deduplication and retries · merge group validation · check re-runs and scan
+executions · event processing records · policy rollback and diff · recovery
 
 **Later — Security intelligence**
 Advanced bot detection · signed commit verification · secret detection ·
@@ -424,6 +439,10 @@ provenance analysis · SARIF · advanced rules
 - [GitHub enforcement (Actions)](docs/github-enforcement.md)
 - [GitHub App](docs/github-app.md)
 - [Dashboard and API](docs/dashboard.md)
+- [Notifications](docs/notifications.md)
+- [Merge queue](docs/merge-queue.md)
+- [Policy management and rollback](docs/policy-management.md)
+- [Recovery and failure handling](docs/recovery.md)
 - [Deployment](docs/deployment.md)
 - [Threat model](docs/threat-model.md)
 
