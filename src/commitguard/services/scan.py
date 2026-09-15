@@ -19,6 +19,7 @@ from commitguard.ci.context import CIContext
 from commitguard.config.sources import MandatoryPolicy
 from commitguard.core.decision import Action
 from commitguard.git.repository import Repository
+from commitguard.policies.model import Policy
 from commitguard.rules.loader import builtin_rules_fingerprint
 from commitguard.rules.matcher import CompiledRules
 from commitguard.security.hashing import fingerprint
@@ -81,6 +82,7 @@ class ScanResult(BaseModel):
     statistics: ScanStatistics
     metadata: ScanMetadata
     enforcement: EnforcementDecision
+    policies: tuple[Policy, ...] = ()  # effective policies, for reproducible history
 
     @property
     def action(self) -> Action:
@@ -149,6 +151,7 @@ class ScanService:
             statistics=statistics_for(run.report),
             metadata=metadata,
             enforcement=EnforcementService(request.fail_on).decide(run.report),
+            policies=run.policies,
         )
 
     def run(self, request: ScanRequest) -> ScanResult:

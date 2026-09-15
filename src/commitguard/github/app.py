@@ -43,7 +43,12 @@ from commitguard.github.events import (
     normalize_webhook,
 )
 from commitguard.github.installations import InstallationService
-from commitguard.github.pull_requests import PullRequestDisposition, disposition, group_key
+from commitguard.github.pull_requests import (
+    PullRequestDisposition,
+    branch_group_key,
+    disposition,
+    group_key,
+)
 from commitguard.github.queue import DEFAULT_QUEUE_SIZE, EventQueue, InProcessEventQueue
 from commitguard.github.repositories import GitHubRemoteLocator, MirrorManager, RemoteLocator
 from commitguard.github.settings import AppSettings, load_settings
@@ -63,7 +68,7 @@ from commitguard.observability.metrics import (
     WEBHOOKS_REJECTED,
     InMemoryMetrics,
 )
-from commitguard.security.hashing import fingerprint, sha256_hex
+from commitguard.security.hashing import fingerprint
 from commitguard.security.secrets import Secret
 from commitguard.services.audit import AuditService
 
@@ -299,7 +304,7 @@ class GitHubAppService:
                 repository=event.repository,
                 delivery_id=delivery.delivery_id,
                 event="push",
-                group_key=f"push:{sha256_hex(ref.encode('utf-8'))[:24]}",
+                group_key=branch_group_key(ref),
                 head_sha=context.after_sha,
                 check_name=APP_PUSH_CHECK_NAME,
                 pull_request_number=None,

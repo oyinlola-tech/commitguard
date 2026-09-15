@@ -246,6 +246,21 @@ class Repository:
     def has_commit(self, oid: str) -> bool:
         return is_git_sha(oid) and self.peel_to_commit(oid) == oid
 
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool | None:
+        """Whether ``ancestor`` is reachable from ``descendant`` (a commit is its own ancestor).
+
+        Returns None when either commit is not available locally, so callers can
+        tell "not an ancestor" apart from "cannot tell".
+        """
+        if not (is_git_sha(ancestor) and is_git_sha(descendant)):
+            raise UnsafeInputError("is_ancestor requires full object ids")
+        if not (self.has_commit(ancestor) and self.has_commit(descendant)):
+            return None
+        result = self._git(["merge-base", "--is-ancestor", ancestor, descendant], check=False)
+        if result.returncode in (0, 1):
+            return result.returncode == 0
+        return None
+
     def remote_exists(self, name: str) -> bool:
         if not _is_simple_remote_name(name):
             return False

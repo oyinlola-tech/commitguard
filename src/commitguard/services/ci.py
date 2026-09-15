@@ -49,7 +49,7 @@ from commitguard.git.ranges import CommitRange, require_commit, resolve_commit_r
 from commitguard.git.repository import Repository
 from commitguard.policies.loader import build_policy_set
 from commitguard.policies.mandatory import apply_mandatory_policies
-from commitguard.policies.model import PolicySet
+from commitguard.policies.model import Policy, PolicySet
 from commitguard.rules.matcher import CompiledRules
 from commitguard.security.hashing import fingerprint
 from commitguard.services.analysis import Analyzer, build_report
@@ -75,6 +75,7 @@ class CIRun(BaseModel):
     plan: CIPlan
     report: ScanReport
     policy_fingerprint: str  # effective policies (trusted config + mandatory floor)
+    policies: tuple[Policy, ...] = ()  # the effective policies that evaluated the commits
 
 
 def policy_set_fingerprint(policies: PolicySet) -> str:
@@ -326,6 +327,7 @@ def execute_ci_plan(
         plan=plan,
         report=report,
         policy_fingerprint=policy_set_fingerprint(policies),
+        policies=tuple(policies.values()),
     )
 
 

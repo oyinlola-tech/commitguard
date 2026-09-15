@@ -7,6 +7,15 @@ Interfaces (so PostgreSQL or another backend can replace SQLite later):
 * :class:`ScanRepository`         - scan jobs, their states and Check Run ownership;
 * :class:`~commitguard.audit.storage.AuditStorage` - audit events.
 
+The dashboard's control plane (:mod:`commitguard.controlplane.store`) keeps its
+tables - findings, violations, users, sessions, memberships, organisation
+policy versions - in the same database, through :meth:`SqliteStateStore.transaction`
+and :meth:`SqliteStateStore.query`.
+
+Schema changes are ordered migrations (:data:`_MIGRATIONS`); a database written
+by an older version is upgraded in place inside one transaction, and a database
+from a newer version is refused.
+
 :class:`SqliteStateStore` implements all four with the standard-library
 ``sqlite3`` module (no new dependency). It is safe for many threads in one
 process and for several processes on one host (WAL mode, ``BEGIN IMMEDIATE``
@@ -14,8 +23,9 @@ for read-modify-write). Deployments with several hosts need a shared database
 implementation of the same interfaces.
 
 Data minimisation: the store holds IDs, repository names, commit SHAs, states,
-counts and rule IDs. It never stores commit messages, author identities, file
-contents, tokens or keys. Every table has a timestamp used by
+counts, rule IDs and - for commits with a finding only - the finding's evidence
+and the commit's author and committer identity. It never stores commit
+messages, file contents, tokens or keys. Every table has a timestamp used by
 :meth:`SqliteStateStore.purge_expired` for retention.
 
 Tenant isolation: all lookups that could be exposed later take the
@@ -42,7 +52,7 @@ from commitguard.ci.context import CIContext
 from commitguard.exceptions.service import InfrastructureError
 from commitguard.github.identifiers import AccountType, RepositoryRef
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DATABASE_FILENAME = "commitguard-app.sqlite3"
 DEFAULT_MAX_ATTEMPTS = 3
 
@@ -130,6 +140,20 @@ class ScanJob(BaseModel):
     commits_scanned: int | None = None
     violations: int | None = None
     warnings: int | None = None
+    base_sha: str | None = None
+    ref: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    tool_version: str | None = None
+    rules_version: str | None = None
+    policy_version: str | None = None
+    policy_source: str | None = None
+    organization_policy_version: int | None = None
+    effective_policies: tuple[dict[str, str | bool], ...] = ()
+    findings_count: int | None = None
+    detector_failures: int | None = None
+    notices: tuple[str, ...] = ()
+    requested_by: str | None = None
 
 
 class NewScanJob(BaseModel):
@@ -145,6 +169,7 @@ class NewScanJob(BaseModel):
     check_name: str
     pull_request_number: int | None
     context: CIContext
+    requested_by: str | None = None  # dashboard login for a manual re-scan
 
 
 class CheckClaim(BaseModel):
@@ -176,7 +201,9 @@ class InstallationRepository(Protocol):
     def add_repositories(
         self, installation_id: int, repositories: Sequence[RepositoryRef], now: datetime
     ) -> None: ...
-    def remove_repositories(self, installation_id: int, repository_ids: Sequence[int]) -> None: ...
+    def remove_repositories(
+        self, installation_id: int, repository_ids: Sequence[int], now: datetime | None = None
+    ) -> None: ...
     def repository_listed(self, installation_id: int, repository_id: int) -> bool: ...
     def list_repositories(self, installation_id: int) -> list[RepositoryRef]: ...
 
@@ -226,7 +253,7 @@ class ScanRepository(Protocol):
 # --------------------------------------------------------------------------- #
 # SQLite implementation
 # --------------------------------------------------------------------------- #
-_SCHEMA = """
+_SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS deliveries (
     delivery_id TEXT PRIMARY KEY,
@@ -310,6 +337,236 @@ CREATE INDEX IF NOT EXISTS audit_tenant
     ON audit_events (installation_id, repository_id, occurred_at);
 """
 
+# Version 2: the dashboard control plane.
+_SCHEMA_V2 = """
+ALTER TABLE scan_jobs ADD COLUMN base_sha TEXT;
+ALTER TABLE scan_jobs ADD COLUMN ref TEXT;
+ALTER TABLE scan_jobs ADD COLUMN started_at REAL;
+ALTER TABLE scan_jobs ADD COLUMN completed_at REAL;
+ALTER TABLE scan_jobs ADD COLUMN tool_version TEXT;
+ALTER TABLE scan_jobs ADD COLUMN rules_version TEXT;
+ALTER TABLE scan_jobs ADD COLUMN policy_version TEXT;
+ALTER TABLE scan_jobs ADD COLUMN policy_source TEXT;
+ALTER TABLE scan_jobs ADD COLUMN organization_policy_version INTEGER;
+ALTER TABLE scan_jobs ADD COLUMN effective_policies TEXT;
+ALTER TABLE scan_jobs ADD COLUMN findings_count INTEGER;
+ALTER TABLE scan_jobs ADD COLUMN detector_failures INTEGER;
+ALTER TABLE scan_jobs ADD COLUMN notices TEXT;
+ALTER TABLE scan_jobs ADD COLUMN requested_by TEXT;
+CREATE INDEX scan_jobs_repository_sequence
+    ON scan_jobs (installation_id, repository_id, sequence);
+CREATE INDEX scan_jobs_installation_created ON scan_jobs (installation_id, created_at);
+
+CREATE TABLE known_repositories (
+    installation_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    default_branch TEXT,
+    first_seen_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL,
+    removed_at REAL,
+    PRIMARY KEY (installation_id, repository_id)
+);
+INSERT OR IGNORE INTO known_repositories
+    (installation_id, repository_id, owner, name, first_seen_at, last_seen_at)
+    SELECT installation_id, repository_id, owner, name, added_at, added_at
+    FROM installation_repositories;
+INSERT OR IGNORE INTO known_repositories
+    (installation_id, repository_id, owner, name, first_seen_at, last_seen_at, removed_at)
+    SELECT installation_id, repository_id, owner, name, MIN(created_at), MAX(updated_at),
+           MAX(updated_at)
+    FROM scan_jobs GROUP BY installation_id, repository_id;
+
+ALTER TABLE audit_events ADD COLUMN account_id INTEGER;
+ALTER TABLE audit_events ADD COLUMN actor_login TEXT;
+UPDATE audit_events SET account_id = (
+    SELECT account_id FROM installations i WHERE i.installation_id = audit_events.installation_id
+);
+CREATE INDEX audit_account ON audit_events (account_id, occurred_at);
+
+CREATE TABLE findings (
+    finding_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    installation_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    violation_id TEXT,
+    fingerprint TEXT NOT NULL,
+    commit_sha TEXT,
+    rule_id TEXT NOT NULL,
+    detector TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    severity_rank INTEGER NOT NULL,
+    confidence TEXT NOT NULL,
+    action TEXT NOT NULL,
+    policy_id TEXT,
+    reason TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    remediation TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    author TEXT,
+    committer TEXT,
+    created_at REAL NOT NULL
+);
+CREATE INDEX findings_job ON findings (job_id, finding_id);
+CREATE INDEX findings_violation ON findings (violation_id, finding_id);
+CREATE INDEX findings_rule ON findings (installation_id, rule_id, job_id);
+CREATE INDEX findings_created ON findings (created_at);
+
+CREATE TABLE violations (
+    violation_id TEXT PRIMARY KEY,
+    installation_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    rule_id TEXT NOT NULL,
+    detector TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    severity_rank INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    title TEXT NOT NULL,
+    commit_sha TEXT,
+    author TEXT,
+    status TEXT NOT NULL,
+    first_detected_at REAL NOT NULL,
+    last_detected_at REAL NOT NULL,
+    first_job_id TEXT NOT NULL,
+    last_job_id TEXT NOT NULL,
+    detections INTEGER NOT NULL,
+    resolved_at REAL,
+    resolution TEXT,
+    acknowledged_at REAL,
+    acknowledged_by_id INTEGER,
+    acknowledged_by_login TEXT,
+    acknowledgement_note TEXT,
+    updated_at REAL NOT NULL,
+    UNIQUE (installation_id, repository_id, fingerprint)
+);
+CREATE INDEX violations_detected ON violations (installation_id, last_detected_at);
+CREATE INDEX violations_repository ON violations (installation_id, repository_id, status);
+CREATE INDEX violations_status ON violations (installation_id, status, severity_rank);
+CREATE INDEX violations_rule ON violations (installation_id, rule_id);
+
+CREATE TABLE violation_exposures (
+    violation_id TEXT NOT NULL,
+    installation_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    group_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    label TEXT NOT NULL,
+    active INTEGER NOT NULL,
+    first_job_id TEXT,
+    last_job_id TEXT,
+    opened_at REAL NOT NULL,
+    closed_at REAL,
+    closed_reason TEXT,
+    PRIMARY KEY (violation_id, group_key)
+);
+CREATE INDEX exposures_group
+    ON violation_exposures (installation_id, repository_id, group_key, active);
+
+CREATE TABLE users (
+    user_id INTEGER PRIMARY KEY,
+    login TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    last_login_at REAL
+);
+CREATE TABLE memberships (
+    account_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    granted_by TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (account_id, user_id)
+);
+CREATE INDEX memberships_user ON memberships (user_id);
+CREATE TABLE sessions (
+    session_hash TEXT PRIMARY KEY,
+    public_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL,
+    created_at REAL NOT NULL,
+    authenticated_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    user_agent TEXT NOT NULL
+);
+CREATE INDEX sessions_user ON sessions (user_id);
+CREATE INDEX sessions_expiry ON sessions (expires_at);
+CREATE TABLE session_installations (
+    session_hash TEXT NOT NULL REFERENCES sessions (session_hash) ON DELETE CASCADE,
+    installation_id INTEGER NOT NULL,
+    PRIMARY KEY (session_hash, installation_id)
+);
+CREATE TABLE session_repositories (
+    session_hash TEXT NOT NULL REFERENCES sessions (session_hash) ON DELETE CASCADE,
+    installation_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    PRIMARY KEY (session_hash, installation_id, repository_id)
+);
+CREATE TABLE oauth_states (
+    state_hash TEXT PRIMARY KEY,
+    verifier TEXT NOT NULL,
+    return_to TEXT NOT NULL,
+    expires_at REAL NOT NULL
+);
+
+CREATE TABLE organization_policy_versions (
+    account_id INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    created_by_id INTEGER,
+    created_by_login TEXT,
+    reason TEXT,
+    PRIMARY KEY (account_id, version)
+);
+
+CREATE TABLE repository_settings (
+    installation_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    monitoring_enabled INTEGER NOT NULL,
+    updated_at REAL NOT NULL,
+    updated_by_login TEXT,
+    PRIMARY KEY (installation_id, repository_id)
+);
+CREATE TABLE enforcement_status (
+    installation_id INTEGER NOT NULL,
+    repository_id INTEGER NOT NULL,
+    checked_at REAL NOT NULL,
+    branch TEXT,
+    actions TEXT NOT NULL,
+    actions_detail TEXT NOT NULL,
+    branch_protection TEXT NOT NULL,
+    required_checks TEXT NOT NULL,
+    branch_protection_detail TEXT NOT NULL,
+    PRIMARY KEY (installation_id, repository_id)
+);
+"""
+
+_MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2)
+
+
+_ORPHAN_DELETES = (
+    "DELETE FROM violation_exposures WHERE installation_id NOT IN "
+    "(SELECT installation_id FROM installations)",
+    "DELETE FROM violations WHERE installation_id NOT IN "
+    "(SELECT installation_id FROM installations)",
+    "DELETE FROM findings WHERE installation_id NOT IN "
+    "(SELECT installation_id FROM installations)",
+    "DELETE FROM repository_settings WHERE installation_id NOT IN "
+    "(SELECT installation_id FROM installations)",
+    "DELETE FROM enforcement_status WHERE installation_id NOT IN "
+    "(SELECT installation_id FROM installations)",
+)
+
+
+def _statements(script: str) -> list[str]:
+    """Split a migration into statements (migrations contain no string literals with ';')."""
+    return [part.strip() for part in script.split(";") if part.strip()]
+
+
 # Static statements only: no SQL is ever assembled from field names at run time.
 _JOB_UPDATES = {
     "state": "UPDATE scan_jobs SET state = ?, updated_at = ? WHERE job_id = ?",
@@ -325,6 +582,23 @@ _JOB_UPDATES = {
     "commits_scanned": "UPDATE scan_jobs SET commits_scanned = ?, updated_at = ? WHERE job_id = ?",
     "violations": "UPDATE scan_jobs SET violations = ?, updated_at = ? WHERE job_id = ?",
     "warnings": "UPDATE scan_jobs SET warnings = ?, updated_at = ? WHERE job_id = ?",
+    "base_sha": "UPDATE scan_jobs SET base_sha = ?, updated_at = ? WHERE job_id = ?",
+    "completed_at": "UPDATE scan_jobs SET completed_at = ?, updated_at = ? WHERE job_id = ?",
+    "tool_version": "UPDATE scan_jobs SET tool_version = ?, updated_at = ? WHERE job_id = ?",
+    "rules_version": "UPDATE scan_jobs SET rules_version = ?, updated_at = ? WHERE job_id = ?",
+    "policy_version": "UPDATE scan_jobs SET policy_version = ?, updated_at = ? WHERE job_id = ?",
+    "policy_source": "UPDATE scan_jobs SET policy_source = ?, updated_at = ? WHERE job_id = ?",
+    "organization_policy_version": (
+        "UPDATE scan_jobs SET organization_policy_version = ?, updated_at = ? WHERE job_id = ?"
+    ),
+    "effective_policies": (
+        "UPDATE scan_jobs SET effective_policies = ?, updated_at = ? WHERE job_id = ?"
+    ),
+    "findings_count": "UPDATE scan_jobs SET findings_count = ?, updated_at = ? WHERE job_id = ?",
+    "detector_failures": (
+        "UPDATE scan_jobs SET detector_failures = ?, updated_at = ? WHERE job_id = ?"
+    ),
+    "notices": "UPDATE scan_jobs SET notices = ?, updated_at = ? WHERE job_id = ?",
 }
 
 
@@ -351,22 +625,48 @@ class SqliteStateStore(AuditStorage):
             if self.path is not None:
                 self._db.execute("PRAGMA journal_mode = WAL")
             self._db.execute("PRAGMA foreign_keys = ON")
-            self._db.executescript(_SCHEMA)
-            self._db.execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
-                (str(SCHEMA_VERSION),),
-            )
-            version = self._db.execute(
-                "SELECT value FROM meta WHERE key = 'schema_version'"
-            ).fetchone()
+            self._migrate()
         except sqlite3.Error as exc:
             raise InfrastructureError(f"state store unavailable ({type(exc).__name__})") from None
-        if version is None or version["value"] != str(SCHEMA_VERSION):
-            raise InfrastructureError("state store has an unsupported schema version")
+
+    def _migrate(self) -> None:
+        """Apply pending migrations in one transaction; refuse unknown newer schemas."""
+        db = self._db
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+            current = int(row["value"]) if row is not None and row["value"].isdigit() else 0
+            if row is not None and not row["value"].isdigit():
+                raise InfrastructureError("state store has an unsupported schema version")
+            if current > SCHEMA_VERSION:
+                raise InfrastructureError("state store has an unsupported schema version")
+            for version in range(current + 1, SCHEMA_VERSION + 1):
+                for statement in _statements(_MIGRATIONS[version - 1]):
+                    db.execute(statement)
+            db.execute(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (str(SCHEMA_VERSION),),
+            )
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
+        db.execute("COMMIT")
 
     def close(self) -> None:
         with self._lock:
             self._db.close()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """A write transaction (``BEGIN IMMEDIATE``) for multi-statement changes."""
+        with self._transaction() as db:
+            yield db
+
+    def query(self, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
+        """Run a read-only, parameterised statement."""
+        return self._query(sql, params)
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -472,9 +772,15 @@ class SqliteStateStore(AuditStorage):
                     (int(installation_id),),
                 )
                 db.execute(
-                    "UPDATE scan_jobs SET state = 'cancelled', message = 'installation removed', "
-                    "updated_at = ? WHERE installation_id = ? AND state IN ('queued', 'running')",
+                    "UPDATE known_repositories SET removed_at = ? "
+                    "WHERE installation_id = ? AND removed_at IS NULL",
                     (_ts(now), int(installation_id)),
+                )
+                db.execute(
+                    "UPDATE scan_jobs SET state = 'cancelled', message = 'installation removed', "
+                    "updated_at = ?, completed_at = ? WHERE installation_id = ? "
+                    "AND state IN ('queued', 'running')",
+                    (_ts(now), _ts(now), int(installation_id)),
                 )
 
     def replace_repositories(
@@ -484,6 +790,11 @@ class SqliteStateStore(AuditStorage):
             db.execute(
                 "DELETE FROM installation_repositories WHERE installation_id = ?",
                 (int(installation_id),),
+            )
+            db.execute(
+                "UPDATE known_repositories SET removed_at = ? "
+                "WHERE installation_id = ? AND removed_at IS NULL",
+                (_ts(now), int(installation_id)),
             )
             self._insert_repositories(db, installation_id, repositories, now)
 
@@ -506,9 +817,27 @@ class SqliteStateStore(AuditStorage):
             "DO UPDATE SET owner = excluded.owner, name = excluded.name",
             [(int(installation_id), r.id, r.owner, r.name, _ts(now)) for r in repositories],
         )
+        db.executemany(
+            "INSERT INTO known_repositories (installation_id, repository_id, owner, name, "
+            "first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (installation_id, repository_id) DO UPDATE SET owner = excluded.owner, "
+            "name = excluded.name, last_seen_at = excluded.last_seen_at, removed_at = NULL",
+            [
+                (int(installation_id), r.id, r.owner, r.name, _ts(now), _ts(now))
+                for r in repositories
+            ],
+        )
 
-    def remove_repositories(self, installation_id: int, repository_ids: Sequence[int]) -> None:
+    def remove_repositories(
+        self, installation_id: int, repository_ids: Sequence[int], now: datetime | None = None
+    ) -> None:
+        removed_at = _ts(now or datetime.now(UTC))
         with self._transaction() as db:
+            db.executemany(
+                "UPDATE known_repositories SET removed_at = ? WHERE installation_id = ? "
+                "AND repository_id = ?",
+                [(removed_at, int(installation_id), int(r)) for r in repository_ids],
+            )
             db.executemany(
                 "DELETE FROM installation_repositories WHERE installation_id = ? "
                 "AND repository_id = ?",
@@ -519,6 +848,16 @@ class SqliteStateStore(AuditStorage):
                 "WHERE installation_id = ? AND repository_id = ? "
                 "AND state IN ('queued', 'running')",
                 [(int(installation_id), int(r)) for r in repository_ids],
+            )
+
+    def set_default_branch(
+        self, installation_id: int, repository_id: int, default_branch: str | None
+    ) -> None:
+        with self._transaction() as db:
+            db.execute(
+                "UPDATE known_repositories SET default_branch = ? WHERE installation_id = ? "
+                "AND repository_id = ?",
+                (default_branch, int(installation_id), int(repository_id)),
             )
 
     def repository_listed(self, installation_id: int, repository_id: int) -> bool:
@@ -569,6 +908,20 @@ class SqliteStateStore(AuditStorage):
             commits_scanned=row["commits_scanned"],
             violations=row["violations"],
             warnings=row["warnings"],
+            base_sha=row["base_sha"],
+            ref=row["ref"],
+            started_at=_opt_dt(row["started_at"]),
+            completed_at=_opt_dt(row["completed_at"]),
+            tool_version=row["tool_version"],
+            rules_version=row["rules_version"],
+            policy_version=row["policy_version"],
+            policy_source=row["policy_source"],
+            organization_policy_version=row["organization_policy_version"],
+            effective_policies=tuple(json.loads(row["effective_policies"] or "[]")),
+            findings_count=row["findings_count"],
+            detector_failures=row["detector_failures"],
+            notices=tuple(json.loads(row["notices"] or "[]")),
+            requested_by=row["requested_by"],
         )
 
     def create_job(self, job: NewScanJob, now: datetime) -> tuple[ScanJob, bool]:
@@ -585,12 +938,27 @@ class SqliteStateStore(AuditStorage):
             ).fetchone()
             if existing is not None and existing["state"] not in ("error", "cancelled"):
                 return self._job(existing), False
+            db.execute(
+                "INSERT INTO known_repositories (installation_id, repository_id, owner, name, "
+                "first_seen_at, last_seen_at, removed_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (installation_id, repository_id) DO UPDATE SET "
+                "last_seen_at = excluded.last_seen_at",
+                (
+                    job.installation_id,
+                    job.repository.id,
+                    job.repository.owner,
+                    job.repository.name,
+                    _ts(now),
+                    _ts(now),
+                    None,
+                ),
+            )
             job_id = uuid.uuid4().hex
             db.execute(
                 "INSERT INTO scan_jobs (job_id, job_key, installation_id, repository_id, owner, "
                 "name, delivery_id, event, group_key, head_sha, check_name, pull_request_number, "
-                "context, state, attempts, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?)",
+                "context, state, attempts, created_at, updated_at, base_sha, ref, requested_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?)",
                 (
                     job_id,
                     job.job_key,
@@ -607,6 +975,9 @@ class SqliteStateStore(AuditStorage):
                     job.context.model_dump_json(),
                     _ts(now),
                     _ts(now),
+                    job.context.base_sha or job.context.before_sha,
+                    job.context.ref,
+                    job.requested_by,
                 ),
             )
             row = db.execute("SELECT * FROM scan_jobs WHERE job_id = ?", (job_id,)).fetchone()
@@ -647,15 +1018,15 @@ class SqliteStateStore(AuditStorage):
             if row["attempts"] >= max_attempts:
                 db.execute(
                     "UPDATE scan_jobs SET state = 'error', failure_kind = 'internal', "
-                    "message = 'scan abandoned after repeated attempts', updated_at = ? "
-                    "WHERE job_id = ?",
-                    (_ts(now), job_id),
+                    "message = 'scan abandoned after repeated attempts', updated_at = ?, "
+                    "completed_at = ? WHERE job_id = ?",
+                    (_ts(now), _ts(now), job_id),
                 )
                 return None
             db.execute(
                 "UPDATE scan_jobs SET state = 'running', attempts = attempts + 1, "
-                "lease_expires_at = ?, updated_at = ? WHERE job_id = ?",
-                (_ts(now) + lease_seconds, _ts(now), job_id),
+                "lease_expires_at = ?, updated_at = ?, started_at = ? WHERE job_id = ?",
+                (_ts(now) + lease_seconds, _ts(now), _ts(now), job_id),
             )
             row = db.execute("SELECT * FROM scan_jobs WHERE job_id = ?", (job_id,)).fetchone()
         return self._job(row)
@@ -780,18 +1151,38 @@ class SqliteStateStore(AuditStorage):
     # -- audit ----------------------------------------------------------- #
     def append_audit_event(self, event: AuditEvent) -> None:
         with self._transaction() as db:
-            db.execute(
-                "INSERT INTO audit_events (event_id, occurred_at, type, installation_id, "
-                "repository_id, document) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    event.event_id,
-                    _ts(event.occurred_at),
-                    event.type.value,
-                    event.installation_id,
-                    event.repository_id,
-                    event.model_dump_json(),
-                ),
-            )
+            self.insert_audit_event(db, event)
+
+    @staticmethod
+    def insert_audit_event(db: sqlite3.Connection, event: AuditEvent) -> AuditEvent:
+        """Store ``event`` inside the caller's transaction.
+
+        The tenant (``account_id``) is taken from the installation when the event
+        does not name one, so every event about an installation is visible to -
+        and only to - that account.
+        """
+        if event.account_id is None and event.installation_id is not None:
+            row = db.execute(
+                "SELECT account_id FROM installations WHERE installation_id = ?",
+                (event.installation_id,),
+            ).fetchone()
+            if row is not None:
+                event = event.model_copy(update={"account_id": row["account_id"]})
+        db.execute(
+            "INSERT INTO audit_events (event_id, occurred_at, type, installation_id, "
+            "repository_id, account_id, actor_login, document) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event.event_id,
+                _ts(event.occurred_at),
+                event.type.value,
+                event.installation_id,
+                event.repository_id,
+                event.account_id,
+                event.actor_login,
+                event.model_dump_json(),
+            ),
+        )
+        return event
 
     def list_audit_events(
         self, *, installation_id: int, repository_id: int | None = None, limit: int = 100
@@ -822,7 +1213,24 @@ class SqliteStateStore(AuditStorage):
         installations older than ``before``."""
         cutoff = _ts(before)
         with self._transaction() as db:
+            # Control plane: history older than the cutoff, except anything an open
+            # violation still depends on.
+            findings = db.execute(
+                "DELETE FROM findings WHERE created_at < ? AND (violation_id IS NULL OR "
+                "violation_id NOT IN (SELECT violation_id FROM violations WHERE status = 'open'))",
+                (cutoff,),
+            ).rowcount
+            db.execute(
+                "DELETE FROM violation_exposures WHERE violation_id IN (SELECT violation_id FROM "
+                "violations WHERE status = 'resolved' AND updated_at < ?)",
+                (cutoff,),
+            )
+            violations = db.execute(
+                "DELETE FROM violations WHERE status = 'resolved' AND updated_at < ?", (cutoff,)
+            ).rowcount
             counts = {
+                "findings": findings,
+                "violations": violations,
                 "deliveries": db.execute(
                     "DELETE FROM deliveries WHERE received_at < ?", (cutoff,)
                 ).rowcount,
@@ -842,4 +1250,15 @@ class SqliteStateStore(AuditStorage):
                     (cutoff,),
                 ).rowcount,
             }
+            # Data whose installation record is gone can no longer be attributed to a
+            # tenant: remove it rather than keep it unreachable.
+            for statement in _ORPHAN_DELETES:
+                db.execute(statement)
+            counts["repositories"] = db.execute(
+                "DELETE FROM known_repositories WHERE removed_at IS NOT NULL AND removed_at < ? "
+                "AND NOT EXISTS (SELECT 1 FROM scan_jobs j WHERE j.installation_id = "
+                "known_repositories.installation_id AND j.repository_id = "
+                "known_repositories.repository_id)",
+                (cutoff,),
+            ).rowcount
         return counts

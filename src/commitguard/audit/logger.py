@@ -14,15 +14,21 @@ class AuditLogger:
         self._storages = tuple(storages)
 
     def record(self, event: AuditEvent) -> None:
+        self.log(event)
+        for storage in self._storages:
+            storage.append_audit_event(event)
+
+    @staticmethod
+    def log(event: AuditEvent) -> None:
         log.info(
             "audit",
             audit_type=event.type.value,
             audit_event_id=event.event_id,
+            actor_type=event.actor_type.value,
+            actor_id=event.actor_id,
             installation=event.installation_id,
             repository_id=event.repository_id,
             head_sha=event.head_sha,
             action=event.action.value if event.action else None,
             data=event.data,
         )
-        for storage in self._storages:
-            storage.append_audit_event(event)

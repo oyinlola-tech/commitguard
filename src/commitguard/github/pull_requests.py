@@ -19,6 +19,7 @@ would merge.
 from enum import StrEnum
 
 from commitguard.github.events import PULL_REQUEST_SCAN_ACTIONS, PullRequestEvent
+from commitguard.security.hashing import sha256_hex
 
 
 class PullRequestDisposition(StrEnum):
@@ -40,3 +41,8 @@ def disposition(event: PullRequestEvent) -> PullRequestDisposition:
 
 def group_key(number: int) -> str:
     return f"pull_request:{int(number)}"
+
+
+def branch_group_key(ref: str) -> str:
+    """Scan group for pushes to one branch (hashed: ref names are untrusted text)."""
+    return f"push:{sha256_hex(ref.encode('utf-8'))[:24]}"

@@ -1,9 +1,14 @@
 """Audit event model.
 
-Events are designed for future consumers (dashboards, notifications to email,
-Slack, Teams or webhooks): each has a stable ``type``, tenant keys
-(``installation_id``, ``repository_id``), correlation IDs and a small,
-validated ``data`` mapping. Values are bounded and sanitised on creation.
+Audit events record security-relevant actions; they are not application logs.
+Each has a stable ``type``, an **actor** (CommitGuard itself, GitHub, or a
+signed-in dashboard user), tenant keys (``account_id`` - the GitHub
+organisation or user account - ``installation_id``, ``repository_id``),
+correlation IDs and a small, validated ``data`` mapping. Values are bounded
+and sanitised on creation, and events are never updated after they are stored.
+
+Future notification channels (e-mail, Slack, webhooks) subscribe to the same
+stream: :data:`SECURITY_ALERT_TYPES` lists the events that warrant one.
 """
 
 import re
@@ -22,6 +27,28 @@ MAX_DATA_STRING = 512
 _KEY_RE = re.compile(r"\A[a-z][a-z0-9_]{0,63}\Z")
 
 type AuditValue = str | int | bool | None
+
+
+class ActorType(StrEnum):
+    SYSTEM = "system"  # CommitGuard acting on its own (scans, lifecycle updates)
+    GITHUB = "github"  # a verified GitHub webhook
+    USER = "user"  # a signed-in dashboard user
+
+
+class Actor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: ActorType
+    id: int | None = None
+    login: str | None = Field(default=None, max_length=64)
+
+    @classmethod
+    def user(cls, user_id: int, login: str) -> "Actor":
+        return cls(type=ActorType.USER, id=user_id, login=login)
+
+
+SYSTEM_ACTOR = Actor(type=ActorType.SYSTEM)
+GITHUB_ACTOR = Actor(type=ActorType.GITHUB)
 
 
 class AuditEventType(StrEnum):
@@ -44,6 +71,39 @@ class AuditEventType(StrEnum):
     SCAN_CANCELLED = "scan_cancelled"
     AUTHORIZATION_DENIED = "authorization_denied"
     PULL_REQUEST_MERGED = "pull_request_merged"
+    # Control plane (dashboard) events.
+    USER_SIGNED_IN = "user_signed_in"
+    USER_SIGNED_OUT = "user_signed_out"
+    SESSION_REVOKED = "session_revoked"
+    MEMBER_ROLE_GRANTED = "member_role_granted"
+    MEMBER_ROLE_CHANGED = "member_role_changed"
+    MEMBER_REMOVED = "member_removed"
+    ORGANIZATION_POLICY_CHANGED = "organization_policy_changed"
+    VIOLATION_OPENED = "violation_opened"
+    VIOLATION_REOPENED = "violation_reopened"
+    VIOLATION_RESOLVED = "violation_resolved"
+    VIOLATION_ACKNOWLEDGED = "violation_acknowledged"
+    VIOLATION_ACKNOWLEDGEMENT_REMOVED = "violation_acknowledgement_removed"
+    REPOSITORY_MONITORING_DISABLED = "repository_monitoring_disabled"
+    REPOSITORY_MONITORING_ENABLED = "repository_monitoring_enabled"
+    REPOSITORIES_SYNCED = "repositories_synced"
+    ENFORCEMENT_STATUS_CHECKED = "enforcement_status_checked"
+    SCAN_REQUESTED = "scan_requested"
+
+
+#: Events a future notification channel should deliver (not implemented yet).
+SECURITY_ALERT_TYPES = frozenset(
+    {
+        AuditEventType.POLICY_VIOLATION,
+        AuditEventType.POLICY_MODIFICATION,
+        AuditEventType.ORGANIZATION_POLICY_CHANGED,
+        AuditEventType.INSTALLATION_REMOVED,
+        AuditEventType.INSTALLATION_SUSPENDED,
+        AuditEventType.REPOSITORY_MONITORING_DISABLED,
+        AuditEventType.MEMBER_ROLE_GRANTED,
+        AuditEventType.MEMBER_ROLE_CHANGED,
+    }
+)
 
 
 class AuditEvent(BaseModel):
@@ -55,6 +115,10 @@ class AuditEvent(BaseModel):
     delivery_id: str | None = None
     job_id: str | None = None
     scan_id: str | None = None
+    actor_type: ActorType = ActorType.SYSTEM
+    actor_id: int | None = None  # GitHub user ID for ActorType.USER
+    actor_login: str | None = None
+    account_id: int | None = None  # filled from the installation when stored
     installation_id: int | None = None
     repository_id: int | None = None
     repository: str | None = None
