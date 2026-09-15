@@ -98,6 +98,10 @@ def job_group(job: ScanJob) -> _Group:
     return _Group(branch_group_key(ref), "branch", clean_text(ref, 256))
 
 
+def _closed_reason(number: int) -> str:
+    return f"pull request #{number} was closed without merging"
+
+
 def _evidence_document(item: EvaluatedFinding) -> str:
     return json.dumps(
         [
@@ -237,7 +241,7 @@ class ScanResultRecorder:
         reason = (
             f"pull request #{number} was merged into {clean_text(base_ref or 'its base', 200)}"
             if merged
-            else f"pull request #{number} was closed without merging"
+            else _closed_reason(number)
         )
         events: list[AuditEvent] = []
         with self._store.transaction() as db:
@@ -258,6 +262,29 @@ class ScanResultRecorder:
                     self._activate_exposure_row(
                         db, installation_id, repository_id, branch, violation_id, None, now
                     )
+            events.extend(self._refresh_statuses(db, ids, now))
+            events = [self._store.insert_audit_event(db, e) for e in events]
+        for event in events:
+            self._audit.log_stored(event)
+
+    def pull_request_reopened(self, installation_id: int, repository_id: int, number: int) -> None:
+        """Restore exposures ended by closing a pull request whose commits did not change."""
+        now = self._now()
+        key = group_key(number)
+        events: list[AuditEvent] = []
+        with self._store.transaction() as db:
+            rows = db.execute(
+                "SELECT violation_id FROM violation_exposures WHERE installation_id = ? "
+                "AND repository_id = ? AND group_key = ? AND active = 0 AND closed_reason = ?",
+                (installation_id, repository_id, key, _closed_reason(number)),
+            ).fetchall()
+            ids = {row["violation_id"] for row in rows}
+            db.execute(
+                "UPDATE violation_exposures SET active = 1, closed_at = NULL, "
+                "closed_reason = NULL, opened_at = ? WHERE installation_id = ? "
+                "AND repository_id = ? AND group_key = ? AND active = 0 AND closed_reason = ?",
+                (_ts(now), installation_id, repository_id, key, _closed_reason(number)),
+            )
             events.extend(self._refresh_statuses(db, ids, now))
             events = [self._store.insert_audit_event(db, e) for e in events]
         for event in events:

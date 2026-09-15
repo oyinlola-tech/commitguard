@@ -1148,23 +1148,24 @@ class DashboardQueries:
         if filters.end is not None:
             where.add("a.occurred_at < ?", filters.end.timestamp())
         newest = filters.sort != "oldest"
-        position = decode_cursor(cursor, (float, str))
+        # Ties on the timestamp are broken by insertion order (rowid), so events
+        # recorded in one transaction keep their order.
+        position = decode_cursor(cursor, (float, int))
         if position is not None:
             where.add(
-                "(a.occurred_at < ? OR (a.occurred_at = ? AND a.event_id < ?))"
+                "(a.occurred_at < ? OR (a.occurred_at = ? AND a.rowid < ?))"
                 if newest
-                else "(a.occurred_at > ? OR (a.occurred_at = ? AND a.event_id > ?))",
+                else "(a.occurred_at > ? OR (a.occurred_at = ? AND a.rowid > ?))",
                 position[0],
                 position[0],
                 position[1],
             )
-        order = (
-            "a.occurred_at DESC, a.event_id DESC" if newest else "a.occurred_at ASC, a.event_id ASC"
-        )
+        order = "a.occurred_at DESC, a.rowid DESC" if newest else "a.occurred_at ASC, a.rowid ASC"
         rows = self._store.query(
             " ".join(
                 (
-                    "SELECT a.event_id, a.occurred_at, a.document FROM audit_events a WHERE",
+                    "SELECT a.rowid AS position, a.occurred_at, a.document FROM audit_events a "
+                    "WHERE",
                     where.sql,
                     "ORDER BY",
                     order,
@@ -1179,7 +1180,7 @@ class DashboardQueries:
         next_cursor = None
         if len(rows) > limit:
             last = rows[limit - 1]
-            next_cursor = encode_cursor([last["occurred_at"], last["event_id"]])
+            next_cursor = encode_cursor([last["occurred_at"], last["position"]])
         return Page(items, next_cursor, limit)
 
     def get_audit_event(self, scope: AccessScope, event_id: str) -> AuditEventView | None:

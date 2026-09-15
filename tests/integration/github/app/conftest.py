@@ -11,6 +11,7 @@
 """
 
 import base64
+import hashlib
 import json
 import re
 import secrets
@@ -56,6 +57,19 @@ class Installation:
     repositories: dict[int, RepositoryRef]
     permissions: dict[str, str]
     suspended: bool = False
+    account_id: int = 1001
+
+
+@dataclass
+class User:
+    id: int
+    login: str
+    # installation ID -> repository IDs this user can access on GitHub
+    access: dict[int, set[int]] = field(default_factory=dict)
+
+
+CLIENT_ID = "Iv23liCommitGuardTest"
+CLIENT_SECRET = Secret("integration-client-secret-5e4d3c2b1a")
 
 
 @dataclass
@@ -81,6 +95,14 @@ class FakeGitHub:
         self.app_events = ["pull_request", "push"]
         self.before_request: Callable[[str, str], None] | None = None
         self._ids = 9000
+        # dashboard sign-in (GitHub App user authorization)
+        self.users: dict[int, User] = {}
+        self.oauth_codes: dict[str, tuple[int, str, str]] = {}  # code -> user, challenge, redirect
+        self.user_tokens: dict[str, int] = {}
+        # enforcement evidence per repository ID
+        self.branches: dict[int, dict[str, Any]] = {}
+        self.rulesets: dict[int, list[dict[str, Any]]] = {}
+        self.workflows: dict[int, dict[str, str]] = {}
 
     # -- test controls --------------------------------------------------- #
     def add_installation(
@@ -91,6 +113,7 @@ class FakeGitHub:
         login: str = "octo-org",
         account_type: str = "Organization",
         permissions: dict[str, str] | None = None,
+        account_id: int = 1001,
     ) -> None:
         self.installations[installation_id] = Installation(
             installation_id,
@@ -98,6 +121,7 @@ class FakeGitHub:
             account_type,
             {r.id: r for r in repositories},
             dict(permissions or REQUIRED_PERMISSIONS),
+            account_id=account_id,
         )
         for repository in repositories:
             self.default_branches.setdefault(repository.id, "main")
@@ -107,15 +131,59 @@ class FakeGitHub:
     ) -> None:
         self.failures.append(Failure(method, re.compile(path), outcome, times))
 
+    def add_user(self, user_id: int, login: str, access: dict[int, set[int]]) -> User:
+        user = User(user_id, login, {k: set(v) for k, v in access.items()})
+        self.users[user_id] = user
+        return user
+
+    def authorize(self, user_id: int, authorize_url: str) -> tuple[str, str]:
+        """The user approves the App on github.com: returns (code, state) for the callback."""
+        from urllib.parse import parse_qs, urlsplit
+
+        parts = urlsplit(authorize_url)
+        assert f"{parts.scheme}://{parts.netloc}{parts.path}" == (
+            "https://github.com/login/oauth/authorize"
+        )
+        query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+        assert query["client_id"] == CLIENT_ID
+        assert query["code_challenge_method"] == "S256"
+        code = secrets.token_hex(10)
+        self.oauth_codes[code] = (user_id, query["code_challenge"], query["redirect_uri"])
+        return code, query["state"]
+
     def runs_for(self, head_sha: str, name: str = APP_CHECK_NAME) -> list[dict[str, Any]]:
         return [
             r for r in self.check_runs.values() if r["head_sha"] == head_sha and r["name"] == name
         ]
 
     # -- transport ------------------------------------------------------- #
+    def _oauth_token(self, request: HttpRequest) -> HttpResponse:
+        from urllib.parse import parse_qs
+
+        form = {k: v[0] for k, v in parse_qs(request.body.decode()).items()}
+        grant = self.oauth_codes.pop(form.get("code", ""), None)
+        if (
+            grant is None
+            or form.get("client_id") != CLIENT_ID
+            or form.get("client_secret") != CLIENT_SECRET.reveal()
+            or form.get("redirect_uri") != grant[2]
+        ):
+            return _json(200, {"error": "bad_verification_code"})
+        digest = hashlib.sha256(form.get("code_verifier", "").encode()).digest()
+        if base64.urlsafe_b64encode(digest).rstrip(b"=").decode() != grant[1]:
+            return _json(200, {"error": "invalid_grant"})
+        token = "ghu_" + secrets.token_hex(18)
+        self.user_tokens[token] = grant[0]
+        return _json(200, {"access_token": token, "token_type": "bearer", "expires_in": 28800})
+
     def send(self, request: HttpRequest, *, timeout: float) -> HttpResponse:
+        if request.url == "https://github.com/login/oauth/access_token":
+            with self.lock:
+                self.requests.append((request.method, "/login/oauth/access_token", None))
+                return self._oauth_token(request)
         path = request.url.removeprefix("https://api.github.com").split("?", 1)[0]
         body = json.loads(request.body) if request.body else None
+        query = request.url.split("?", 1)[1] if "?" in request.url else ""
         with self.lock:
             self.requests.append((request.method, path, body))
             hook = self.before_request
@@ -136,7 +204,9 @@ class FakeGitHub:
             if not auth.startswith("Bearer "):
                 return _json(401, {"message": "Requires authentication"})
             credential = auth.removeprefix("Bearer ")
-            return self._route(request.method, path, body, credential)
+            if credential in self.user_tokens:
+                return self._user_route(request.method, path, self.user_tokens[credential])
+            return self._route(request.method, path, body, credential, query)
 
     def _verify_jwt(self, token: str) -> bool:
         try:
@@ -175,7 +245,42 @@ class FakeGitHub:
             "private": True,
         }
 
-    def _route(self, method: str, path: str, body: Any, credential: str) -> HttpResponse:
+    def _installation_json(self, i: Installation) -> dict[str, Any]:
+        return {
+            "id": i.id,
+            "account": {"id": i.account_id, "login": i.login, "type": i.type},
+            "repository_selection": "selected",
+            "permissions": i.permissions,
+            "suspended_at": "2026-01-01T00:00:00Z" if i.suspended else None,
+        }
+
+    def _user_route(self, method: str, path: str, user_id: int) -> HttpResponse:
+        user = self.users[user_id]
+        if path == "/user" and method == "GET":
+            return _json(200, {"id": user.id, "login": user.login, "type": "User"})
+        if path == "/user/installations" and method == "GET":
+            visible = [
+                self._installation_json(i)
+                for i in self.installations.values()
+                if i.id in user.access
+            ]
+            return _json(200, {"total_count": len(visible), "installations": visible})
+        match = re.fullmatch(r"/user/installations/(\d+)/repositories", path)
+        if match and method == "GET":
+            installation = self.installations.get(int(match.group(1)))
+            if installation is None or installation.id not in user.access:
+                return _json(404, {"message": "Not Found"})
+            repos = [
+                self._repo_json(r)
+                for rid, r in installation.repositories.items()
+                if rid in user.access[installation.id]
+            ]
+            return _json(200, {"total_count": len(repos), "repositories": repos})
+        return _json(404, {"message": "Not Found"})
+
+    def _route(
+        self, method: str, path: str, body: Any, credential: str, query: str = ""
+    ) -> HttpResponse:
         if path == "/app" and method == "GET":
             if not self._verify_jwt(credential):
                 return _json(401, {"message": "A JSON web token could not be decoded"})
@@ -194,17 +299,16 @@ class FakeGitHub:
                 return _json(401, {"message": "bad jwt"})
             return _json(
                 200,
-                [
-                    {
-                        "id": i.id,
-                        "account": {"id": 1, "login": i.login, "type": i.type},
-                        "repository_selection": "selected",
-                        "permissions": i.permissions,
-                        "suspended_at": "2026-01-01T00:00:00Z" if i.suspended else None,
-                    }
-                    for i in self.installations.values()
-                ],
+                [self._installation_json(i) for i in self.installations.values()],
             )
+        match = re.fullmatch(r"/app/installations/(\d+)", path)
+        if match and method == "GET":
+            if not self._verify_jwt(credential):
+                return _json(401, {"message": "bad jwt"})
+            installation = self.installations.get(int(match.group(1)))
+            if installation is None:
+                return _json(404, {"message": "Not Found"})
+            return _json(200, self._installation_json(installation))
         match = re.fullmatch(r"/app/installations/(\d+)/access_tokens", path)
         if match and method == "POST":
             if not self._verify_jwt(credential):
@@ -267,6 +371,11 @@ class FakeGitHub:
             if repository is None:
                 return _json(404, {"message": "Not Found"})
             return _json(200, self._repo_json(repository))
+        match = re.fullmatch(
+            r"/repos/([^/]+)/([^/]+)/(branches|rules/branches|contents)/(.+)", path
+        )
+        if match and method == "GET":
+            return self._repository_content(credential, *match.groups(), query)
         match = re.fullmatch(r"/repos/([^/]+)/([^/]+)/(pulls|check-runs)(?:/(\d+))?", path)
         if match:
             grant = self._token(credential)
@@ -320,6 +429,54 @@ class FakeGitHub:
                     return _json(
                         200, {"id": run["id"], "head_sha": run["head_sha"], "status": run["status"]}
                     )
+        return _json(404, {"message": "Not Found"})
+
+
+    def _repository_content(
+        self, credential: str, owner: str, name: str, kind: str, rest: str, query: str
+    ) -> HttpResponse:
+        from urllib.parse import parse_qs, unquote
+
+        grant = self._token(credential)
+        if grant is None:
+            return _json(401, {"message": "Bad credentials"})
+        repository = next(
+            (
+                r
+                for i in self.installations.values()
+                for r in i.repositories.values()
+                if (r.owner, r.name) == (owner, name)
+            ),
+            None,
+        )
+        if repository is None or self._repo_for_token(credential, repository.id) is None:
+            return _json(404, {"message": "Not Found"})
+        if kind == "branches":
+            branch = self.branches.get(repository.id)
+            if branch is None:
+                return _json(200, {"name": unquote(rest), "protected": False})
+            return _json(200, {"name": unquote(rest), **branch})
+        if kind == "rules/branches":
+            return _json(200, self.rulesets.get(repository.id, []))
+        ref = parse_qs(query).get("ref", [""])[0]
+        assert ref, "contents requests must name a ref"
+        path = unquote(rest)
+        files = self.workflows.get(repository.id, {})
+        if path == ".github/workflows":
+            entries = [
+                {"name": p.rsplit("/", 1)[-1], "path": p, "type": "file", "size": len(t)}
+                for p, t in files.items()
+            ]
+            return _json(200, entries) if entries else _json(404, {"message": "Not Found"})
+        if path in files:
+            return _json(
+                200,
+                {
+                    "encoding": "base64",
+                    "size": len(files[path]),
+                    "content": base64.b64encode(files[path].encode()).decode(),
+                },
+            )
         return _json(404, {"message": "Not Found"})
 
 
@@ -418,12 +575,13 @@ def installation_payload(
     *,
     login: str = "octo-org",
     account_type: str = "Organization",
+    account_id: int = 1001,
 ) -> dict[str, Any]:
     return {
         "action": action,
         "installation": {
             "id": installation_id,
-            "account": {"id": 1001, "login": login, "type": account_type},
+            "account": {"id": account_id, "login": login, "type": account_type},
             "repository_selection": "selected",
             "permissions": dict(REQUIRED_PERMISSIONS),
         },
@@ -434,14 +592,19 @@ def installation_payload(
 
 
 def repositories_payload(
-    action: str, repositories: tuple[RepositoryRef, ...], installation_id: int = INSTALLATION_ID
+    action: str,
+    repositories: tuple[RepositoryRef, ...],
+    installation_id: int = INSTALLATION_ID,
+    *,
+    login: str = "octo-org",
+    account_id: int = 1001,
 ) -> dict[str, Any]:
     entries = [{"id": r.id, "name": r.name, "full_name": r.full_name} for r in repositories]
     return {
         "action": action,
         "installation": {
             "id": installation_id,
-            "account": {"id": 1001, "login": "octo-org", "type": "Organization"},
+            "account": {"id": account_id, "login": login, "type": "Organization"},
         },
         "repository_selection": "selected",
         "repositories_added": entries if action == "added" else [],
@@ -570,5 +733,7 @@ def payloads():  # type: ignore[no-untyped-def]
         INSTALLATION_ID=INSTALLATION_ID,
         WEBHOOK_SECRET=WEBHOOK_SECRET,
         APP_ID=APP_ID,
+        CLIENT_ID=CLIENT_ID,
+        CLIENT_SECRET=CLIENT_SECRET,
         enable_partial_fetch=enable_partial_fetch,
     )

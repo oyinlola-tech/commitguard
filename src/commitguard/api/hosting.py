@@ -16,6 +16,7 @@ API calls from the same origin only (no inline scripts, no ``eval``).
 
 import mimetypes
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from wsgiref.types import StartResponse, WSGIEnvironment
 
@@ -125,10 +126,15 @@ class StaticSite:
         return [data] if method == "GET" else [b""]
 
 
-def build_dashboard(service: GitHubAppService, settings: DashboardSettings) -> DashboardApi:
+def build_dashboard(
+    service: GitHubAppService,
+    settings: DashboardSettings,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> DashboardApi:
     """Wire the dashboard API to the GitHub App service's store, client and workers."""
     store = service.store
-    queries = DashboardQueries(store)
+    queries = DashboardQueries(store, now=now)
     auth = AuthService(
         store,
         service.client,
@@ -136,14 +142,16 @@ def build_dashboard(service: GitHubAppService, settings: DashboardSettings) -> D
         client_id=settings.client_id,
         client_secret=settings.client_secret,
         redirect_uri=settings.redirect_uri,
+        now=now,
     )
     commands = ControlPlaneCommands(
         store,
         queries,
         service.audit,
         service.installations,
-        EnforcementProbe(service.client),
+        EnforcementProbe(service.client, now=now),
         enqueue=service.queue.put,
+        now=now,
     )
     service.add_maintenance_task(auth.purge_expired)
     return DashboardApi(
@@ -152,7 +160,8 @@ def build_dashboard(service: GitHubAppService, settings: DashboardSettings) -> D
         queries=queries,
         commands=commands,
         policies=service.policies,
-        members=MembershipService(store, service.audit),
+        members=MembershipService(store, service.audit, now=now),
+        now=now,
     )
 
 

@@ -291,6 +291,10 @@ class DashboardApi:
         if request.method in UNSAFE_METHODS:
             self._check_csrf(request)
         if route.permission is not None and principal is not None:
+            if not principal.accounts_with(route.permission):
+                raise ApiError(
+                    403, "FORBIDDEN", "You do not have permission to access this resource."
+                )
             organization = parse_int_id(request.arg("organization"), "organization")
             if organization is not None and organization not in principal.accounts_with(
                 route.permission
@@ -968,8 +972,8 @@ class DashboardApi:
                 False,
                 "read",
             ),
-            ("GET", "/rules", self.list_rules, None, False, "read"),
-            ("GET", "/rules/{rule_id:ident}", self.get_rule, None, False, "read"),
+            ("GET", "/rules", self.list_rules, p.RULES_READ, False, "read"),
+            ("GET", "/rules/{rule_id:ident}", self.get_rule, p.RULES_READ, False, "read"),
             ("GET", "/audit", self.list_audit, p.AUDIT_READ, False, "read"),
             ("GET", "/audit/{event_id:hex}", self.get_audit_event, p.AUDIT_READ, False, "read"),
             (

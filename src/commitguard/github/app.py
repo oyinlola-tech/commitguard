@@ -344,7 +344,7 @@ class GitHubAppService:
             return WebhookResult(202, {"status": "ignored"})
         context = event.context
         head = context.head_sha or ""
-        return self._enqueue(
+        result = self._enqueue(
             NewScanJob(
                 job_key=fingerprint(
                     ["pull_request", str(event.number), context.base_sha or "", head]
@@ -360,6 +360,13 @@ class GitHubAppService:
                 context=context,
             )
         )
+        if event.action == "reopened" and result.body.get("status") == "duplicate":
+            # Same commits as an earlier completed scan: nothing is re-scanned, so the
+            # violations that closing the pull request ended are present again.
+            self.recorder.pull_request_reopened(
+                event.installation_id, event.repository.id, event.number
+            )
+        return result
 
     def _enqueue(self, new_job: NewScanJob) -> WebhookResult:
         job, created = self.store.create_job(new_job, self._now())
