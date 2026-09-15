@@ -30,13 +30,13 @@ const EVIDENCE = [
     rule: "ai_identity",
     title: "Author and committer",
     body: "An AI agent recorded as the commit's author or committer.",
-    sample: "author Devin AI <devin-ai-integration[bot]@users.noreply.github.com>",
+    sample: "author Cursor Agent <cursoragent@cursor.com>",
   },
   {
     rule: "ai_trailer",
     title: "Attribution footers",
-    body: "Generated-by trailers and the footers coding tools add to messages.",
-    sample: "Generated-by: an AI coding assistant",
+    body: "Generated-by and Assisted-by trailers, and the footers coding tools add to messages.",
+    sample: "Generated with Claude Code",
   },
 ];
 

@@ -1,0 +1,157 @@
+/*
+ * CommitGuard design tokens.
+ *
+ * Colour is reserved for verdicts. The brand is ink on mineral paper (light)
+ * and pale ink on a green-black night shift (dark); the only saturated colours
+ * are the states CommitGuard reports - pass, blocked, warning, running,
+ * critical - so colour always means something. Every verdict colour meets
+ * WCAG AA (4.5:1) as text on its own tint and on the surface colour.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces and ink */
+  --paper: #f2f4f3;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --sunken: #e8ecea;
+  --ink: #101816;
+  --ink-soft: #2b3632;
+  --graphite: #55605c;
+  --rule: #d5dcd9;
+  --rule-strong: #b4bfba;
+  --overlay: rgb(16 24 22 / 0.42);
+
+  /* Inverted surfaces (terminal specimen, ink sections) */
+  --terminal: #101816;
+  --terminal-ink: #dfe7e3;
+  --terminal-dim: #8e9b96;
+  --terminal-rule: #26302c;
+
+  /* Verdicts: text / tint */
+  --pass: #147a4b;
+  --pass-tint: #e2f1e8;
+  --blocked: #b42329;
+  --blocked-tint: #fae6e5;
+  --warning: #855700;
+  --warning-tint: #f8eed6;
+  --running: #1a5bb3;
+  --running-tint: #e3ecf9;
+  --critical: #8a1648;
+  --critical-tint: #f6e3ec;
+  --neutral: #55605c;
+  --neutral-tint: #e8ecea;
+
+  /* Interaction */
+  --action: #101816;
+  --action-ink: #f2f4f3;
+  --action-hover: #2b3632;
+  --focus: #1a5bb3;
+  --highlight: #fff3b0;
+
+  /* Type */
+  --font-display: "Bricolage Grotesque Variable", "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Public Sans Variable", "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Commit Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.5rem;
+  --text-3xl: clamp(2.6rem, 1.6rem + 4vw, 4.6rem);
+
+  /* Space, shape, motion */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 5rem;
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-dialog: 0 24px 60px -20px rgb(16 24 22 / 0.35);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --sidebar: 15rem;
+  --content-max: 82rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #0c1110;
+    --surface: #121917;
+    --raised: #18211e;
+    --sunken: #090d0c;
+    --ink: #e4ebe8;
+    --ink-soft: #c4cec9;
+    --graphite: #97a39e;
+    --rule: #242e2a;
+    --rule-strong: #35423d;
+    --overlay: rgb(0 0 0 / 0.6);
+    --terminal: #070a09;
+    --terminal-ink: #dfe7e3;
+    --terminal-dim: #7f8c87;
+    --terminal-rule: #1d2623;
+    --pass: #5ccb94;
+    --pass-tint: rgb(92 203 148 / 0.12);
+    --blocked: #ff7b73;
+    --blocked-tint: rgb(255 123 115 / 0.12);
+    --warning: #e5b24d;
+    --warning-tint: rgb(229 178 77 / 0.12);
+    --running: #7cb0ff;
+    --running-tint: rgb(124 176 255 / 0.12);
+    --critical: #f683ba;
+    --critical-tint: rgb(246 131 186 / 0.13);
+    --neutral: #97a39e;
+    --neutral-tint: rgb(151 163 158 / 0.12);
+    --action: #e4ebe8;
+    --action-ink: #0c1110;
+    --action-hover: #ffffff;
+    --focus: #7cb0ff;
+    --highlight: rgb(229 178 77 / 0.22);
+    --shadow-dialog: 0 24px 60px -20px rgb(0 0 0 / 0.8);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0c1110;
+  --surface: #121917;
+  --raised: #18211e;
+  --sunken: #090d0c;
+  --ink: #e4ebe8;
+  --ink-soft: #c4cec9;
+  --graphite: #97a39e;
+  --rule: #242e2a;
+  --rule-strong: #35423d;
+  --overlay: rgb(0 0 0 / 0.6);
+  --terminal: #070a09;
+  --terminal-ink: #dfe7e3;
+  --terminal-dim: #7f8c87;
+  --terminal-rule: #1d2623;
+  --pass: #5ccb94;
+  --pass-tint: rgb(92 203 148 / 0.12);
+  --blocked: #ff7b73;
+  --blocked-tint: rgb(255 123 115 / 0.12);
+  --warning: #e5b24d;
+  --warning-tint: rgb(229 178 77 / 0.12);
+  --running: #7cb0ff;
+  --running-tint: rgb(124 176 255 / 0.12);
+  --critical: #f683ba;
+  --critical-tint: rgb(246 131 186 / 0.13);
+  --neutral: #97a39e;
+  --neutral-tint: rgb(151 163 158 / 0.12);
+  --action: #e4ebe8;
+  --action-ink: #0c1110;
+  --action-hover: #ffffff;
+  --focus: #7cb0ff;
+  --highlight: rgb(229 178 77 / 0.22);
+  --shadow-dialog: 0 24px 60px -20px rgb(0 0 0 / 0.8);
+}
