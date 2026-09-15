@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-15T17:33:03+00:00",
-  "commit": "1bcb40c+local changes",
+  "generated_at": "2026-09-15T17:42:10+00:00",
+  "commit": "36c1188+local changes",
   "python": "3.13.15",
   "platform": "linux",
   "suites": [
@@ -11,8 +11,8 @@
       "passed": 1143,
       "failed": 0,
       "skipped": 1,
-      "seconds": 228.8,
-      "summary": "1143 passed, 1 skipped in 227.85s (0:03:47)"
+      "seconds": 194.2,
+      "summary": "1143 passed, 1 skipped in 193.39s (0:03:13)"
     },
     {
       "name": "vitest",
@@ -21,8 +21,8 @@
       "passed": 72,
       "failed": 0,
       "skipped": 0,
-      "seconds": 21.4,
-      "summary": "72 passed (21 suites)"
+      "seconds": 20.3,
+      "summary": "72 passed (4 files)"
     },
     {
       "name": "playwright",
@@ -31,7 +31,7 @@
       "passed": 16,
       "failed": 0,
       "skipped": 0,
-      "seconds": 183.1,
+      "seconds": 175.0,
       "summary": "16 passed against the full stack"
     }
   ],
@@ -47,21 +47,21 @@
       "name": "mypy",
       "label": "mypy --strict",
       "ok": true,
-      "seconds": 0.7,
+      "seconds": 0.3,
       "summary": "Success: no issues found in 152 source files"
     },
     {
       "name": "tsc",
       "label": "TypeScript",
-      "ok": false,
-      "seconds": 13.6,
-      "summary": "- Use yarn to avoid accidentally running code from un-installed packages"
+      "ok": true,
+      "seconds": 8.8,
+      "summary": "no errors"
     },
     {
       "name": "eslint",
       "label": "ESLint",
       "ok": true,
-      "seconds": 12.3,
+      "seconds": 10.4,
       "summary": "no errors"
     }
   ]
