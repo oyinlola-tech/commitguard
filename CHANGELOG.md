@@ -49,6 +49,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed (Phase 6)
 
+- The GitHub Action is listed as **CommitGuard AI Attribution Check** (the
+  name "CommitGuard" is taken on GitHub Marketplace) and declares Marketplace
+  branding (`shield`, `gray-dark`). The `uses:` reference is unchanged.
 - State database schema 2 with ordered, transactional migrations; Phase 5
   databases are upgraded in place.
 - The worker records results through `ScanResultRecorder` and evaluates each

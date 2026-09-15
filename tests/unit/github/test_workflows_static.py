@@ -77,6 +77,29 @@ def test_no_secrets_and_no_write_permissions(path: Path) -> None:
     assert ": write" not in text
 
 
+MARKETPLACE_COLORS = {
+    "white",
+    "black",
+    "yellow",
+    "blue",
+    "green",
+    "orange",
+    "red",
+    "purple",
+    "gray-dark",
+}
+
+
+def test_action_metadata_meets_marketplace_requirements() -> None:
+    action = _load(ACTION)
+    # "CommitGuard" alone is taken on the Marketplace; the listed name must be unique.
+    assert action["name"] != "CommitGuard"
+    assert action["name"].startswith("CommitGuard ")
+    assert 0 < len(action["description"]) <= 125
+    assert action["branding"]["icon"] == "shield"
+    assert action["branding"]["color"] in MARKETPLACE_COLORS
+
+
 def test_action_inputs_are_only_supported_options() -> None:
     action = _load(ACTION)
     assert set(action["inputs"]) == {"config", "fail-on", "max-commits", "python-version"}

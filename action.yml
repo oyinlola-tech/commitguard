@@ -7,9 +7,12 @@
 # never from the repository being checked, with hash-pinned dependencies, then
 # runs `commitguard ci github`. Requires a prior actions/checkout with
 # fetch-depth: 0. Needs only `contents: read`; uses no secrets or token.
-name: CommitGuard
+name: CommitGuard AI Attribution Check
 description: Fail pull requests and pushes whose commits carry AI agent attribution or other contribution policy violations.
 author: CommitGuard contributors
+branding:
+  icon: shield
+  color: gray-dark
 
 inputs:
   config:
