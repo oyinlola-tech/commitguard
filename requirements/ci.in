@@ -1,0 +1,11 @@
+# Runtime dependencies of CommitGuard plus the build backend, for installing
+# CommitGuard in CI with `pip install --require-hashes` and
+# `--no-build-isolation` (no unhashed downloads).
+#
+# Regenerate requirements/ci.txt after changing this file or pyproject.toml:
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras \
+#     --output-file requirements/ci.txt requirements/ci.in
+typer==0.27.2
+pydantic==2.13.5
+PyYAML==6.0.3
+hatchling
