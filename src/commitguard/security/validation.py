@@ -66,3 +66,24 @@ def validate_git_config_key(key: str) -> str:
     if len(key) > MAX_REVISION_LENGTH or not _GIT_CONFIG_KEY_RE.match(key):
         raise UnsafeInputError(f"invalid git config key {key!r}")
     return key
+
+
+MAX_REPOSITORY_PATH_LENGTH = 1024
+
+
+def validate_repository_path(path: str) -> str:
+    """Validate a repository-relative POSIX path such as ``.commitguard.yaml``.
+
+    Rejects absolute paths, ``..`` or empty components, backslashes, leading
+    ``-`` and control characters, so the path can only name a file inside the
+    repository tree.
+    """
+    if not path or len(path) > MAX_REPOSITORY_PATH_LENGTH:
+        raise UnsafeInputError("repository path must be non-empty and reasonably short")
+    if path.startswith(("/", "-")) or "\\" in path or ":" in path.split("/", 1)[0]:
+        raise UnsafeInputError(f"invalid repository path {path!r}")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in path):
+        raise UnsafeInputError("repository path must not contain control characters")
+    if any(part in ("", ".", "..") for part in path.split("/")):
+        raise UnsafeInputError(f"invalid repository path {path!r}")
+    return path

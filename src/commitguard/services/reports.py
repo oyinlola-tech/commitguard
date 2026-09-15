@@ -96,6 +96,26 @@ class CommitReport(BaseModel):
         )
 
 
+class CIReport(BaseModel):
+    """CI context attached to reports produced by ``commitguard ci``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider: str
+    event: str
+    repository: str | None = None
+    ref: str | None = None
+    pull_request_number: int | None = None
+    from_fork: bool = False
+    base_sha: str | None = None
+    head_sha: str | None = None
+    policy_source: str
+    config_changes: tuple[str, ...] = Field(
+        default=(), description="Config files changed by the evaluated commits (not applied)"
+    )
+    notices: tuple[str, ...] = ()
+
+
 class ScanReport(BaseModel):
     """Result of analysing one or more commits."""
 
@@ -110,6 +130,7 @@ class ScanReport(BaseModel):
     config_sources: tuple[str, ...]
     action: Action
     commits: tuple[CommitReport, ...]
+    ci: CIReport | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

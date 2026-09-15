@@ -29,6 +29,7 @@ from commitguard.config.loader import LoadedConfig
 from commitguard.core.context import ScanTrigger
 from commitguard.exceptions.git import GitError
 from commitguard.git.push import PushUpdate, parse_pre_push_input
+from commitguard.git.ranges import resolve_commit_range
 from commitguard.git.repository import Repository
 from commitguard.services.analysis import (
     MAX_MESSAGE_FILE_BYTES,
@@ -152,11 +153,12 @@ def plan_push(
             plans.append(UpdatePlan(update=update, disposition=UpdateDisposition.NON_COMMIT))
             continue
         exclude = set(known_remote)
-        if not update.is_new_ref:
-            remote_commit = repository.peel_to_commit(update.remote_oid)
-            if remote_commit is not None:
-                exclude.add(remote_commit)
-        commits = repository.rev_list([commit], sorted(exclude), max_count=max_commits)
+        remote_commit = None if update.is_new_ref else repository.peel_to_commit(update.remote_oid)
+        if remote_commit is not None:
+            exclude.add(remote_commit)
+        commits = resolve_commit_range(
+            repository, commit, exclude, base=remote_commit, max_count=max_commits
+        ).commits
         for sha in commits:
             ordered.setdefault(sha, None)
         if len(ordered) > max_commits:

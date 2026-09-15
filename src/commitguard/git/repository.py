@@ -23,6 +23,7 @@ from commitguard.provenance.author import Identity
 from commitguard.security.validation import (
     is_git_sha,
     validate_git_config_key,
+    validate_repository_path,
     validate_revision,
 )
 
@@ -216,6 +217,11 @@ class Repository:
         sha = result.stdout.decode("ascii", errors="replace").strip()
         return sha if result.ok and is_git_sha(sha) else None
 
+    def object_exists(self, oid: str) -> bool:
+        if not is_git_sha(oid):
+            raise UnsafeInputError("object_exists requires a full object id")
+        return run_git(["cat-file", "-e", oid], cwd=self.root, check=False).ok
+
     def has_commit(self, oid: str) -> bool:
         return is_git_sha(oid) and self.peel_to_commit(oid) == oid
 
@@ -305,6 +311,47 @@ class Repository:
             args.append("--strip-comments")
         result = run_git(args, cwd=self.root, input_bytes=message.encode("utf-8", "surrogatepass"))
         return result.stdout.decode("utf-8", errors="replace")
+
+    def ref_commit(self, refname: str) -> str | None:
+        """The commit a fully qualified ref (``refs/...``) points to, if it exists."""
+        if not refname.startswith("refs/") or any(ord(c) < 0x20 for c in refname):
+            raise UnsafeInputError("ref_commit requires a fully qualified ref name")
+        result = run_git(
+            ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{refname}^{{commit}}"],
+            cwd=self.root,
+            check=False,
+        )
+        sha = result.stdout.decode("ascii", errors="replace").strip()
+        return sha if result.ok and is_git_sha(sha) else None
+
+    def read_blob_at(self, commit: str, path: str, *, max_bytes: int) -> bytes | None:
+        """Read a regular file from a commit's tree (not from the work tree).
+
+        Returns None if the path does not exist at that commit. Raises
+        :class:`UnsafeInputError` for non-regular entries (symlinks,
+        submodules, directories) or files larger than ``max_bytes``.
+        """
+        if not is_git_sha(commit):
+            raise UnsafeInputError("read_blob_at requires a full commit id")
+        validate_repository_path(path)
+        result = run_git(["ls-tree", "-z", "--end-of-options", commit, "--", path], cwd=self.root)
+        entries = [e for e in result.stdout.split(b"\x00") if e]
+        match = None
+        for entry in entries:
+            meta, _, name = entry.partition(b"\t")
+            if name.decode("utf-8", errors="surrogateescape") == path:
+                match = meta.decode("ascii", errors="replace").split()
+        if match is None:
+            return None
+        if len(match) != 3 or match[1] != "blob" or match[0] not in ("100644", "100755"):
+            raise UnsafeInputError(f"{path} at {commit[:12]} is not a regular file")
+        oid = match[2]
+        if not is_git_sha(oid):
+            raise MalformedGitOutputError("unexpected ls-tree output")
+        size = run_git(["cat-file", "-s", oid], cwd=self.root).stdout.decode("ascii").strip()
+        if not size.isdigit() or int(size) > max_bytes:
+            raise UnsafeInputError(f"{path} at {commit[:12]} is larger than {max_bytes} bytes")
+        return run_git(["cat-file", "blob", oid], cwd=self.root).stdout
 
     def config_get(self, key: str) -> str | None:
         """Return a Git configuration value, or None if it is unset."""

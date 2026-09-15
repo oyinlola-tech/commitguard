@@ -53,9 +53,14 @@ class ConfigSource(BaseModel):
 
     layer: ConfigLayer
     path: Path | None = None
+    revision: str | None = None  # set when the file was read from a commit, not the work tree
 
     def __str__(self) -> str:
-        return f"{self.layer.value}: {self.path}" if self.path else self.layer.value
+        if self.path is None:
+            return self.layer.value
+        if self.revision is not None:
+            return f"{self.layer.value}: {self.path.as_posix()} @ {self.revision[:12]}"
+        return f"{self.layer.value}: {self.path}"
 
 
 class LoadedConfig(BaseModel):

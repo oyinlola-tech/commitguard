@@ -18,7 +18,7 @@ from commitguard.policies.model import PolicySet
 from commitguard.provenance.author import Identity
 from commitguard.rules.loader import load_builtin_rules
 from commitguard.rules.matcher import CompiledRules
-from commitguard.services.reports import CommitReport, ScanReport
+from commitguard.services.reports import CIReport, CommitReport, ScanReport
 from commitguard.utils.filesystem import read_bytes_limited
 
 DEFAULT_MAX_COMMITS = 1000
@@ -67,6 +67,7 @@ def build_report(
     target: str,
     trigger: ScanTrigger,
     config: LoadedConfig,
+    ci: CIReport | None = None,
 ) -> ScanReport:
     return ScanReport(
         tool_version=__version__,
@@ -77,6 +78,7 @@ def build_report(
         config_sources=tuple(str(source) for source in config.sources),
         action=Action.most_restrictive([report.action for report in reports]),
         commits=tuple(reports),
+        ci=ci,
     )
 
 
