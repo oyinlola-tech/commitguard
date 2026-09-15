@@ -17,7 +17,8 @@ the GitHub App use; this package stores their results, tracks whether each
 violation is still present, versions organisation policy, and answers
 questions about that data for one authorised principal at a time.
 
-Tenant isolation is structural: every read takes an :class:`~commitguard.controlplane.access.AccessScope`
-built from the signed-in session, and every query filters by the installations
-and repositories in that scope.
+Tenant isolation is structural: every read takes an
+:class:`~commitguard.controlplane.access.AccessScope` built from the signed-in
+session, and every query filters by the installations and repositories in that
+scope.
 """

@@ -828,7 +828,7 @@ class GitHubClient:
         )
         ids: list[int] = []
         for item in items:
-            if isinstance(item, Mapping) and isinstance(item.get("id"), int):
-                if 0 < item["id"] < MAX_GITHUB_ID:
-                    ids.append(item["id"])
+            identifier = item.get("id") if isinstance(item, Mapping) else None
+            if isinstance(identifier, int) and 0 < identifier < MAX_GITHUB_ID:
+                ids.append(identifier)
         return ids

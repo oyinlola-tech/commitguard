@@ -738,7 +738,10 @@ class DashboardQueries:
                 where.add(
                     "(v.last_detected_at < ? OR (v.last_detected_at = ? AND v.violation_id < ?))"
                     if newest
-                    else "(v.last_detected_at > ? OR (v.last_detected_at = ? AND v.violation_id > ?))",
+                    else (
+                        "(v.last_detected_at > ? OR (v.last_detected_at = ? "
+                        "AND v.violation_id > ?))"
+                    ),
                     position[0],
                     position[0],
                     position[1],
@@ -1370,7 +1373,8 @@ class DashboardQueries:
                 " ".join(
                     (
                         "SELECT SUM(v.action = 'block') AS block, SUM(v.action = 'warn') AS warn, "
-                        "SUM(v.severity = 'critical') AS critical, SUM(v.severity = 'high') AS high "
+                        "SUM(v.severity = 'critical') AS critical, "
+                        "SUM(v.severity = 'high') AS high "
                         "FROM violations v WHERE",
                         SCOPE_VIOLATIONS,
                         "AND v.status = 'open'",

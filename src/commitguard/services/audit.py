@@ -1,6 +1,6 @@
 """AuditService: create audit events with correlation IDs and record them."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 
 from commitguard.audit.logger import AuditLogger
@@ -31,8 +31,10 @@ class AuditService:
         repository: str | None = None,
         head_sha: str | None = None,
         action: Action | None = None,
+        extra: Mapping[str, AuditValue] | None = None,
         **data: AuditValue,
     ) -> AuditEvent:
+        """Record an event. ``extra`` carries data built elsewhere (merged with ``data``)."""
         event = self.build(
             event_type,
             actor=actor,
@@ -42,7 +44,7 @@ class AuditService:
             repository=repository,
             head_sha=head_sha,
             action=action,
-            **data,
+            **{**(extra or {}), **data},
         )
         self._logger.record(event)
         return event

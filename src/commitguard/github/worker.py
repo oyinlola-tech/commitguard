@@ -427,5 +427,5 @@ class ScanWorker:
             repository=job.repository.full_name,
             head_sha=job.head_sha,
             action=action,
-            **data,
+            extra=data,
         )

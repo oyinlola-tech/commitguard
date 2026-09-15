@@ -34,6 +34,7 @@ Sessions
   ``X-CSRF-Token``; an attacker's page can read neither.
 """
 
+import base64
 import hashlib
 import hmac
 import secrets
@@ -116,8 +117,6 @@ def csrf_token_for(session_token: str) -> str:
 
 
 def pkce_challenge(verifier: str) -> str:
-    import base64
-
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
@@ -244,7 +243,8 @@ class AuthService:
             )
             for installation_id, repository_ids in installations.items():
                 db.execute(
-                    "INSERT INTO session_installations (session_hash, installation_id) VALUES (?, ?)",
+                    "INSERT INTO session_installations (session_hash, installation_id) "
+                    "VALUES (?, ?)",
                     (session_hash, installation_id),
                 )
                 db.executemany(

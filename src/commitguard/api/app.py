@@ -363,7 +363,7 @@ class DashboardApi:
     def _organization(
         principal: Principal, organization_id: int, permission: Permission
     ) -> OrganizationRef:
-        """Resolve an organization the caller belongs to (404 otherwise), then check ``permission``."""
+        """An organization the caller belongs to (else 404), after checking ``permission``."""
         membership = principal.memberships.get(organization_id)
         if membership is None:
             raise ApiError(404, "NOT_FOUND", NOT_FOUND)
@@ -584,7 +584,7 @@ class DashboardApi:
             result=parse_choice(request.arg("result"), dict(SCAN_RESULTS), "result"),
             event=parse_choice(
                 request.arg("event"), {"pull_request": "pull_request", "push": "push"}, "event"
-            ),  # type: ignore[arg-type]
+            ),
             rule_id=rule or None,
             severity=parse_choice(
                 request.arg("severity"), {s.value: s for s in Severity}, "severity"

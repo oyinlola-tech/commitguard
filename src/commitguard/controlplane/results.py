@@ -372,7 +372,8 @@ class ScanResultRecorder:
         if row is None:
             violation_id = uuid.uuid4().hex
             db.execute(
-                "INSERT INTO violations (violation_id, installation_id, repository_id, fingerprint, "
+                "INSERT INTO violations (violation_id, installation_id, repository_id, "
+                "fingerprint, "
                 "rule_id, detector, severity, severity_rank, action, title, commit_sha, author, "
                 "status, first_detected_at, last_detected_at, first_job_id, last_job_id, "
                 "detections, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, "

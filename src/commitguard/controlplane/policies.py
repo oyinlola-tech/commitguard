@@ -26,6 +26,7 @@ conflict instead of silently overwriting their change.
 """
 
 import json
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -148,11 +149,11 @@ class OrganizationPolicyService:
         return [self.version_view(self._version(row)) for row in rows]
 
     @staticmethod
-    def _version(row: Mapping[str, object]) -> PolicyVersion:
+    def _version(row: sqlite3.Row) -> PolicyVersion:
         document = json.loads(str(row["document"]))
         return PolicyVersion(
-            account_id=int(str(row["account_id"])),
-            version=int(str(row["version"])),
+            account_id=int(row["account_id"]),
+            version=int(row["version"]),
             floors={k: Action(v) for k, v in document.items()},
             fingerprint=str(row["fingerprint"]),
             created_at=datetime.fromtimestamp(float(str(row["created_at"])), UTC),
