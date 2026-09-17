@@ -104,7 +104,8 @@ def test_no_documentation_tells_anyone_to_install_from_pypi() -> None:
             is_command = stripped.startswith(
                 ("pip install", "python -m pip install", "pipx install")
             )
-            if in_code_block and is_command and "commitguard" in stripped:
-                if "git+https://" not in stripped and "-e" not in stripped:
-                    offenders.append(f"{path.relative_to(root)}:{number}: {stripped}")
+            names_project = is_command and "commitguard" in stripped
+            from_source = "git+https://" in stripped or "-e" in stripped
+            if in_code_block and names_project and not from_source:
+                offenders.append(f"{path.relative_to(root)}:{number}: {stripped}")
     assert offenders == [], "install commands must use a Git source:\n" + "\n".join(offenders)

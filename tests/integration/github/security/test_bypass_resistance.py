@@ -1,3 +1,5 @@
+# ruff: noqa: E501 - experiment records are one string per field: wrapping them makes
+# the recorded evidence harder to read than the line-length rule is worth.
 """Bypass-resistance experiments: local enforcement versus server-side enforcement.
 
 Each experiment performs a real bypass against the local layer (real Git, real

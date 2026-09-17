@@ -14,6 +14,7 @@ point the properties are:
 Example counts are recorded as evidence (see tests/security/conftest.py).
 """
 
+import contextlib
 import json
 import string
 import unicodedata
@@ -65,6 +66,13 @@ from commitguard.services.analysis import Analyzer
 ANALYZER = Analyzer.create(default_policy_set())
 HUMAN = Identity(name="Ada Lovelace", email="ada@example.com")
 CLAUDE = "Claude <noreply@anthropic.com>"
+KNOWN_POLICIES = {
+    "ai_coauthor",
+    "ai_identity",
+    "ai_trailer",
+    "bot_identity",
+    "malformed_trailer",
+}
 HUMAN_TRAILERS = [
     "Signed-off-by: Ada Lovelace <ada@example.com>",
     "Reviewed-by: Grace Hopper <grace.hopper@example.org>",
@@ -160,7 +168,9 @@ def test_human_trailers_are_never_blocked(  # type: ignore[no-untyped-def]
     evidence, subject: str, prefix: str, trailers: list[str]
 ) -> None:
     evidence.count("analyzer: human trailers with list prefixes")
-    assume("claude" not in subject.casefold() and "copilot" not in subject.casefold())
+    lowered = subject.casefold()
+    assume("claude" not in lowered)
+    assume("copilot" not in lowered)
     message = f"fix: {subject}\n\n" + "\n".join(prefix + t for t in trailers) + "\n"
     assert analyze(message) is not Action.BLOCK
 
@@ -188,7 +198,8 @@ def test_identity_parser_never_raises(evidence, value: str) -> None:  # type: ig
     evidence.count("parse_identity")
     parsed = parse_identity(value)
     if parsed.email is not None:
-        assert "<" not in parsed.email and ">" not in parsed.email
+        assert "<" not in parsed.email
+        assert ">" not in parsed.email
 
 
 # --------------------------------------------------------------------------- #
@@ -245,20 +256,16 @@ def test_structured_configuration_is_accepted_or_rejected_cleanly(
     except CommitGuardError:
         return
     assert config.version == 1
-    assert set(config.policies) <= {
-        "ai_coauthor",
-        "ai_identity",
-        "ai_trailer",
-        "bot_identity",
-        "malformed_trailer",
-    }
+    assert set(config.policies) <= KNOWN_POLICIES
 
 
 def test_yaml_alias_expansion_is_rejected() -> None:
-    bomb = "a: &a [x, x, x, x, x, x, x, x, x]\n" + "".join(
-        f"{chr(98 + i)}: &{chr(98 + i)} [*{chr(97 + i)}, *{chr(97 + i)}, *{chr(97 + i)}, *{chr(97 + i)}]\n"
-        for i in range(20)
-    )
+    def level(index: int) -> str:
+        name, previous = chr(98 + index), chr(97 + index)
+        references = ", ".join([f"*{previous}"] * 4)
+        return f"{name}: &{name} [{references}]\n"
+
+    bomb = "a: &a [x, x, x, x, x, x, x, x, x]\n" + "".join(level(i) for i in range(20))
     with pytest.raises(yaml.YAMLError):
         load_yaml(bomb)
 
@@ -360,19 +367,15 @@ def test_webhook_normalization_only_raises_validation_errors(
 ) -> None:  # type: ignore[no-untyped-def]
     evidence.count("normalize_webhook: mutated payloads")
     event, payload = sample
-    try:
+    with contextlib.suppress(WebhookValidationError):
         normalize_webhook(event, payload)
-    except WebhookValidationError:
-        pass
 
 
 @given(st.binary(max_size=500) | json_values.map(lambda v: json.dumps(v).encode()))
 def test_webhook_body_parser_only_raises_validation_errors(evidence, body: bytes) -> None:  # type: ignore[no-untyped-def]
     evidence.count("parse_json_object")
-    try:
+    with contextlib.suppress(WebhookValidationError):
         assert isinstance(parse_json_object(body), dict)
-    except WebhookValidationError:
-        pass
 
 
 @given(
@@ -419,7 +422,10 @@ def test_git_input_validators(evidence, value: str) -> None:  # type: ignore[no-
     except UnsafeInputError:
         return
     parts = path.split("/")
-    assert ".." not in parts and "" not in parts and not path.startswith("/") and "\\" not in path
+    assert ".." not in parts
+    assert "" not in parts
+    assert not path.startswith("/")
+    assert "\\" not in path
 
 
 @given(st.text(max_size=120))
@@ -430,9 +436,8 @@ def test_repository_full_names(evidence, value: str) -> None:  # type: ignore[no
     except UnsafeInputError:
         return
     assert f"{owner}/{name}" == value
-    assert name not in (".", "..") and all(
-        c in string.ascii_letters + string.digits + "._-" for c in name
-    )
+    assert name not in (".", "..")
+    assert all(c in string.ascii_letters + string.digits + "._-" for c in name)
 
 
 @given(st.text(max_size=120) | st.none())
@@ -447,15 +452,11 @@ def test_api_parameter_parsers_only_raise_input_errors(evidence, raw: str | None
         lambda: parse_timestamp(raw, "since"),
         lambda: sha_prefix(raw),
     ):
-        try:
+        with contextlib.suppress(InputValidationError):
             parse()
-        except InputValidationError:
-            pass
     limit = None
-    try:
+    with contextlib.suppress(InputValidationError):
         limit = parse_limit(raw)
-    except InputValidationError:
-        pass
     assert limit is None or 1 <= limit <= MAX_LIMIT
 
 
@@ -480,7 +481,8 @@ def test_terminal_sanitization_removes_control_and_bidi_characters(  # type: ign
     for char in out:
         if char == "\n" and keep_newlines:
             continue
-        assert ord(char) >= 0x20 and not 0x7F <= ord(char) <= 0x9F
+        assert ord(char) >= 0x20
+        assert not 0x7F <= ord(char) <= 0x9F
         assert char not in "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f"
 
 
@@ -488,10 +490,12 @@ def test_terminal_sanitization_removes_control_and_bidi_characters(  # type: ign
 def test_markdown_escaping_prevents_markup(evidence, text: str) -> None:  # type: ignore[no-untyped-def]
     evidence.count("escape_markdown")
     out = escape_markdown(text, limit=400)
-    assert "<" not in out and ">" not in out and "|" not in out
+    for character in "<>|":
+        assert character not in out
     for index, char in enumerate(out):
         if char in "[]()`*_":
-            assert index > 0 and out[index - 1] == "\\"
+            assert index > 0
+            assert out[index - 1] == "\\"
 
 
 @given(

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
-from commitguard.cli.output import ExitCode, handled_errors, info
+from commitguard.cli.output import ExitCode, fail, handled_errors, info
 
 if TYPE_CHECKING:
     from commitguard.research.environment import BenchmarkManifest
@@ -137,7 +137,9 @@ def detection_command(
 
     with handled_errors():
         if dataset is not None:
-            cases = load_dataset(dataset)
+            # This load_dataset reads local JSONL files written by
+            # `commitguard benchmark dataset`; nothing is downloaded.
+            cases = load_dataset(dataset)  # nosec B615
             version = _dataset_file_version(dataset)
         else:
             version = dataset_version or DATASET_VERSION
@@ -354,3 +356,86 @@ def platform_command(
         text=text,
         ok=result.failed == 0,
     )
+
+
+@benchmark_app.command("compare")
+def compare_command(
+    results: Annotated[
+        Path, typer.Option("--results", help="Results directory (e.g. benchmarks/results).")
+    ] = Path("benchmarks/results"),
+    benchmark: Annotated[
+        str, typer.Option("--benchmark", help="Which benchmark to compare.")
+    ] = "detection",
+    baseline: Annotated[
+        Path | None,
+        typer.Option("--baseline", help="Baseline result file (default: the previous run)."),
+    ] = None,
+    current: Annotated[
+        Path | None,
+        typer.Option("--current", help="Result file to judge (default: the latest run)."),
+    ] = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Compare a benchmark result with an earlier one, using documented thresholds.
+
+    Exit codes: 0 when nothing regressed, 1 when something did, 2 on errors. A
+    correctness regression counts at any size; a performance regression only
+    beyond the threshold for that measure.
+    """
+    from commitguard.research.compare import THRESHOLDS, compare
+    from commitguard.research.results import load_results
+
+    with handled_errors():
+        recorded = [
+            (path, document)
+            for path, document in load_results(results)
+            if document.get("benchmark") == benchmark
+        ]
+        if baseline is None or current is None:
+            if len(recorded) < 2:
+                fail(
+                    f"need two recorded {benchmark} results to compare; "
+                    f"{len(recorded)} found in {results}"
+                )
+            first, second = recorded[-2], recorded[-1]
+        else:
+            first = (baseline, json.loads(baseline.read_text(encoding="utf-8")))
+            second = (current, json.loads(current.read_text(encoding="utf-8")))
+        before = {**first[1], "_file": str(first[0])}
+        after = {**second[1], "_file": str(second[0])}
+        comparison = compare(before, after, benchmark=benchmark)
+
+    if as_json:
+        info(json.dumps(comparison.model_dump(mode="json"), indent=2, sort_keys=True))
+    else:
+        info(f"CommitGuard benchmark comparison: {benchmark}")
+        info("")
+        info(f"  baseline  {comparison.baseline_file}")
+        info(f"            {comparison.baseline_environment}")
+        info(f"  current   {comparison.current_file}")
+        info(f"            {comparison.current_environment}")
+        if not comparison.same_environment:
+            info("  NOTE: different CPUs; performance numbers are not comparable.")
+        if not comparison.same_dataset and comparison.baseline_dataset:
+            info(
+                f"  NOTE: different datasets ({comparison.baseline_dataset} then "
+                f"{comparison.current_dataset}); accuracy counts are not comparable."
+            )
+        info("")
+        info(f"{'Metric':<40}{'baseline':>14}{'current':>14}{'change':>12}   verdict")
+        for metric in comparison.metrics:
+            change = "-" if metric.change_ratio is None else f"{metric.change_ratio * 100:+.1f}%"
+            base = "-" if metric.baseline is None else f"{metric.baseline:,.4g}"
+            now = "-" if metric.current is None else f"{metric.current:,.4g}"
+            info(f"{metric.name:<40}{base:>14}{now:>14}{change:>12}   {metric.verdict}")
+        info("")
+        thresholds = ", ".join(f"{k} {v * 100:.0f}%" for k, v in sorted(THRESHOLDS.items()))
+        info(f"Thresholds: {thresholds}")
+        if comparison.regressions:
+            info(f"REGRESSED: {', '.join(comparison.regressions)}")
+        else:
+            info("No regression.")
+        if comparison.improvements:
+            info(f"Improved: {', '.join(comparison.improvements)}")
+    if not comparison.ok:
+        raise typer.Exit(ExitCode.BLOCKED)

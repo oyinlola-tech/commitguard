@@ -176,11 +176,14 @@ def benchmark_steps(results_dir: Path | None = None) -> list[StepResult]:
     built = fingerprint(cases)
     published = results_dir.parent / "datasets" / f"v{DATASET_VERSION}" if results_dir else None
     manifest_file = published / "manifest.json" if published else None
-    if manifest_file is not None and manifest_file.is_file():
+    if published is not None and manifest_file is not None and manifest_file.is_file():
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
         # The files are written one per class, so loading returns the cases grouped by
         # class: compare the recorded fingerprint, and the cases themselves by id.
-        same_cases = sorted(load_dataset(published), key=lambda case: case.id) == sorted(
+        # Reads the local JSONL files in benchmarks/datasets; not the Hugging Face
+        # hub function that Bandit's B615 rule looks for.
+        published_cases = load_dataset(published)  # nosec B615
+        same_cases = sorted(published_cases, key=lambda case: case.id) == sorted(
             cases, key=lambda case: case.id
         )
         matches = manifest.get("fingerprint") == built and same_cases

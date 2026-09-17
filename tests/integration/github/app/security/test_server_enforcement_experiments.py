@@ -1,3 +1,5 @@
+# ruff: noqa: E501 - experiment records are one string per field: wrapping them makes
+# the recorded evidence harder to read than the line-length rule is worth.
 """Security and reliability experiments against the GitHub App (authoritative layer).
 
 The full stack runs for real - webhook verification, event records, the queue,
@@ -80,7 +82,9 @@ def test_forged_and_tampered_webhooks_are_rejected(app, hub, gh, payloads, obser
     )
 
 
-def test_replayed_and_out_of_order_events_cannot_overwrite_newer_decisions(app, hub, gh, observe) -> None:  # type: ignore[no-untyped-def]
+def test_replayed_and_out_of_order_events_cannot_overwrite_newer_decisions(
+    app, hub, gh, observe
+) -> None:  # type: ignore[no-untyped-def]
     app.install()
     base, old_head = _feature(hub, CLEAN)
     old_event = app.open_pull_request(base, old_head)
@@ -90,7 +94,11 @@ def test_replayed_and_out_of_order_events_cannot_overwrite_newer_decisions(app, 
     hub.dev.git("checkout", "-q", "feature")
     new_head = hub.dev.commit(gh.AI)
     hub.dev.push("feature")
-    app.deliver("pull_request", app.open_pull_request(base, new_head, action="synchronize"), delivery=str(uuid.uuid4()))
+    app.deliver(
+        "pull_request",
+        app.open_pull_request(base, new_head, action="synchronize"),
+        delivery=str(uuid.uuid4()),
+    )
     app.run()
     new_conclusion = app.latest_run(new_head)["conclusion"]
 
@@ -115,7 +123,9 @@ def test_replayed_and_out_of_order_events_cannot_overwrite_newer_decisions(app, 
     )
 
 
-def test_github_unavailable_and_revoked_permissions_never_pass(app, hub, gh, payloads, observe) -> None:  # type: ignore[no-untyped-def]
+def test_github_unavailable_and_revoked_permissions_never_pass(
+    app, hub, gh, payloads, observe
+) -> None:  # type: ignore[no-untyped-def]
     app.install()
     base, head = _feature(hub, CLEAN)
     app.deliver("pull_request", app.open_pull_request(base, head))
@@ -131,7 +141,9 @@ def test_github_unavailable_and_revoked_permissions_never_pass(app, hub, gh, pay
     _, head2 = _feature(hub, CLEAN, branch="second")
     # GitHub notifies the App of a permission change; cached tokens must not outlive it.
     app.github.installations[42].permissions["checks"] = "read"
-    app.deliver("installation", payloads.installation("new_permissions_accepted", 42, (payloads.REPO,)))
+    app.deliver(
+        "installation", payloads.installation("new_permissions_accepted", 42, (payloads.REPO,))
+    )
     app.deliver("pull_request", app.open_pull_request(base, head2, number=8))
     app.run()
     revoked_job = next(j for j in app.jobs() if j.head_sha == head2)
@@ -192,14 +204,18 @@ def test_stale_rerun_and_merge_queue_candidate(app, hub, gh, payloads, observe) 
     )
 
 
-def test_mandatory_policy_floor_beats_repository_configuration(make_app, hub, gh, tmp_path, observe) -> None:  # type: ignore[no-untyped-def]
+def test_mandatory_policy_floor_beats_repository_configuration(
+    make_app, hub, gh, tmp_path, observe
+) -> None:  # type: ignore[no-untyped-def]
     hub.dev.commit(
         "chore: relax policy\n",
         files={".commitguard.yaml": "version: 1\npolicies:\n  ai_coauthor:\n    enabled: false\n"},
     )
     hub.dev.push("main")
     policy = tmp_path / "mandatory.yaml"
-    policy.write_text("version: 1\npolicies:\n  ai_coauthor:\n    action: block\n", encoding="utf-8")
+    policy.write_text(
+        "version: 1\npolicies:\n  ai_coauthor:\n    action: block\n", encoding="utf-8"
+    )
     unmanaged, managed = make_app(), make_app(mandatory_policy_file=policy)
     base, head = _feature(hub, gh.AI)
     for env in (unmanaged, managed):
@@ -275,7 +291,9 @@ def test_database_unavailable_fails_closed(app, hub, gh, payloads, observe) -> N
     )
 
 
-def test_installation_disconnect_is_visible_and_never_passes(app, hub, gh, payloads, observe) -> None:  # type: ignore[no-untyped-def]
+def test_installation_disconnect_is_visible_and_never_passes(
+    app, hub, gh, payloads, observe
+) -> None:  # type: ignore[no-untyped-def]
     app.install()
     base, head = _feature(hub, CLEAN)
     app.deliver("installation", payloads.installation("suspend", 42, (payloads.REPO,)))
@@ -283,7 +301,9 @@ def test_installation_disconnect_is_visible_and_never_passes(app, hub, gh, paylo
     app.deliver("pull_request", app.open_pull_request(base, head))
     processed = app.run()
     runs = app.github.runs_for(head)
-    audit = [e.type.value for e in app.service.store.list_audit_events(installation_id=42, limit=100)]
+    audit = [
+        e.type.value for e in app.service.store.list_audit_events(installation_id=42, limit=100)
+    ]
     notifications = [
         r["type"] for r in app.service.store.query("SELECT type FROM notification_events")
     ]

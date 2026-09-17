@@ -8,6 +8,7 @@ overall status:
 * UNHEALTHY - a check failed; hooks will block operations (exit code 2).
 """
 
+import importlib.util
 import json
 import os
 from dataclasses import dataclass
@@ -287,9 +288,11 @@ def _dependency_checks() -> list[Check]:
     """Runtime dependencies: the ones missing at run time, not at install time."""
     checks = []
     for module, purpose in (("yaml", "configuration and rules"), ("pydantic", "data models")):
-        try:
-            __import__(module)
-        except ImportError:
+        if importlib.util.find_spec(module) is not None:
+            checks.append(
+                Check("Runtime dependencies", Status.OK, f"{module} available ({purpose})")
+            )
+        else:
             checks.append(
                 Check(
                     "Runtime dependencies",
@@ -298,13 +301,9 @@ def _dependency_checks() -> list[Check]:
                     "reinstall CommitGuard",
                 )
             )
-        else:
-            checks.append(
-                Check("Runtime dependencies", Status.OK, f"{module} available ({purpose})")
-            )
-    try:
-        import cryptography  # noqa: F401
-    except ImportError:
+    # Presence only: importing it here would make every CLI invocation pay for it, and
+    # the architecture tests keep cryptography out of everything but App authentication.
+    if importlib.util.find_spec("cryptography") is None:
         checks.append(
             Check(
                 "Runtime dependencies",

@@ -9,7 +9,7 @@
   ``commitguard test security``): everything under the paths in
   :data:`SECURITY_TEST_PATHS`.
 * ``observe`` records a security experiment's observed outcome as evidence when
-  ``COMMITGUARD_EVIDENCE_DIR`` is set (``commitguard benchmark security``).
+  ``COMMITGUARD_EVIDENCE_DIR`` is set (``commitguard reproduce security``).
 """
 
 import json
@@ -104,6 +104,21 @@ EXPERIMENT_FIELDS = (
     "mitigation",
     "limitation",
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _fresh_experiment_evidence() -> None:
+    """Start each run with an empty experiments file.
+
+    Records are appended as tests run, so without this a second run would double
+    the evidence rather than replace it, and the security report would count each
+    experiment twice.
+    """
+    directory = os.environ.get("COMMITGUARD_EVIDENCE_DIR")
+    if directory:
+        target = Path(directory) / "experiments.jsonl"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("", encoding="utf-8")
 
 
 @pytest.fixture
