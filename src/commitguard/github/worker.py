@@ -93,6 +93,7 @@ from commitguard.observability.metrics import (
     Metrics,
 )
 from commitguard.policies.governance import EffectivePolicy, GovernanceInputs
+from commitguard.rules.matcher import CompiledRules
 from commitguard.services.audit import AuditService
 from commitguard.services.ci import DEFAULT_CI_MAX_COMMITS
 from commitguard.services.enforcement import FailureKind
@@ -122,6 +123,9 @@ class ScanGovernance:
     fingerprint: str
     #: Builds the immutable record stored with the scan from the resolved effective policy.
     record: Callable[[EffectivePolicy | None], str]
+    #: The organization's rules (bundled rules plus its identity data), when it has any.
+    rules: CompiledRules | None = None
+    rules_version: str | None = None
 
 
 type GovernanceResolverFn = Callable[[int, int], ScanGovernance | None]
@@ -319,6 +323,8 @@ class ScanWorker:
             max_commits=self._max_commits,
             mandatory_policy=mandatory,
             governance=governance.inputs if governance is not None else None,
+            rules=governance.rules if governance is not None else None,
+            rules_version=governance.rules_version if governance is not None else None,
         )
         plan = self._scans.plan(request)
         if plan.range.head is not None and plan.range.head != job.head_sha:

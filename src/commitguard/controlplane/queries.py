@@ -281,7 +281,7 @@ def scan_summary(row: Row) -> ScanSummary:
 def _failure_source(event: str) -> Literal["pull_request", "push", "merge_queue"]:
     if event == "merge_group":
         return "merge_queue"
-    return "push" if event == "push" else "pull_request"
+    return "push" if event in ("push", "scheduled") else "pull_request"
 
 
 def _duration_ms(started: datetime | None, completed: datetime | None) -> int | None:
@@ -1112,6 +1112,15 @@ class DashboardQueries:
             open_warnings=row["open_warnings"],
             critical_open=row["critical_open"],
         )
+
+    def repository_summaries(
+        self, scope: AccessScope, *, organization_id: int | None = None
+    ) -> list[tuple[Row, RepositorySummary]]:
+        """Every repository visible in ``scope`` with its summary (organization views)."""
+        return [
+            (r.row, r.summary)
+            for r in self._repository_rows(scope, organization_id=organization_id)
+        ]
 
     def list_repositories(
         self, scope: AccessScope, filters: RepositoryFilters, *, offset: int, limit: int

@@ -291,10 +291,20 @@ class _BranchProtectionSummary(_Loose):
     required_status_checks: _StatusChecks | None = None
 
 
+class _BranchCommit(_Loose):
+    sha: str
+
+    @field_validator("sha")
+    @classmethod
+    def _sha(cls, value: str) -> str:
+        return validate_git_sha(value)
+
+
 class BranchInfo(_Loose):
     name: str
     protected: bool
     protection: _BranchProtectionSummary | None = None
+    commit: _BranchCommit | None = None  # the branch head, from GitHub
 
     @property
     def required_contexts(self) -> tuple[str, ...]:

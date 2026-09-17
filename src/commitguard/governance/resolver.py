@@ -88,6 +88,7 @@ from commitguard.policies.governance import (
     RuleRequirement,
     resolve_policy,
 )
+from commitguard.security.hashing import sha256_hex
 from commitguard.services.audit import AuditService
 
 log = get_logger(__name__)
@@ -108,6 +109,7 @@ class GovernanceVersions(BaseModel):
     repository_policy: int | None = None
     rollouts: dict[str, int] = {}  # rollout ID -> version applied through it
     exceptions: tuple[str, ...] = ()
+    organization_rules: int | None = None  # organization rules version, when any
 
 
 class ResolvedGovernance(BaseModel):
@@ -122,7 +124,9 @@ class ResolvedGovernance(BaseModel):
 
     @property
     def fingerprint(self) -> str:
-        return self.inputs.fingerprint
+        """Everything that can change a decision: policy inputs and organization rules."""
+        rules = self.versions.organization_rules or 0
+        return sha256_hex(f"{self.inputs.fingerprint}:rules-v{rules}".encode())
 
     def document(self) -> str:
         return self.model_dump_json()
@@ -348,6 +352,10 @@ class GovernanceResolver:
             db, account_id, repository_id, [str(g["group_id"]) for g in group_rows], now
         )
         mode = governance_state(db, account_id, repository_id).mode
+        rules_row = db.execute(
+            "SELECT MAX(version) AS latest FROM organization_rule_versions WHERE account_id = ?",
+            (account_id,),
+        ).fetchone()
         expiries = [g.expires_at for g in grants if g.expires_at is not None]
         return ResolvedGovernance(
             account_id=account_id,
@@ -360,6 +368,7 @@ class GovernanceResolver:
                 repository_policy=repository_version or None,
                 rollouts=rollouts,
                 exceptions=tuple(g.exception_id for g in grants),
+                organization_rules=_row_version(rules_row) or None,
             ),
             valid_until=min(expiries) if expiries else None,
             resolved_at=now,

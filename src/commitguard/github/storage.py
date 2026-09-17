@@ -103,6 +103,7 @@ class ScanTrigger(StrEnum):
     MANUAL = "manual"  # dashboard "Scan again"
     RERUN = "rerun"  # GitHub "Re-run" on the CommitGuard check
     RETRY = "retry"  # automatic recovery after an infrastructure failure
+    SCHEDULED = "scheduled"  # an organization scan schedule (default branch)
 
 
 class MergeGroupState(StrEnum):

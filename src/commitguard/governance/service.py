@@ -10,6 +10,7 @@ from commitguard.governance.exceptions import PolicyExceptionService
 from commitguard.governance.groups import RepositoryGroupService
 from commitguard.governance.inventory import RepositoryInventory
 from commitguard.governance.resolver import GovernanceResolver, scan_governance_record
+from commitguard.governance.rules import OrganizationRuleService
 from commitguard.governance.settings import OrganizationSettingsService
 from commitguard.observability.logging import get_logger
 from commitguard.services.audit import AuditService
@@ -33,6 +34,7 @@ class GovernanceServices:
         self.groups = RepositoryGroupService(store, audit, now=now)
         self.exceptions = PolicyExceptionService(store, audit, now=now)
         self.resolver = GovernanceResolver(store, policies, audit, now=now)
+        self.rules = OrganizationRuleService(store, audit, now=now)
         self.settings.add_hook(self.resolver.on_settings_saved)
         self._now = now
 
@@ -40,11 +42,14 @@ class GovernanceServices:
         resolved = self.resolver.for_scan(installation_id, repository_id)
         if resolved is None:
             return None
+        rules, rules_version = self.rules.compiled(resolved.account_id)
         return ScanGovernance(
             inputs=resolved.inputs,
             organization_policy_version=resolved.versions.organization_policy,
             fingerprint=resolved.fingerprint,
             record=lambda effective: scan_governance_record(resolved, effective),
+            rules=rules,
+            rules_version=rules_version if rules is not None else None,
         )
 
     def run_maintenance(self) -> dict[str, int]:

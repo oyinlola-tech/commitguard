@@ -243,6 +243,11 @@ class ControlPlaneCommands:
             log.warning("enforcement_probe_failed", error_type=type(exc).__name__)
             raise UpstreamUnavailableError("The enforcement status could not be checked.") from None
         with self._store.transaction() as db:
+            previous = db.execute(
+                "SELECT branch_protection FROM enforcement_status WHERE installation_id = ? "
+                "AND repository_id = ?",
+                (installation_id, repository_id),
+            ).fetchone()
             db.execute(
                 "INSERT INTO enforcement_status (installation_id, repository_id, checked_at, "
                 "branch, actions, actions_detail, branch_protection, required_checks, "
@@ -283,6 +288,34 @@ class ControlPlaneCommands:
                     merge_queue=evidence.merge_queue,
                 ),
             )
+            was_required = previous is not None and previous["branch_protection"] == "required"
+            account_id = account_for_installation(db, installation_id)
+            if was_required and evidence.branch_protection != "required" and account_id:
+                emit(
+                    db,
+                    NotificationEvent(
+                        type=NotificationType.REPOSITORY_UNPROTECTED,
+                        account_id=account_id,
+                        severity=Severity.HIGH,
+                        installation_id=installation_id,
+                        repository_id=repository_id,
+                        resource_type="repository",
+                        resource_id=str(repository_id),
+                        dedup_key=domain_key(
+                            NotificationType.REPOSITORY_UNPROTECTED, account_id, repository_id
+                        ),
+                        title=f"Repository no longer protected: {authorized.repository.full_name}",
+                        body=(
+                            f"GitHub no longer requires a CommitGuard check on "
+                            f"{authorized.repository.full_name}"
+                            f"{' (' + evidence.branch + ')' if evidence.branch else ''}. "
+                            "Failing CommitGuard checks no longer block merges. "
+                            f"{clean_text(evidence.branch_protection_detail, 300)}"
+                        ),
+                        metadata={"branch_protection": evidence.branch_protection},
+                    ),
+                    self._now(),
+                )
         self._audit.log_stored(event)
 
     # ------------------------------------------------------------------ #
