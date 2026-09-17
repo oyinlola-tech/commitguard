@@ -104,7 +104,9 @@ def _outcome(case: DatasetCase, report: CommitReport) -> CaseOutcome:
     )
 
 
-def run_detection(cases: Sequence[DatasetCase], analyzer: Analyzer | None = None) -> DetectionResult:
+def run_detection(
+    cases: Sequence[DatasetCase], analyzer: Analyzer | None = None
+) -> DetectionResult:
     if not cases:
         raise ValueError("the dataset is empty")
     analyzer = analyzer or Analyzer.create(default_policy_set())
@@ -141,7 +143,9 @@ def run_detection(cases: Sequence[DatasetCase], analyzer: Analyzer | None = None
                 fp += 1
             else:
                 tn += 1
-        rules[rule] = Confusion(true_positive=tp, false_positive=fp, true_negative=tn, false_negative=fn)
+        rules[rule] = Confusion(
+            true_positive=tp, false_positive=fp, true_negative=tn, false_negative=fn
+        )
 
     by_class: dict[str, dict[str, int]] = {}
     for outcome in outcomes:

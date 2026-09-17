@@ -125,10 +125,10 @@ def _parse_line(line: str) -> tuple[str, str, list[TrailerIssue]] | None:
     text = unicodedata.normalize("NFKC", line).strip()
     if not text:
         return None
-    parsed = _parse_text(text)
-    if parsed is not None or text[0].isalnum():
-        return parsed
-    # Symbols or punctuation before the key must not hide a trailer.
+    if text[0].isalnum():
+        return _parse_text(text)
+    # Symbols or punctuation before the key ("> ", "- ", U+FFFD) are not part of the key:
+    # they must neither hide a trailer nor turn a quoted or listed line into a malformed key.
     start = 0
     while start < len(text) and start < MAX_LEADING_CHARACTERS and not text[start].isalnum():
         start += 1

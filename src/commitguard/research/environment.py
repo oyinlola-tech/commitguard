@@ -30,6 +30,8 @@ class BenchmarkManifest(BaseModel):
     schema_version: int = MANIFEST_SCHEMA
     commitguard_version: str
     git_version: str | None
+    source_revision: str | None = None  # commit of the CommitGuard checkout, if run from one
+    source_dirty: bool | None = None  # uncommitted changes in that checkout
     python_version: str
     python_implementation: str
     operating_system: str
@@ -57,6 +59,25 @@ def git_version() -> str | None:
         return None
     match = re.search(r"(\d+\.\d+(?:\.\d+)?)", result.stdout.decode("utf-8", "replace"))
     return match.group(1) if match else None
+
+
+def source_revision() -> tuple[str | None, bool | None]:
+    """The Git commit of the CommitGuard source checkout this code runs from, if any."""
+    package = Path(__file__).resolve().parents[1]
+    root = package.parents[1] if package.parent.name == "src" else None
+    if root is None or not (root / ".git").exists():
+        return None, None
+    try:
+        head = run_command(["git", "-C", str(root), "rev-parse", "HEAD"], timeout=10)
+        status = run_command(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"], timeout=30
+        )
+    except OSError:
+        return None, None
+    if head.returncode != 0:
+        return None, None
+    dirty = bool(status.stdout.strip()) if status.returncode == 0 else None
+    return head.stdout.decode("ascii", "replace").strip(), dirty
 
 
 def cpu_model() -> str | None:
@@ -103,7 +124,7 @@ def _windows_memory() -> int | None:  # pragma: no cover - exercised on Windows 
     import ctypes
 
     class MemoryStatus(ctypes.Structure):
-        _fields_ = [  # noqa: RUF012 - ctypes structure definition
+        _fields_ = [
             ("dwLength", ctypes.c_ulong),
             ("dwMemoryLoad", ctypes.c_ulong),
             ("ullTotalPhys", ctypes.c_ulonglong),
@@ -139,9 +160,12 @@ def collect_manifest(
     argv: list[str] | None = None,
 ) -> BenchmarkManifest:
     uname = platform.uname()
+    revision, dirty = source_revision()
     return BenchmarkManifest(
         commitguard_version=__version__,
         git_version=git_version(),
+        source_revision=revision,
+        source_dirty=dirty,
         python_version=platform.python_version(),
         python_implementation=platform.python_implementation(),
         operating_system=uname.system,

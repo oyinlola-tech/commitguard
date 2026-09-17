@@ -5,8 +5,14 @@
 * ``commit_case`` parametrises a test over every YAML commit fixture in
   ``tests/fixtures/commits``.
 * ``git_repo`` provides a throwaway repository for integration tests.
+* ``security`` marks the security regression suite (``pytest -m security``,
+  ``commitguard test security``): everything under the paths in
+  :data:`SECURITY_TEST_PATHS`.
+* ``observe`` records a security experiment's observed outcome as evidence when
+  ``COMMITGUARD_EVIDENCE_DIR`` is set (``commitguard benchmark security``).
 """
 
+import json
 import os
 import subprocess
 from collections.abc import Callable, Iterator, Mapping
@@ -43,14 +49,90 @@ _GIT_LOCATION_VARS = (
 )
 
 
+# Tests that make up the security regression suite: parsers, fuzzing and properties,
+# bypass and tampering experiments, webhook and GitHub integration security,
+# authorization and tenant isolation. Directories include everything below them.
+SECURITY_TEST_PATHS = tuple(
+    TESTS_DIR / relative
+    for relative in (
+        "security",
+        "unit/security",
+        "unit/provenance/test_trailers.py",
+        "unit/provenance/test_identity_parsing.py",
+        "unit/github/app/test_webhooks.py",
+        "unit/github/app/test_secrets_and_logging.py",
+        "integration/github/security",
+        "integration/github/test_ci_security.py",
+        "integration/github/test_defense_in_depth.py",
+        "integration/github/app/security",
+        "integration/github/app/test_app_security.py",
+        "integration/github/app/test_app_merge_queue_reruns.py",
+        "integration/github/app/dashboard/test_dashboard_security.py",
+        "integration/github/app/dashboard/test_dashboard_authorization.py",
+        "integration/github/app/dashboard/test_governance_isolation.py",
+    )
+)
+
+
 # --------------------------------------------------------------------------- #
 # Collection
 # --------------------------------------------------------------------------- #
+def _is_security_test(path: Path) -> bool:
+    return any(path == target or target in path.parents for target in SECURITY_TEST_PATHS)
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     integration_dir = TESTS_DIR / "integration"
     for item in items:
-        if integration_dir in Path(str(item.fspath)).parents:
+        path = Path(str(item.fspath))
+        if integration_dir in path.parents:
             item.add_marker(pytest.mark.integration)
+        if _is_security_test(path):
+            item.add_marker(pytest.mark.security)
+
+
+# --------------------------------------------------------------------------- #
+# Security experiment evidence
+# --------------------------------------------------------------------------- #
+EXPERIMENT_FIELDS = (
+    "experiment",
+    "area",
+    "attack",
+    "expected",
+    "observed",
+    "consequence",
+    "mitigation",
+    "limitation",
+)
+
+
+@pytest.fixture
+def observe(request: pytest.FixtureRequest) -> Callable[..., None]:
+    """Record what a security experiment actually observed.
+
+    ``observed`` must be built from values the test measured. ``outcome`` is one
+    of ``prevented`` (the attack did not achieve its goal), ``detected`` (it got
+    through a layer but a later layer reported or blocked it), ``bypassed`` (the
+    attack succeeded against this layer - a documented limitation) or
+    ``not_applicable``.
+    """
+
+    def record(*, outcome: str, **fields: str) -> None:
+        missing = [name for name in EXPERIMENT_FIELDS if not fields.get(name)]
+        if missing:
+            raise AssertionError(f"experiment record is missing: {', '.join(missing)}")
+        if outcome not in ("prevented", "detected", "bypassed", "not_applicable"):
+            raise AssertionError(f"unknown outcome {outcome!r}")
+        directory = os.environ.get("COMMITGUARD_EVIDENCE_DIR")
+        if not directory:
+            return
+        target = Path(directory) / "experiments.jsonl"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"test": request.node.nodeid, "outcome": outcome, **fields}
+        with target.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(entry, sort_keys=True, ensure_ascii=False) + "\n")
+
+    return record
 
 
 # --------------------------------------------------------------------------- #

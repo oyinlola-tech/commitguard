@@ -56,8 +56,16 @@ _HOMOGLYPHS: dict[int, str] = {
 }
 
 
+# ASCII control characters that are not whitespace: the only Cc/Cf characters ASCII has.
+_ASCII_INVISIBLE = {code: None for code in (*range(0x00, 0x20), 0x7F) if not chr(code).isspace()}
+
+
 def _strip_invisible(text: str) -> str:
     # Whitespace controls (tab, newline, ...) are kept so they still separate words.
+    if text.isascii():
+        # Fast path, same result: ASCII has no format (Cf) characters. Measured by the
+        # performance benchmark: per-character categorisation dominated large messages.
+        return text if text.isprintable() else text.translate(_ASCII_INVISIBLE)
     return "".join(
         ch for ch in text if ch.isspace() or unicodedata.category(ch) not in ("Cc", "Cf")
     )
@@ -65,7 +73,10 @@ def _strip_invisible(text: str) -> str:
 
 def normalize_text(text: str) -> str:
     """Return a case-, width- and whitespace-insensitive comparison key."""
-    text = _strip_invisible(unicodedata.normalize("NFKC", _strip_invisible(text)))
+    if text.isascii():
+        text = _strip_invisible(text)  # NFKC leaves ASCII unchanged
+    else:
+        text = _strip_invisible(unicodedata.normalize("NFKC", _strip_invisible(text)))
     text = text.casefold().translate(_HOMOGLYPHS)
     return " ".join(text.split())
 
