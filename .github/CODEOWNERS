@@ -1,0 +1,87 @@
+# CommitGuard code owners.
+#
+# CommitGuard has a single maintainer today. This file documents who is
+# responsible for reviewing each high-risk component. It becomes an enforced
+# gate only when branch protection or a ruleset enables "Require review from
+# Code Owners" (and, in practice, once there is more than one maintainer, since
+# GitHub does not count an author's approval of their own pull request).
+# See docs/maintainers/security.md.
+#
+# Order matters: the last matching pattern wins. Every path listed here was
+# verified to exist when this file was written.
+
+# Default owner for everything not listed below.
+*                                                   @oyinlola-tech
+
+# --------------------------------------------------------------------------- #
+# Detection, provenance and rules: bypasses and false positives
+# --------------------------------------------------------------------------- #
+/src/commitguard/core/                              @oyinlola-tech
+/src/commitguard/detectors/                         @oyinlola-tech
+/src/commitguard/provenance/                        @oyinlola-tech
+/src/commitguard/rules/                             @oyinlola-tech
+/rules/                                             @oyinlola-tech
+/src/commitguard/security/                          @oyinlola-tech
+
+# --------------------------------------------------------------------------- #
+# Policy engine, configuration and organization governance: silent weakening
+# --------------------------------------------------------------------------- #
+/src/commitguard/policies/                          @oyinlola-tech
+/src/commitguard/config/                            @oyinlola-tech
+/config/                                            @oyinlola-tech
+/src/commitguard/governance/                        @oyinlola-tech
+
+# --------------------------------------------------------------------------- #
+# Local enforcement: Git access, hooks, subprocesses, exit codes
+# --------------------------------------------------------------------------- #
+/src/commitguard/git/                               @oyinlola-tech
+/src/commitguard/services/                          @oyinlola-tech
+/src/commitguard/utils/subprocess.py                @oyinlola-tech
+/src/commitguard/cli/output.py                      @oyinlola-tech
+/hooks/                                             @oyinlola-tech
+/.gitattributes                                     @oyinlola-tech
+
+# --------------------------------------------------------------------------- #
+# GitHub integration: webhooks, App authentication, tokens, Check Runs,
+# trusted policy source, state store
+# --------------------------------------------------------------------------- #
+/src/commitguard/github/                            @oyinlola-tech
+/src/commitguard/github/webhooks.py                 @oyinlola-tech
+/src/commitguard/github/auth.py                     @oyinlola-tech
+/src/commitguard/github/storage.py                  @oyinlola-tech
+/src/commitguard/ci/                                @oyinlola-tech
+/action.yml                                         @oyinlola-tech
+
+# --------------------------------------------------------------------------- #
+# Control plane: authentication, authorization, tenant isolation, audit,
+# outbound notification channels (SSRF)
+# --------------------------------------------------------------------------- #
+/src/commitguard/api/                               @oyinlola-tech
+/src/commitguard/controlplane/                      @oyinlola-tech
+/src/commitguard/controlplane/access.py             @oyinlola-tech
+/src/commitguard/controlplane/identity.py           @oyinlola-tech
+/src/commitguard/controlplane/members.py            @oyinlola-tech
+/src/commitguard/audit/                             @oyinlola-tech
+/src/commitguard/notifications/channels/            @oyinlola-tech
+/web/src/api/                                       @oyinlola-tech
+/web/src/auth/                                      @oyinlola-tech
+
+# --------------------------------------------------------------------------- #
+# Supply chain and CI
+# --------------------------------------------------------------------------- #
+/.github/workflows/                                 @oyinlola-tech
+/.github/CODEOWNERS                                 @oyinlola-tech
+/requirements/                                      @oyinlola-tech
+/pyproject.toml                                     @oyinlola-tech
+/web/package.json                                   @oyinlola-tech
+/web/package-lock.json                              @oyinlola-tech
+
+# --------------------------------------------------------------------------- #
+# Security process and evidence
+# --------------------------------------------------------------------------- #
+/SECURITY.md                                        @oyinlola-tech
+/tests/conftest.py                                  @oyinlola-tech
+/tests/unit/test_architecture.py                    @oyinlola-tech
+/tests/unit/github/test_workflows_static.py         @oyinlola-tech
+/benchmarks/datasets/                               @oyinlola-tech
+/benchmarks/results/                                @oyinlola-tech

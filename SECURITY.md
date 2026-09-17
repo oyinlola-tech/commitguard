@@ -12,7 +12,9 @@ Please report privately using **GitHub private vulnerability reporting**
 ("Report a vulnerability" under the repository's *Security* tab). Do not open a
 public issue, pull request or discussion.
 
-<!-- TODO: add a security contact address once one exists. -->
+Private reporting is the only supported channel: it lets a fix exist before the
+problem is public. There is no security e-mail address; GitHub's private
+reporting handles the whole exchange.
 
 Include:
 
@@ -21,7 +23,43 @@ Include:
 - reproduction steps or a proof of concept (a crafted commit or config is ideal);
 - whether the issue is already public.
 
-We aim to acknowledge reports within 5 working days.
+**Never include secrets** in a report: no tokens, private keys, webhook secrets,
+session cookies or private repository content. A crafted commit message or
+configuration file is all that is usually needed to reproduce a detection issue.
+
+### What to expect
+
+CommitGuard is maintained by one person. These are honest targets, not
+guarantees:
+
+| Stage | Target |
+|---|---|
+| Acknowledgement | 5 working days |
+| Triage: in scope, severity, reproduced or more information needed | 10 working days |
+| Fix for a Critical or High issue on `main` | 30 days from confirmation |
+| Advisory published | with or shortly after the fix |
+
+You will be told which of those applies to your report, and if a timeline slips
+you will be told that too.
+
+### Disclosure
+
+Coordinated: details are published once a fix is available. If you intend to
+publish on your own schedule, say so in the report and we will work to it.
+Credit is given in the advisory unless you prefer to stay anonymous.
+
+### Safe harbour
+
+Testing against **your own** repositories and your **own** deployment of the
+GitHub App is welcome, and we will not pursue a report made in good faith under
+this policy. Do not test against other people's repositories or organizations,
+do not access data that is not yours, and do not run denial-of-service or spam
+tests against hosted services.
+
+How a report becomes a fix, a regression test and an advisory:
+[docs/security/vulnerability-response.md](docs/security/vulnerability-response.md).
+Fixes so far, including the four found by this project's own fuzzing and
+benchmarks, are listed there.
 
 ## In scope
 
@@ -134,6 +172,23 @@ In scope in addition to the above:
 
 Compliance reports describe CommitGuard policy enforcement only; claims that
 they certify SOC 2, ISO 27001 or any framework are not made by the project.
+
+## Security documentation
+
+| Document | Covers |
+|---|---|
+| [docs/security/threat-model.md](docs/security/threat-model.md) | Assets, trust boundaries, threats and the evidence for each mitigation |
+| [docs/security/vulnerability-response.md](docs/security/vulnerability-response.md) | Report to fix to advisory, and the fixes so far |
+| [docs/security/incident-response.md](docs/security/incident-response.md) | Key rotation, compromise, corruption, false security state |
+| [docs/security/supply-chain.md](docs/security/supply-chain.md) | Dependencies, CI integrity, and the gaps |
+| [docs/security/ci-pipeline-security.md](docs/security/ci-pipeline-security.md) | Fork pull request safety in the workflows |
+| [docs/security/review-guide.md](docs/security/review-guide.md) | Orientation for an independent reviewer |
+
+## Installing safely
+
+CommitGuard is **not on PyPI**; that name belongs to an unrelated project.
+Install from a pinned Git commit only - see
+[docs/getting-started/quickstart.md](docs/getting-started/quickstart.md).
 
 ## Out of scope
 
