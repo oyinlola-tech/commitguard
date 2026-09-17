@@ -1,0 +1,45 @@
+name: AI agent identity
+description: Report an AI agent identity or attribution format CommitGuard should know about.
+title: "[Identity]: "
+labels: ["rules", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Entries in `rules/ai-identities.yaml` are only marked `verified: true` with a link to a
+        public commit showing the attribution. A way to hide an attribution format CommitGuard
+        already knows is a detection bypass: report it privately as described in
+        [SECURITY.md](https://github.com/oyinlola-tech/commitguard/blob/main/SECURITY.md).
+  - type: input
+    id: agent
+    attributes:
+      label: Agent / product
+      placeholder: "Example Agent (Example Inc.)"
+    validations:
+      required: true
+  - type: textarea
+    id: attribution
+    attributes:
+      label: Attribution as it appears in a real commit
+      description: Trailer, author or committer line, copied exactly.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: public-commit
+    attributes:
+      label: Link to a public commit showing it
+      description: "Required for `verified: true`."
+      placeholder: "https://github.com/OWNER/REPO/commit/SHA"
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Other formats the agent uses, whether it can be configured, humans who could share the name or domain (false-positive risk).
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confidentiality
+      options:
+        - label: I confirm this issue contains no secrets, tokens, private keys, webhook secrets or private repository content.
+          required: true

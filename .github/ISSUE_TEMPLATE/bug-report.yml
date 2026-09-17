@@ -1,0 +1,119 @@
+name: Bug report
+description: CommitGuard does not behave as documented.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security vulnerabilities and detection bypasses must not be reported here.**
+        A way to get AI attribution past CommitGuard, a way to make a check pass for a commit
+        the same policy blocks, or any leak of tokens or keys is a security issue: follow
+        [SECURITY.md](https://github.com/oyinlola-tech/commitguard/blob/main/SECURITY.md).
+
+        CommitGuard is pre-alpha and maintained by one person; there is no guaranteed response time.
+  - type: input
+    id: commitguard-version
+    attributes:
+      label: CommitGuard version
+      description: Output of `commitguard --version`, plus the Git commit you installed from if you know it.
+      placeholder: "commitguard 0.1.0.dev0 (installed from commit abc1234)"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation-method
+    attributes:
+      label: Installation method
+      options:
+        - pipx from a Git commit
+        - pip from a Git commit
+        - editable clone (pip install -e)
+        - other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04 / macOS 15 / Windows 11 (Git Bash)"
+    validations:
+      required: true
+  - type: input
+    id: git-version
+    attributes:
+      label: Git version
+      description: Output of `git --version`.
+      placeholder: "git version 2.45.2"
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Output of `python --version` for the interpreter CommitGuard runs with (`commitguard doctor` shows it).
+      placeholder: "Python 3.12.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - CLI (scan, check, init, policy, doctor)
+        - Local Git hooks (install, pre-commit, commit-msg, pre-push)
+        - GitHub Action (ci github)
+        - GitHub App service
+        - Dashboard or /api/v1
+        - Notifications
+        - Organization governance
+        - Benchmarks (commitguard benchmark)
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command used
+      description: The exact command, workflow step or API request.
+      placeholder: "commitguard scan origin/main..HEAD"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What you expected, and the documentation that says so if there is any.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead, including the exit code (0 allowed, 1 blocked, 2 error).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps from a fresh repository (`git init`) if possible. Use example identities, not real people.
+      placeholder: |
+        1. git init demo && cd demo
+        2. commitguard init && commitguard install
+        3. git commit --allow-empty -m "..."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Output of the failing command and of `commitguard doctor`. Remove tokens, secrets and private repository content first.
+      render: text
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confidentiality
+      options:
+        - label: I confirm this issue contains no secrets, tokens, private keys, webhook secrets or private repository content.
+          required: true

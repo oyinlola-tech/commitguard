@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability or detection bypass
-    url: https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability
-    about: Report privately via GitHub private vulnerability reporting - see SECURITY.md.
+    url: https://github.com/oyinlola-tech/commitguard/blob/main/SECURITY.md
+    about: Do not open a public issue. Report privately as described in SECURITY.md (GitHub private vulnerability reporting).
+  - name: External evaluation guide
+    url: https://github.com/oyinlola-tech/commitguard/blob/main/docs/community/external-evaluation.md
+    about: Tasks, expected results and how to submit evaluation feedback.

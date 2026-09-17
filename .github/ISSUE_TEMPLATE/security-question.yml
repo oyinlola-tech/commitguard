@@ -1,0 +1,69 @@
+name: Security question (non-sensitive)
+description: Ask a general question about CommitGuard's security model, hardening or deployment. NOT for vulnerabilities.
+title: "[Security question]: "
+labels: ["question", "security-question", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Do not use this form to report a vulnerability
+
+        If you believe you found a vulnerability, a **detection bypass** (attribution that gets past
+        CommitGuard), a way to make a check pass for a blocked commit, cross-tenant access, or a leak
+        of keys, tokens or secrets, **report it privately** as described in
+        [SECURITY.md](https://github.com/oyinlola-tech/commitguard/blob/main/SECURITY.md)
+        (GitHub private vulnerability reporting). Public issues are visible to everyone immediately.
+
+        Use this form only for questions that are safe to discuss in public, for example: "Why does
+        the App need `checks: write`?", "Which threats does the local hook layer not cover?",
+        "How should I store the App private key?"
+
+        Relevant documents: [threat model](https://github.com/oyinlola-tech/commitguard/blob/main/docs/threat-model.md),
+        [GitHub App](https://github.com/oyinlola-tech/commitguard/blob/main/docs/github-app.md),
+        [GitHub enforcement](https://github.com/oyinlola-tech/commitguard/blob/main/docs/github-enforcement.md).
+  - type: checkboxes
+    id: not-a-vulnerability
+    attributes:
+      label: This is not a vulnerability report
+      options:
+        - label: I confirm this question does not describe an unfixed vulnerability or detection bypass. If it might, I will use private reporting instead.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Threat model and limitations
+        - Local Git hooks
+        - GitHub Action and branch protection
+        - GitHub App (permissions, keys, webhooks)
+        - Dashboard authentication and authorization
+        - Notifications (e-mail, webhooks)
+        - Supply chain and installation
+        - Data handling and retention
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What you are trying to achieve and what you already read.
+  - type: input
+    id: commitguard-version
+    attributes:
+      label: CommitGuard version
+      description: Output of `commitguard --version`, if relevant.
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confidentiality
+      options:
+        - label: I confirm this issue contains no secrets, tokens, private keys, webhook secrets or private repository content.
+          required: true

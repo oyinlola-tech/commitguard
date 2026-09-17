@@ -1,0 +1,17 @@
+# The default policy: AI attribution is blocked, automation accounts only warn.
+version: 1
+
+policies:
+  ai_coauthor:
+    enabled: true
+    action: block
+  ai_identity:
+    enabled: true
+    action: block
+  ai_trailer:
+    enabled: true
+    action: block
+  malformed_trailer:
+    action: warn
+  bot_identity:
+    action: warn

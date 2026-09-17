@@ -1,0 +1,17 @@
+# A mandatory policy: the floor every repository inherits.
+#
+# A mandatory policy can only make enforcement stricter. A repository may raise
+# `bot_identity` from warn to block, but it cannot lower `ai_coauthor` from
+# block, and `enabled: false` is rejected as a configuration error rather than
+# being silently ignored.
+version: 1
+
+policies:
+  ai_coauthor:
+    action: block
+  ai_identity:
+    action: block
+  ai_trailer:
+    action: block
+  bot_identity:
+    action: warn

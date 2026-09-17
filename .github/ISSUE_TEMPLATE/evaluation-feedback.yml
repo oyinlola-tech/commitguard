@@ -1,0 +1,149 @@
+name: External evaluation feedback
+description: Report the results of evaluating CommitGuard (see docs/community/external-evaluation.md).
+title: "[Evaluation]: "
+labels: ["evaluation-feedback", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for evaluating CommitGuard. The evaluation tasks and their expected results are in
+        [docs/community/external-evaluation.md](https://github.com/oyinlola-tech/commitguard/blob/main/docs/community/external-evaluation.md).
+        One issue per evaluation session is fine; you can report several tasks in one issue.
+
+        **Do not report vulnerabilities or detection bypasses here.** Follow
+        [SECURITY.md](https://github.com/oyinlola-tech/commitguard/blob/main/SECURITY.md) instead, and
+        mention in this issue only that you sent a private report.
+
+        Everything in this issue is public. Data handling for evaluations is described in
+        [docs/community/data-policy.md](https://github.com/oyinlola-tech/commitguard/blob/main/docs/community/data-policy.md).
+  - type: input
+    id: commitguard-version
+    attributes:
+      label: CommitGuard version and commit
+      description: Output of `commitguard --version` and the commit SHA you installed from.
+      placeholder: "commitguard 0.1.0.dev0 from commit abc1234..."
+    validations:
+      required: true
+  - type: dropdown
+    id: installation-method
+    attributes:
+      label: Installation method
+      options:
+        - pipx from a Git commit
+        - pip from a Git commit
+        - editable clone (pip install -e)
+        - other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04 / macOS 15 / Windows 11 (Git Bash)"
+    validations:
+      required: true
+  - type: input
+    id: git-version
+    attributes:
+      label: Git version
+      description: Output of `git --version`.
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Output of `python --version` for the interpreter CommitGuard runs with.
+    validations:
+      required: true
+  - type: dropdown
+    id: areas
+    attributes:
+      label: Areas evaluated
+      multiple: true
+      options:
+        - Installation
+        - CLI usability
+        - Policy configuration
+        - Hook behaviour
+        - GitHub integration (Action)
+        - GitHub integration (App)
+        - Dashboard demo
+        - Documentation
+        - Performance
+        - Security behaviour
+        - Cross-platform behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Task results
+      description: For each task you ran (E1, E2, ...), say whether the result matched the expected result. Note anything surprising.
+      placeholder: |
+        E1 Install: matched
+        E4 Blocked commit: matched, but the message was unclear because ...
+        E12 Platform validation: PASS 14, FAIL 1 (hooks: ...)
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command used (for any mismatch)
+      placeholder: "commitguard scan origin/main..HEAD"
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour (for any mismatch)
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour (for any mismatch)
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps (for any mismatch)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Command output, `commitguard doctor`, or `commitguard benchmark ... --json`. Remove secrets and private content first.
+      render: text
+  - type: dropdown
+    id: ease
+    attributes:
+      label: Overall, how easy was it to get CommitGuard working?
+      options:
+        - Very easy
+        - Easy
+        - Neutral
+        - Difficult
+        - Very difficult
+        - Did not get it working
+  - type: textarea
+    id: usefulness
+    attributes:
+      label: Usefulness and developer experience
+      description: Would this fit your workflow? What would stop you from using it? Were messages and remediation clear?
+  - type: textarea
+    id: documentation
+    attributes:
+      label: Documentation gaps
+  - type: dropdown
+    id: consent
+    attributes:
+      label: Consent to publish
+      description: May the maintainer quote or summarise this feedback outside this issue (for example in docs, a changelog or an evaluation summary)?
+      options:
+        - "No: use it only to improve CommitGuard"
+        - "Yes, anonymously (no name, username or organization)"
+        - "Yes, attributed to my GitHub username"
+    validations:
+      required: true
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confidentiality
+      options:
+        - label: I confirm this issue contains no secrets, tokens, private keys, webhook secrets or private repository content.
+          required: true

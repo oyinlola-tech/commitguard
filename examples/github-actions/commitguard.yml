@@ -1,0 +1,33 @@
+# CommitGuard server-side enforcement.
+#
+# This check only prevents merges once branch protection (or a ruleset) marks
+# the "commitguard" status check as required. See the CommitGuard documentation:
+# docs/github-enforcement.md.
+name: CommitGuard
+
+on:
+  pull_request:
+  merge_group:
+  push:
+
+# The scanner only reads Git objects: no write access and no secrets.
+permissions:
+  contents: read
+
+# No `concurrency: cancel-in-progress`: a push check that is cancelled by a later
+# push would leave the earlier push's commits unchecked.
+
+jobs:
+  commitguard:
+    name: commitguard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0  # base and head commits must both be present
+          persist-credentials: false
+
+      - name: CommitGuard
+        uses: oyinlola-tech/commitguard@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

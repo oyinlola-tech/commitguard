@@ -1,0 +1,9 @@
+# What a repository might try in order to opt out. Both attempts fail against
+# the mandatory policy above: the effective action stays `block`.
+version: 1
+
+policies:
+  ai_coauthor:
+    action: allow
+  ai_identity:
+    enabled: false

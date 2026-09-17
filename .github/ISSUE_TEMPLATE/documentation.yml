@@ -1,0 +1,67 @@
+name: Documentation problem
+description: Documentation is wrong, missing, unclear or does not match what CommitGuard does.
+title: "[Docs]: "
+labels: ["documentation", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Documentation must match the implementation. A mismatch between the docs and the actual
+        behaviour is treated as a bug in one of them. If the mismatch has security impact (for
+        example, the docs promise protection that does not exist), follow
+        [SECURITY.md](https://github.com/oyinlola-tech/commitguard/blob/main/SECURITY.md).
+  - type: input
+    id: location
+    attributes:
+      label: Document
+      description: File path or URL, with the section heading.
+      placeholder: "docs/git-hooks.md#cross-platform-behaviour"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of problem
+      options:
+        - Incorrect (does not match behaviour)
+        - Missing
+        - Unclear
+        - Outdated status or phase label
+        - Broken link or example
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What the documentation says
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What it should say, or what actually happens
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command used
+      description: If you found this by running something, the exact command.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output
+      render: text
+  - type: input
+    id: commitguard-version
+    attributes:
+      label: CommitGuard version
+      description: Output of `commitguard --version`, if relevant.
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confidentiality
+      options:
+        - label: I confirm this issue contains no secrets, tokens, private keys, webhook secrets or private repository content.
+          required: true
