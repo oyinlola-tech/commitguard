@@ -1,0 +1,13 @@
+{
+  "results": [
+    {
+      "benchmark": "detection",
+      "file": "raw/detection/20260917T132425205605Z_0.1.0.dev0.json",
+      "timestamp": "2026-09-17T13:24:25.205605Z",
+      "commitguard_version": "0.1.0.dev0",
+      "operating_system": "Linux",
+      "dataset_version": "file:benchmarks/datasets",
+      "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
+    }
+  ]
+}

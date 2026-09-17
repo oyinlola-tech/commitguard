@@ -1,0 +1,17 @@
+{
+  "cases": 9115,
+  "classes": {
+    "adversarial": 29,
+    "clean": 29,
+    "generated": 9000,
+    "malformed": 9,
+    "variations": 21,
+    "violations": 27
+  },
+  "dataset": "commitguard-attribution",
+  "fingerprint": "d1504f41205955c6caa23429d65084d527793f92ca53507a9d2b9e04541ea122",
+  "negative": 5451,
+  "positive": 3664,
+  "seed": 20260917,
+  "version": "1.0.0"
+}
