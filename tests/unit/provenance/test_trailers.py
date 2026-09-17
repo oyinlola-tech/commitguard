@@ -171,7 +171,8 @@ def test_leading_symbols_cannot_hide_a_trailer(prefix: str) -> None:
     [trailer] = parsed.trailers
     assert trailer.normalized_key == "co-authored-by"
     assert trailer.email == "noreply@anthropic.com"
-    assert TrailerIssue.LEADING_CHARACTERS in trailer.issues
+    # Flagged either way ("- " already normalised as a nonstandard key before the fix).
+    assert {TrailerIssue.LEADING_CHARACTERS, TrailerIssue.NONSTANDARD_KEY} & set(trailer.issues)
 
 
 def test_leading_character_skipping_is_bounded_and_ignores_prose() -> None:

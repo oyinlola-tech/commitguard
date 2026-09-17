@@ -31,7 +31,15 @@ Classes::
     generated    seeded combinations to reach volume (clean, AI and bot mixes)
 
 The dataset is fully deterministic: the same version always produces the same
-cases and the same fingerprint.
+cases and the same fingerprint. Versions only ever add cases; an older version
+can always be rebuilt (``build_dataset(version="1.0.0")``).
+
+Version history::
+
+    1.0.0  initial dataset (9,115 cases)
+    1.1.0  cases written after 1.0.0 exposed a parser bypass, before running them:
+           more leading-character and Unicode evasions, quoted and bulleted
+           human trailers, squash-merge messages (false-positive probes)
 """
 
 import json
@@ -44,7 +52,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from commitguard.security.hashing import sha256_hex
 
-DATASET_VERSION = "1.0.0"
+DATASET_VERSION = "1.1.0"
+DATASET_VERSIONS = ("1.0.0", "1.1.0")
 DATASET_SEED = 20260917
 GENERATED_CASES = 9_000
 
@@ -476,6 +485,46 @@ def _adversarial() -> Iterator[DatasetCase]:
     yield _case("adversarial-null-character", c, "encoding", "A NUL character inside the message", _msg(SUBJECTS[0], "Co-authored-by: Claude\x00 <noreply@anthropic.com>"), "block", ["ai_coauthor"], ["malformed_trailer"])
 
 
+def _adversarial_1_1() -> Iterator[DatasetCase]:
+    c: CaseClass = "adversarial"
+    claude = "Claude <noreply@anthropic.com>"
+    prefixes = {
+        "question-mark": "?",
+        "quote": "> ",
+        "bullet": "\u2022 ",
+        "asterisk": "* ",
+        "hash": "#",
+        "guillemet": "\u00bb",
+        "double-replacement": "\ufffd\ufffd",
+    }
+    for key_id, prefix in prefixes.items():
+        yield _case(f"adversarial-prefix-{key_id}", c, "leading-characters", f"Symbols before the key: {prefix!r}", _msg(SUBJECTS[0], prefix + "Co-authored-by: " + claude), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-fullwidth-colon", c, "separator", "Full-width colon separator", _msg(SUBJECTS[0], "Co-authored-by\uff1a" + claude), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-fullwidth-brackets", c, "email-format", "Full-width angle brackets", _msg(SUBJECTS[0], "Co-authored-by: Claude \uff1cnoreply@anthropic.com\uff1e"), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-quoted-name", c, "identity", "Quoted display name", _msg(SUBJECTS[0], 'Co-authored-by: "Claude" <noreply@anthropic.com>'), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-name-comment", c, "identity", "Parenthesised comment in the name", _msg(SUBJECTS[0], "Co-authored-by: Claude (Anthropic) <noreply@anthropic.com>"), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-trailing-dot-domain", c, "email-format", "Fully qualified domain with a trailing dot", _msg(SUBJECTS[0], "Co-authored-by: Claude <noreply@anthropic.com.>"), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-two-addresses", c, "identity", "A second address after the AI address", _msg(SUBJECTS[0], "Co-authored-by: Claude <noreply@anthropic.com> <ada@example.com>"), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-split-continuation", c, "layout", "Address folded onto a continuation line", _msg(SUBJECTS[0], "Co-authored-by: Claude", " <noreply@anthropic.com>"), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-homoglyph-key-many", c, "homoglyph", "Several Cyrillic look-alikes in the key", _msg(SUBJECTS[0], "\u0421\u043e-\u0430uth\u043er\u0435d-b\u0443: " + claude), "block", ["ai_coauthor"], ["malformed_trailer"])
+    yield _case("adversarial-author-invisible-email", c, "invisible", "Zero-width space inside the author email", _msg(SUBJECTS[1]), "block", ["ai_identity"], author=Person(name="Claude", email="no\u200breply@anthropic.com"))
+    yield _case("adversarial-committer-alias", c, "identity", "Committer name is an agent alias with a personal email", _msg(SUBJECTS[1]), "block", ["ai_identity"], committer=Person(name="Claude Code", email="ada@example.com"))
+    yield _case("adversarial-signoff-agent", c, "ai-trailer", "Signed-off-by names an AI agent", _msg(SUBJECTS[2], "Signed-off-by: " + claude), "block", ["ai_trailer"])
+    yield _case("adversarial-footer-emoji", c, "tool-footer", "Tool footer with a different leading emoji", _msg(SUBJECTS[2], body="\u2728 Generated with Claude Code"), "block", ["ai_trailer"])
+
+
+def _clean_1_1() -> Iterator[DatasetCase]:
+    c: CaseClass = "clean"
+    yield _case("clean-quoted-signoff", c, "quoted", "A human sign-off quoted in the body", _msg(SUBJECTS[3], body="From the mailing list:\n\n> Signed-off-by: Ada Lovelace <ada@example.com>\n\nApplied with minor changes."), "allow")
+    yield _case("clean-bullet-reviewer", c, "bulleted", "Bulleted human reviewer", _msg(SUBJECTS[3], body="Reviewers:\n- Reviewed-by: Grace Hopper <grace.hopper@example.org>"), "allow")
+    yield _case("clean-bullet-human-coauthor", c, "bulleted", "Bulleted human co-author", _msg(SUBJECTS[3], body="Pairing:\n* Co-authored-by: Alan Turing <alan@turing.example>"), "allow")
+    yield _case("clean-dash-human-coauthor", c, "bulleted", "Dash-listed human co-author", _msg(SUBJECTS[3], body="Pairing:\n- Co-authored-by: Alan Turing <alan@turing.example>"), "allow")
+    yield _case("clean-squash-merge", c, "merge", "GitHub squash merge with a human co-author", "feat: add rotation (#12)\n\n* feat: rotate on role change\n\n* fix: keep old sessions valid until expiry\n\n---------\n\nCo-authored-by: Grace Hopper <grace.hopper@example.org>\n", "allow")
+    yield _case("clean-claude-monet", c, "near-miss", "A human named Claude Monet", _msg(SUBJECTS[4], "Co-authored-by: Claude Monet <claude@monet.example>"), "allow")
+    yield _case("clean-web-flow-committer", c, "near-miss", "GitHub web-flow committer", _msg(SUBJECTS[4]), "allow", committer=Person(name="GitHub", email="noreply@github.com"))
+    yield _case("clean-markdown-quote", c, "quoted", "A quoted discussion without trailers", _msg(SUBJECTS[5], body="> Should we use an AI reviewer?\n\nNot for this change."), "allow")
+
+
 # --------------------------------------------------------------------------- #
 # Generated volume
 # --------------------------------------------------------------------------- #
@@ -510,8 +559,15 @@ def _generated(count: int, seed: int) -> Iterator[DatasetCase]:
 # --------------------------------------------------------------------------- #
 # Dataset
 # --------------------------------------------------------------------------- #
-def build_dataset(*, generated: int = GENERATED_CASES, seed: int = DATASET_SEED) -> list[DatasetCase]:
-    cases = [*_clean(), *_violations(), *_variations(), *_malformed(), *_adversarial(), *_generated(generated, seed)]
+def build_dataset(
+    *, version: str = DATASET_VERSION, generated: int = GENERATED_CASES, seed: int = DATASET_SEED
+) -> list[DatasetCase]:
+    if version not in DATASET_VERSIONS:
+        raise ValueError(f"unknown dataset version {version}; known: {', '.join(DATASET_VERSIONS)}")
+    cases = [*_clean(), *_violations(), *_variations(), *_malformed(), *_adversarial()]
+    if version >= "1.1.0":
+        cases += [*_clean_1_1(), *_adversarial_1_1()]
+    cases += list(_generated(generated, seed))
     ids = [case.id for case in cases]
     duplicates = sorted({i for i in ids if ids.count(i) > 1}) if len(set(ids)) != len(ids) else []
     if duplicates:
@@ -524,7 +580,9 @@ def fingerprint(cases: Iterable[DatasetCase]) -> str:
     return sha256_hex("\n".join(lines).encode("utf-8"))
 
 
-def write_dataset(cases: Sequence[DatasetCase], directory: Path) -> dict[str, object]:
+def write_dataset(
+    cases: Sequence[DatasetCase], directory: Path, *, version: str = DATASET_VERSION
+) -> dict[str, object]:
     """Write one JSONL file per class plus a manifest. Returns the manifest."""
     directory.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
@@ -538,7 +596,7 @@ def write_dataset(cases: Sequence[DatasetCase], directory: Path) -> dict[str, ob
                 handle.write(json.dumps(case.model_dump(mode="json"), sort_keys=True, ensure_ascii=True) + "\n")
     manifest: dict[str, object] = {
         "dataset": "commitguard-attribution",
-        "version": DATASET_VERSION,
+        "version": version,
         "seed": DATASET_SEED,
         "cases": len(cases),
         "classes": counts,

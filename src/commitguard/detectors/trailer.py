@@ -28,7 +28,7 @@ from commitguard.core.result import (
 )
 from commitguard.detectors.base import Detector, require_complete_trailers
 from commitguard.provenance.normalization import normalize_text
-from commitguard.provenance.trailers import Trailer
+from commitguard.provenance.trailers import Trailer, TrailerIssue
 from commitguard.rules.matcher import CompiledRules
 from commitguard.rules.models import PATTERNS_FILE, MalformedTrailerCheck, TrailerRule
 
@@ -131,7 +131,13 @@ class TrailerDetector(Detector):
     def _malformed_finding(
         self, check: MalformedTrailerCheck, trailer: Trailer, sha: str | None
     ) -> Finding | None:
-        notes = [f"trailer: {issue.value}" for issue in trailer.issues]
+        # Characters before a key (a quoted "> Signed-off-by:" line) are recorded so that
+        # attribution cannot hide behind them, but are not by themselves malformed.
+        notes = [
+            f"trailer: {issue.value}"
+            for issue in trailer.issues
+            if issue is not TrailerIssue.LEADING_CHARACTERS
+        ]
         if check.require_identity:
             notes.extend(f"identity: {issue.value}" for issue in trailer.identity.issues)
         if not notes:

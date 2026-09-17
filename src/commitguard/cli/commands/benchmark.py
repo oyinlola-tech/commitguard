@@ -36,6 +36,10 @@ RecordOption = Annotated[
     ),
 ]
 VerboseOption = Annotated[bool, typer.Option("--verbose", help="Show every mismatch or sample.")]
+DatasetVersionOption = Annotated[
+    str | None,
+    typer.Option("--dataset-version", help="Build this dataset version (default: the latest)."),
+]
 DatasetOption = Annotated[
     Path | None,
     typer.Option("--dataset", help="Load the dataset from this directory instead of building it."),
@@ -71,6 +75,14 @@ def emit(
         info(f"Recorded: {recorded}")
 
 
+def _dataset_file_version(directory: Path) -> str:
+    manifest = directory / "manifest.json"
+    try:
+        return f"{json.loads(manifest.read_text(encoding='utf-8'))['version']} (file)"
+    except (OSError, ValueError, KeyError):
+        return f"file:{directory}"
+
+
 def _pct(value: float | None) -> str:
     return "n/a (no cases)" if value is None else f"{value * 100:.3f}%"
 
@@ -78,12 +90,14 @@ def _pct(value: float | None) -> str:
 @benchmark_app.command("dataset")
 def dataset_command(
     write: Annotated[Path, typer.Option("--write", help="Directory to write the dataset to.")],
+    dataset_version: DatasetVersionOption = None,
 ) -> None:
     """Write the labelled detection dataset (JSONL per class and a manifest)."""
-    from commitguard.research.datasets import build_dataset, write_dataset
+    from commitguard.research.datasets import DATASET_VERSION, build_dataset, write_dataset
 
+    version = dataset_version or DATASET_VERSION
     with handled_errors():
-        manifest = write_dataset(build_dataset(), write)
+        manifest = write_dataset(build_dataset(version=version), write, version=version)
     info(json.dumps(manifest, indent=2, sort_keys=True))
 
 
@@ -94,6 +108,7 @@ def detection_command(
     record: RecordOption = None,
     verbose: VerboseOption = False,
     dataset: DatasetOption = None,
+    dataset_version: DatasetVersionOption = None,
 ) -> None:
     """Detection accuracy on the labelled dataset (TP, FP, TN, FN, precision, recall)."""
     from commitguard.research.datasets import (
@@ -106,11 +121,15 @@ def detection_command(
     from commitguard.research.environment import collect_manifest
 
     with handled_errors():
-        cases = load_dataset(dataset) if dataset else build_dataset()
+        if dataset is not None:
+            cases = load_dataset(dataset)
+            version = _dataset_file_version(dataset)
+        else:
+            version = dataset_version or DATASET_VERSION
+            cases = build_dataset(version=version)
         result = run_detection(cases)
         manifest = collect_manifest(
-            dataset_version=DATASET_VERSION if dataset is None else f"file:{dataset}",
-            dataset_fingerprint=fingerprint(cases),
+            dataset_version=version, dataset_fingerprint=fingerprint(cases)
         )
     d = result.decision
     rates = result.decision_rates
