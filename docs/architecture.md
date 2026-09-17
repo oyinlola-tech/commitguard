@@ -1,8 +1,10 @@
 # Architecture
 
-> Status: Phase 6. Detection, policy, local Git hook enforcement, GitHub
-> Actions enforcement, the webhook-driven GitHub App (Checks API), and the
-> control plane (`/api/v1` and the web dashboard) are implemented.
+> Status: Phase 8. Detection, policy, local Git hook enforcement, GitHub
+> Actions enforcement, the webhook-driven GitHub App (Checks API), the control
+> plane (`/api/v1` and the web dashboard), the operational layer (notifications,
+> merge queue, re-runs, policy recovery) and organization governance (central
+> policy, groups, exceptions, rollouts, simulation, posture) are implemented.
 
 ## Goals
 
@@ -198,6 +200,61 @@ The adapters differ only at the edges:
                                    job summary                       via CIContext
 ```
 
+### Organization governance (Phase 8)
+
+```text
+          Organization                      Settings: security baseline, approval, exception,
+               │                            onboarding and rollout rules (versioned)
+   ┌───────────┼───────────────┬──────────────────────┐
+   ▼           ▼               ▼                      ▼
+ Members   Repository groups   Organization rules     Policies (organization · group · repository)
+ (roles)       │               (identity data only)    draft → simulate → approve → publish
+               │                                        │           │
+               ▼                                        │     staged rollout (pilot → stages)
+         Repositories ◀── onboarding · mode ────────────┘           │
+               │                                                    ▼
+               │                                      Approved exceptions (scoped, expiring)
+               ▼                                                    │
+   GovernanceResolver ─── collects layers, exceptions, mode ◀───────┘
+               │           (cached per repository, invalidated in the same transaction)
+               ▼
+   policies.governance.resolve_policy  (pure)  ─► effective PolicySet + provenance + conflicts
+               │
+               ▼
+   worker ─► CommitGuard core: detection → policy evaluator ─► decision
+               │
+               ▼
+   GitHub Check · violations · notifications · audit (versions and provenance recorded per scan)
+               │
+               ▼
+   Security posture · matrix · trends · reports (read-only views over recorded data)
+```
+
+The principle is the same as in every phase: **governance decides which policy
+applies; the policy engine decides what a finding means.** The organization
+layer never detects anything and never contains a second evaluator. Policy
+simulation re-evaluates recorded findings with the one `PolicyEvaluator`.
+
+| Component | Module | Role |
+|---|---|---|
+| Resolution (pure) | `policies.governance` | precedence, mandatory/default strength, exceptions, monitor mode, provenance, conflicts, fingerprints |
+| Resolver and cache | `governance.resolver`, `governance.cache` | collect inputs per repository, rollout-aware versions, `repository_effective_policies`, targeted invalidation, propagation |
+| Settings | `governance.settings` | versioned organization settings, weakening needs confirmation, reason and recent sign-in |
+| Inventory | `governance.inventory` | discovery, onboarding state, enforce/monitor mode |
+| Groups | `governance.groups` | groups and memberships (archived, never deleted) |
+| Policy workflow | `governance.workflow`, `controlplane.policies` | drafts, approvals, separation of duties, publish, emergency publish; versioned targets and rollback |
+| Exceptions | `governance.exceptions` | scoped, expiring exceptions with approval, revocation, expiry and warnings |
+| Rollouts | `governance.rollouts` | staged enrollment, pause/resume, automatic halt, rollback |
+| Simulation | `governance.simulation` | queued, read-only impact estimates over recorded findings |
+| Bulk operations | `governance.bulk` | background, bounded, idempotent repository operations |
+| Scheduled scans | `governance.schedules` | default branch re-evaluation through the normal worker |
+| Organization rules | `governance.rules` | versioned identity data compiled into the trusted rule set |
+| Posture | `governance.posture` | explicit posture states, matrix, drift, trends, reports, search, acknowledgement |
+| Wiring | `governance.service`, `api.governance` | service composition and maintenance tasks; `/api/v1` routes |
+
+See [organization-governance.md](organization-governance.md) and the documents
+it links.
+
 ## Packages and dependency rules
 
 | Package | Responsibility | Status |
@@ -207,7 +264,7 @@ The adapters differ only at the edges:
 | `core` | `CommitContext`, `Finding`, `Evidence`, `DetectionResult`, `Decision`, `DetectionEngine` | implemented |
 | `detectors` | pure detectors + explicit registry | implemented (4 detectors) |
 | `rules` | rule schemas, compiled matcher (pure); loader (reads packaged YAML) | implemented |
-| `policies` | `Policy`, `PolicySet`, defaults, layered merge, evaluator | implemented |
+| `policies` | `Policy`, `PolicySet`, defaults, layered merge, evaluator, mandatory floors, governed resolution (`governance`) | implemented |
 | `provenance` | identities, trailer parsing, normalisation, signatures model | implemented (signature verification: planned) |
 | `git` | Git CLI wrapper, repository queries, commit model, `CommitRange` (`ranges`), pre-push input parsing, hook install/uninstall/integrity | implemented (staged diff inspection: planned) |
 | `config` | schema, layered loader, policy sources (`sources`: working tree / trusted revision / built-in), enforcement settings | implemented |
@@ -216,6 +273,7 @@ The adapters differ only at the edges:
 | `audit` | audit event model, storage interface, logger | implemented (recorded by the GitHub App) |
 | `observability` | structured JSON logs, correlation IDs, redaction, metrics | implemented |
 | `controlplane` | roles and access scope (`access`), sign-in and sessions (`identity`), members, scan result recording and violation lifecycle (`results`), versioned organization policy (`policies`), read services (`queries`), write commands (`commands`), rule catalogue, pagination, API view models (`views`) | implemented |
+| `governance` | organization governance: settings, inventory, groups, policy workflow, exceptions, rollouts, simulation, bulk operations, scheduled scans, organization rules, effective policy resolver and cache, posture and reports (Phase 8) | implemented |
 | `notifications` | notification types and events, transactional outbox, deduplication, dispatcher, preferences, delivery worker with bounded retries, templates, channels (in-app, SMTP e-mail, signed webhooks, test sinks), settings | implemented |
 | `api` | framework-free WSGI `/api/v1` (`app`), HTTP primitives, dashboard settings, hosting of the built dashboard and composition with the webhook app (`hosting`) | implemented |
 | `web/` (repository root) | React + TypeScript dashboard: typed API client, pages, design system, unit and browser tests | implemented |
@@ -253,6 +311,11 @@ Enforced by `tests/unit/test_architecture.py`:
 - `api` contains no SQL; data access goes through `controlplane` services and
   the state store.
 - Importing the CLI loads neither `api` nor `controlplane`.
+- `governance` never imports detectors, the detection engine or the analyzer,
+  and only `governance.simulation` imports the policy evaluator.
+- `governance` and `policies` never call `eval`, `exec`, `compile`,
+  `__import__` or `importlib.import_module`: policy documents, settings and
+  organization rules are data.
 
 ## Key design decisions
 

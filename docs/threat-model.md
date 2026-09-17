@@ -32,6 +32,10 @@ branches, and every decision should be explainable with preserved evidence.
 - dashboard sessions, organization policy and its version history, member
   roles, violation state, and the evidence and identities stored with findings
   (Phase 6).
+- organization settings and security baseline, group, organization and
+  repository policy versions, drafts and approvals, exceptions, rollouts,
+  organization rules, effective policy cache, scan schedules, bulk operations
+  and compliance reports (Phase 8).
 
 ## Adversaries
 
@@ -45,8 +49,48 @@ branches, and every decision should be explainable with preserved evidence.
 | Dashboard user of another organization | read or change data of a tenant they do not belong to |
 | Low-privilege member | weaken policy, hide violations, or grant themselves a role |
 | Malicious web page visited by a signed-in user | make the browser perform writes (CSRF) or read dashboard data |
+| Policy author without approval rights | publish a policy change nobody else reviewed, or get one document approved and publish another |
+| Repository team | quietly exempt their repository, widen an exception, or weaken policy through repository configuration or group membership |
+| Removed or demoted member | keep acting with the access they had |
 
 ## Threats and mitigations
+
+### Organization governance (Phase 8)
+
+```text
+settings · groups · rules · drafts ─approve─▶ publish ─▶ immutable version ─▶ rollout
+                                                              │
+exceptions (scoped, expiring) ────────────────────────────────┤
+                                                              ▼
+                 resolver (same-transaction invalidation) ─▶ effective policy ─▶ policy engine ─▶ check
+```
+
+| Threat | Mitigation / limitation | Status |
+|---|---|---|
+| Cross-organization access (IDOR) to groups, drafts, exceptions, rollouts, simulations, bulk operations, schedules, reports | Every governance service loads the resource with its organization and checks membership first: another organization's resource is `404`, never `403`; referenced repositories must belong to the same organization **and** be visible to the caller on GitHub; a sweep test calls every governance route as a member of another organization, as a viewer and unauthenticated | **[done]** |
+| Validation leaking existence (400 before 403) | Permission checks run before request bodies are parsed; the sweeps send empty, invalid bodies and require `404` (other organization) or `403` (viewer) | **[done]** |
+| Privilege escalation through roles | New permissions (`organization:*`, `policies:publish/approve/emergency`, `exceptions:*`, `rules:manage`, `security:*`) are assigned per role on the server; viewers can read but not request exceptions; security managers can request but not approve or publish; only owners can emergency-publish (tested) | **[done]** |
+| Approval bypass | With `require_policy_approval`, publication needs an approved draft and the Phase 6 direct save is refused with `APPROVAL_REQUIRED`; approval binds to the draft's document fingerprint and editing an approved draft returns it to `draft`; one pending approval per draft (unique index); drafts publish against their base version, so a draft approved against an outdated policy conflicts instead of overwriting newer changes | **[done]** |
+| Self-approval | With `require_separate_approver` (default on) the creator or submitter of a draft cannot approve it; the requester of an exception can never approve it | **[done]** |
+| Emergency publish abuse | Separate `policies:emergency` permission (owners); required reason stored on the version; critical audit event and mandatory notification in the same transaction; shown in the policy history | **[done]** (by design, an owner can still act alone) |
+| Weakening through narrower layers | Mandatory requirements are floors that group policies, repository policies and `.commitguard.yaml` cannot lower; attempts are recorded as conflicts and drift, never applied (pure resolver tests, end-to-end scan tests) | **[done]** |
+| Exception abuse | One rule, one explicit scope (repository, group or organization); only `warn`/`allow`; required reason and expiry within `exception_max_days`; permanent only with an organization setting, an approver-level requester and approval by someone else (database check constraint); group and organization scopes always need approval; revocation audited; rows cannot be deleted (trigger); expiry enforced by the resolver even if the expiry worker is late | **[done]** |
+| Stale effective policy (a change not applied to a scan) | Changes invalidate affected cache rows in the same transaction; scans use a cached policy only when it is up to date and no included exception has expired, otherwise resolve from the database; resolution errors fail the scan closed; propagation is never reported complete until every repository is up to date | **[done]** |
+| Group membership used to escape a policy | Membership changes need `repositories:manage`, are audited, invalidate the affected repositories and apply organization mandatory requirements regardless of groups; archiving a group with a policy or exceptions needs confirmation and ends its exceptions | **[done]** |
+| Monitor mode used to stop blocking silently | Mode changes need `repositories:manage`, confirmation and a reason for monitor; audited; alerts say "Would block (monitor mode)"; monitor-mode repositories are never shown as secure | **[done]** |
+| Rollout confusion (wrong version applied) | Enrollment is recorded per repository; resolution is rollout-aware and each scan records the version and rollout it used; one rollout in progress per target (unique index); rollback publishes a new version through the Phase 7 path; automatic halt on error or block thresholds | **[done]** |
+| Settings weakened quietly | Versioned settings with optimistic concurrency; relaxing a control (disabling approval, allowing permanent exceptions, lowering the baseline) needs confirmation, a reason and a sign-in within 15 minutes; audited and notified | **[done]** |
+| Code execution or ReDoS through organization rules | Rules are identity data (names, prefixes, e-mails, logins) compared exactly after normalisation; no regular expressions, wildcards, expressions or imports; size limits; architecture test forbids `eval`/`exec`/`compile`/dynamic imports in `governance` and `policies` | **[done]** |
+| Simulation side effects | Simulations only read recorded scans and findings and store their own result; no checks, violations, notifications or versions change (tested by comparing state before and after); they cannot run detectors or fetch Git data | **[done]** |
+| Resource exhaustion (simulations, bulk operations, schedules, propagation, reports) | Queued background work with leases; per-organization caps (3 open simulations, 10 open bulk operations, 100 schedules, 500 groups); per-run bounds (5,000 scans / 50,000 findings, 5,000 items, 50 scheduled repositories per pass and no queuing above 200 waiting scans, 200 propagations per pass); reports cut at 10,000 rows with `truncated`; request rate limits | **[done]** |
+| Duplicate bulk operations or scheduled scans | Idempotency key unique per organization; items idempotent; schedule runs unique per slot and scan job keys per slot | **[done]** |
+| CSV formula injection in reports | Cells starting with `=`, `+`, `-`, `@`, tab or carriage return are prefixed; served as attachments | **[done]** |
+| Report and search data leakage | Rows and results limited to repositories the requester can see on GitHub; policy change reports need `audit:read`; exports audited | **[done]** |
+| Misleading compliance claims | Posture is explicit states with reasons; compliance is a defined fraction; reports state they are not SOC 2, ISO 27001 or any certification; unavailable enforcement, failed synchronisation and propagation errors put posture at risk | **[done]** |
+| Removed member keeps a session | Removing a member's last membership deletes their sessions (next request is `401`); role changes apply on the next request because permissions are resolved server-side per request | **[done]** |
+| Concurrent administrators overwriting each other | `expected_version` / `expected_revision` on settings, rules, drafts, schedules and policy targets; conflicts return `409` | **[done]** |
+| Notification noise hiding real events | Optional hourly digest per rule for e-mail and webhooks; mandatory notifications (disconnects, unprotected repositories, emergency publish, rollout and propagation failures) are never aggregated or muted; acknowledgement never resolves anything | **[done]** |
+| Single-instance scale limits | SQLite is single-writer; posture pages compute per request (about one second at 10,000 repositories); see [security-posture.md](security-posture.md#performance) | limitation |
 
 ### Notifications, merge queue, re-runs and policy recovery (Phase 7)
 

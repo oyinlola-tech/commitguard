@@ -213,6 +213,17 @@ secrets, repository names or configuration values.
 | Violations and where they were detected | SQLite | resolved violations purged after retention; open ones kept |
 | Organization policy versions (floors, author, reason, rollback lineage) | SQLite | kept, to explain historical scans; immutable (database triggers refuse updates and deletes) |
 | Merge groups (SHAs, target branch, queued pull request numbers, state) | SQLite | destroyed groups purged after retention |
+| Organization settings, repository onboarding and mode, repository groups and memberships | SQLite | current state, until changed; changes are audited |
+| Group and repository policy versions, policy drafts, approvals (approver, fingerprint, note) | SQLite | kept; versions immutable (triggers) |
+| Policy exceptions (rule, scope, action, reason, requester, approver, expiry) | SQLite | kept; rows cannot be deleted (trigger) |
+| Staged rollouts and enrolled repository IDs | SQLite | kept |
+| Organization rule versions (identity names, name prefixes, e-mail addresses and GitHub logins an administrator entered) | SQLite | kept; immutable (triggers) |
+| Effective policy cache (resolved document and provenance per repository) | SQLite | replaced on every resolution |
+| Policy simulations (draft document, parameters, aggregate result) | SQLite | finished simulations purged after retention |
+| Bulk operations and items, scheduled scan runs | SQLite | finished ones purged after retention |
+| Scan schedules | SQLite | until disabled (kept for history) |
+| Installation synchronisation status, daily security metric snapshots (counts only) | SQLite | kept |
+| Acknowledgements of security events (who, when, note) | SQLite | with their notification event |
 | Notification events and inbox entries (type, severity, title and summary text, repository, occurrence count) | SQLite | `COMMITGUARD_NOTIFICATION_RETENTION_DAYS` (default 90) |
 | Notification delivery records (channel, destination address or endpoint ID, status, attempts, failure code) | SQLite | with their notification event |
 | Notification settings: organization e-mail recipients and webhook endpoint URLs | SQLite | until removed by an administrator |
@@ -230,6 +241,10 @@ secrets, repository names or configuration values.
   e-mail addresses are never read from GitHub or stored. Author and committer identities are stored only
   for commits that produced a finding, to explain the violation.
 - **Purging:** the maintenance thread runs retention purging hourly.
+- **Compliance evidence:** audit events and scan provenance follow
+  `COMMITGUARD_APP_RETENTION_DAYS` (default 30). Organizations that need a
+  longer audit trail must raise it; see
+  [compliance-reporting.md](compliance-reporting.md#retention-decides-how-far-back-evidence-goes).
 - **Backups:** back up the SQLite file (WAL mode; use `sqlite3 .backup` or stop
   the service first). Mirrors do not need backups: they are fetched again as
   needed.
@@ -257,6 +272,29 @@ schedules up to two automatic retry executions (after 5 and 20 minutes) for
 scans that are still current. [recovery.md](recovery.md) lists every failure
 and its behaviour.
 
+## Organization governance background work
+
+The maintenance thread (every `RECOVERY_INTERVAL_SECONDS`, one minute) also runs
+the Phase 8 tasks. Each task is isolated: one failing task is logged
+(`governance_task_failed`) and the others still run.
+
+| Task | Work per pass |
+|---|---|
+| exception expiry and expiry warnings | up to 200 exceptions each |
+| rollout safety evaluation | every rollout in `pilot` or `rollout` |
+| effective policy propagation | up to 200 repositories |
+| policy simulations | one queued simulation, 10-minute lease |
+| bulk operations | up to 200 items, 100 per transaction, 5-minute lease |
+| scheduled scans | due schedules, up to 50 repositories, nothing while more than 200 scans are queued |
+| security metric snapshots | one per organization per day |
+
+Capacity (measured on a development machine, see
+[security-posture.md](security-posture.md#performance)): an organization with
+10,000 repositories propagates an organization-wide policy change in about 4
+seconds of background work, and the security overview and repository matrix
+answer in about a second. Run one service instance per SQLite database; the
+background tasks assume a single writer.
+
 ## Upgrades
 
 - Stop the service, upgrade the package, and start it again.
@@ -270,6 +308,15 @@ and its behaviour.
   add data; no policy version, scan or audit event is deleted. A database from
   a newer CommitGuard is refused rather than modified. Back up the database
   before upgrading.
+- Schema 3 to schema 4 (Phase 8) adds the organization governance tables
+  (settings, onboarding, groups, scoped policy versions, drafts and approvals,
+  exceptions, rollouts, simulations, bulk operations, scan schedules, the
+  effective policy cache, organization rules, synchronisation status, metric
+  snapshots, acknowledgements), `private`/`archived` repository flags, the
+  governance record of each scan and an immutability trigger on audit events.
+  Existing repositories are backfilled as `onboarded` in `enforce` mode, so
+  enforcement is unchanged after the upgrade; organizations without Phase 8
+  policies resolve exactly the Phase 6/7 effective policy.
 - Detection rules ship with the package, and the rules version (a hash) is
   recorded with every scan.
 

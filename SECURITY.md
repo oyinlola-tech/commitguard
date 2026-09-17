@@ -106,6 +106,35 @@ Rotate `COMMITGUARD_NOTIFICATION_SIGNING_KEY` if you suspect exposure (every
 endpoint's secret changes; re-register receivers), and rotate SMTP credentials
 at your provider.
 
+## Organization governance
+
+In scope in addition to the above:
+
+- reading or changing another organization's groups, policy drafts,
+  approvals, exceptions, rollouts, simulations, bulk operations, schedules,
+  settings, rules or reports, or learning that they exist;
+- publishing a policy without approval when approval is required (other than
+  the audited emergency publication by an owner), approving one's own policy
+  change or exception, or publishing a document different from the approved one;
+- weakening a mandatory requirement through a group policy, repository policy,
+  `.commitguard.yaml`, group membership or onboarding mode without an approved,
+  scoped, expiring exception;
+- an exception that applies outside its scope or after it expired or was
+  revoked, or a permanent exception without the organization setting and
+  approval;
+- a scan evaluated with an outdated effective policy after a change was
+  committed, or a rollout applying a version to repositories not enrolled;
+- a policy simulation, report or search that changes state, bypasses
+  repository visibility, or leaks another tenant's data;
+- code execution, regular-expression denial of service or rule override
+  through organization rules;
+- CSV or spreadsheet formula injection through exported reports;
+- a security posture of `secure` while enforcement, installation
+  synchronisation or policy propagation is unavailable.
+
+Compliance reports describe CommitGuard policy enforcement only; claims that
+they certify SOC 2, ISO 27001 or any framework are not made by the project.
+
 ## Out of scope
 
 - Bypassing **local** hooks (`--no-verify`, deleting hooks): documented and

@@ -39,11 +39,30 @@ Contents: [Types](#types) · [Channels](#channels) · [Preferences](#preferences
 | `installation_reconnected` | a suspended installation was unsuspended, or the account installed the App again after removing it | low | `github:manage` | | on / on |
 | `merge_queue_failure` | a merge group was blocked, or could not be validated (failed closed) | high | `scans:read` | | off / on |
 | `check_rerun_failed` | a GitHub "Re-run" execution ended in `error` | medium | `scans:read` | | off / off |
+| `violation_digest` | organizations with `aggregate_violation_alerts`: blocked violations of one rule across repositories, one per rule and hour | the violation's | `violations:read` | | on / on |
+| `policy_approval_requested` | a policy draft was submitted for approval | high | `policies:approve` | | on / off |
+| `policy_emergency_published` | a policy was published without the approval workflow | critical | `audit:read` | ✓ | on / on |
+| `policy_rollout_failed` | a staged rollout was paused or rolled back by its safety thresholds | high | `policies:publish` | ✓ | on / on |
+| `policy_propagation_failed` | the effective policy of repositories could not be resolved | high | `policies:publish` | ✓ | on / on |
+| `exception_requested` | an exception needs approval | the rule's | `exceptions:approve` | | on / off |
+| `exception_approved` | an exception became active | the rule's | `exceptions:read` | | on / on |
+| `exception_expiring` | an active exception reaches a warning threshold (default 7, 3 and 1 days) | the rule's | `exceptions:read` | | off / off |
+| `exception_ended` | an exception expired or was revoked | the rule's | `exceptions:read` | | off / on |
+| `repository_unprotected` | GitHub stopped requiring the CommitGuard check on a repository that required it | high | `repositories:manage` | ✓ | on / on |
+| `organization_settings_changed` | an administrator changed organization security settings | critical if a control was relaxed, otherwise medium | `audit:read` | | on / on |
 
 Severity reuses CommitGuard's severity model. The bundled detectors classify
 AI attribution as `high`, so with bundled rules violations produce
 `high_violation`; `critical_violation` is produced only for findings a rule
 reports as `critical`.
+
+Phase 8 types are described with the features that produce them:
+[policy-exceptions.md](policy-exceptions.md), [policy-rollouts.md](policy-rollouts.md),
+[policy-inheritance.md](policy-inheritance.md) and
+[security-posture.md](security-posture.md#alert-aggregation). With
+`aggregate_violation_alerts`, per-pull-request violation notifications stay in
+the dashboard inbox while e-mail and webhooks receive the hourly
+`violation_digest` instead; mandatory types are never aggregated.
 
 Only newly opened (or reopened) **blocked** violations notify. Re-scanning the
 same commits, acknowledging a violation, `warn` findings and resolutions do not.

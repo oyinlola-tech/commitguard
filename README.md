@@ -28,11 +28,13 @@
 <br>
 
 > [!NOTE]
-> **Pre-alpha, Phase 7: notifications, merge queue, re-runs and policy recovery.**
+> **Pre-alpha, Phase 8: organization governance and central policy.**
 > Local Git hooks stop violations during `git commit` / `git push`; a GitHub
 > Actions check and a webhook-driven GitHub App run the same engine on pull
 > requests, pushes and merge queues; a web dashboard explains what was scanned,
-> what is blocked and why, and notifies the people who need to act.
+> what is blocked and why, notifies the people who need to act, and lets an
+> organization govern policy across hundreds of repositories: groups,
+> approvals, scoped exceptions, staged rollouts and an explicit security posture.
 
 > [!IMPORTANT]
 > **A failing GitHub check blocks merges only when branch protection requires it.**
@@ -389,6 +391,15 @@ The GitHub App service also serves a web dashboard (`web/`) and its API:
   the dashboard and optionally by e-mail and signed webhooks; **Settings**
   (sessions, members, notification preferences).
 
+- **Organization** — security posture as explicit states with reasons (no
+  score), "N of M required repositories satisfy all mandatory controls", a
+  repository security matrix, repository groups and bulk onboarding;
+  organization, group and repository **policies** with mandatory and default
+  strength, drafts, **simulation** against recorded scans, approval with
+  separation of duties, **staged rollouts**; scoped, expiring **exceptions**;
+  per-rule provenance of the effective policy; organization rules; scheduled
+  scans; compliance reports (JSON/CSV, explicitly not a certification).
+
 Sign-in uses the GitHub App's user authorization; roles (viewer, security
 manager, admin, owner) are granted in CommitGuard, and users only see
 repositories GitHub lets them see. See [docs/dashboard.md](docs/dashboard.md).
@@ -434,6 +445,15 @@ repositories GitHub lets them see. See [docs/dashboard.md](docs/dashboard.md).
   of infrastructure failures
 - Organization policy rollback (immutable versions, rollback lineage, diff,
   optimistic concurrency, audit and notification in one transaction)
+- Organization governance: security settings and baseline, repository
+  onboarding (enforce / monitor mode), repository groups, background bulk
+  operations, organization/group/repository policies resolved per rule with
+  provenance and conflicts, effective policy cache with transactional
+  invalidation and propagation status, policy drafts and approvals, emergency
+  publication, read-only policy simulation, staged rollouts with automatic
+  halt and rollback, scoped expiring exceptions, organization identity rules
+  (data only), scheduled default-branch scans, posture, drift, trends, alert
+  digests, search and compliance reports
 
 Not yet: PR comments, SARIF, signature verification, secret detection. The App and dashboard have not yet
 been tested against github.com itself (only an offline model of the API and
@@ -521,7 +541,8 @@ npm run build && npm run e2e      # browser tests against the full stack
 | **4. GitHub enforcement** | GitHub Actions check · pull request, merge queue and push scanning · trusted policy source · branch protection guidance | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
 | **5. GitHub App** | webhooks · App authentication · installation lifecycle · Check Runs · ScanService · EnforcementService · audit events · mandatory policy | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
 | **6. Security dashboard and control plane** | GitHub sign-in · roles and tenant isolation · enforcement evidence · scans · violation lifecycle · versioned organization policy · audit log · `/api/v1` | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
-| **7. Notifications, merge queue, re-runs, recovery** | notification outbox · in-app, e-mail and signed webhooks · deduplication and retries · merge group validation · scan executions · policy rollback and diff | ![current](https://img.shields.io/badge/current-1a5bb3?style=flat-square) |
+| **7. Notifications, merge queue, re-runs, recovery** | notification outbox · in-app, e-mail and signed webhooks · deduplication and retries · merge group validation · scan executions · policy rollback and diff | ![done](https://img.shields.io/badge/done-147a4b?style=flat-square) |
+| **8. Organization governance** | organization policy hierarchy · repository groups · approvals and separation of duties · policy simulation · staged rollouts · scoped exceptions · security posture · compliance reports | ![current](https://img.shields.io/badge/current-1a5bb3?style=flat-square) |
 | **Later: security intelligence** | advanced bot detection · signed commit verification · secret detection · provenance analysis · SARIF | ![planned](https://img.shields.io/badge/planned-55605c?style=flat-square) |
 
 ## Documentation
@@ -537,6 +558,14 @@ npm run build && npm run e2e      # browser tests against the full stack
 - [Notifications](docs/notifications.md)
 - [Merge queue](docs/merge-queue.md)
 - [Policy management and rollback](docs/policy-management.md)
+- [Organization governance](docs/organization-governance.md)
+- [Policy inheritance](docs/policy-inheritance.md)
+- [Policy simulation](docs/policy-simulation.md)
+- [Policy exceptions](docs/policy-exceptions.md)
+- [Staged policy rollouts](docs/policy-rollouts.md)
+- [Repository management](docs/repository-management.md)
+- [Security posture](docs/security-posture.md)
+- [Compliance reporting](docs/compliance-reporting.md)
 - [Recovery and failure handling](docs/recovery.md)
 - [Deployment](docs/deployment.md)
 - [Threat model](docs/threat-model.md)

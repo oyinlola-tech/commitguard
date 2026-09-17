@@ -57,9 +57,13 @@ Contents:
 | Open-source maintainers | Contributors use AI tools; the project wants clear human authorship | Built-in defaults (attribution blocks, bots warn) | The violation page linked from a failed check, with the exact trailer and fix |
 | Regulated engineering | Provenance decisions must be explainable months later | Retention sized to the audit period | Scan detail: commit range, effective policy, organization policy version, rules version, CommitGuard version |
 
-Roles map to these jobs: **viewers** read; **security managers** triage
-violations and request re-scans; **admins** own policy and repository
-monitoring; **owners** also manage members.
+Roles map to these jobs: **viewers** read, including organization posture and
+exceptions; **security managers** triage violations, request re-scans and
+request policy exceptions; **admins** own policy (drafts, approval,
+publication, rollouts), repository onboarding and groups, exceptions and
+organization settings; **owners** also manage members and may publish a policy
+in an emergency without approval. Organization governance is described in
+[organization-governance.md](organization-governance.md).
 
 ## Running the dashboard
 
@@ -182,6 +186,18 @@ repository does not see its scans or violations.
 | `notifications:read` | ✓ | ✓ | ✓ | ✓ | Notification center, own notification preferences |
 | `policies:rollback` | | | ✓ | ✓ | Roll back organization policy |
 | `notifications:manage` | | | ✓ | ✓ | Organization notification settings, e-mail recipients, webhooks, delivery log |
+| `organization:read` | ✓ | ✓ | ✓ | ✓ | Organization overview, search |
+| `security:read` | ✓ | ✓ | ✓ | ✓ | Security posture, repository matrix, trends, reports, scan schedules |
+| `exceptions:read` | ✓ | ✓ | ✓ | ✓ | Policy exceptions |
+| `exceptions:create` | | ✓ | ✓ | ✓ | Request a policy exception |
+| `policies:publish` | | | ✓ | ✓ | Publish policy drafts; advance, pause and resume rollouts |
+| `policies:approve` | | | ✓ | ✓ | Approve or reject policy drafts (not one's own when separation of duties is on) |
+| `exceptions:approve` | | | ✓ | ✓ | Approve or reject exceptions (never one's own) |
+| `exceptions:revoke` | | | ✓ | ✓ | Revoke active exceptions |
+| `organization:manage` | | | ✓ | ✓ | Organization security settings |
+| `rules:manage` | | | ✓ | ✓ | Organization rules |
+| `security:manage` | | | ✓ | ✓ | Scan schedules |
+| `policies:emergency` | | | | ✓ | Emergency publication without approval |
 
 `policies:rollback` is checked separately from `policies:write`, so a future
 custom role can edit policy without restoring old versions (or the reverse).

@@ -6,6 +6,79 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added (Phase 8 — organization governance, central policy and enterprise security)
+
+- Organization governance package (`commitguard.governance`) with 65 `/api/v1`
+  routes (`commitguard.api.governance`), documented in `docs/dashboard.md`.
+- Permissions `organization:read/manage`, `security:read/manage`,
+  `exceptions:read/create/approve/revoke`, `policies:publish/approve/emergency`
+  and `rules:manage`, assigned to the existing roles.
+- Organization security settings (versioned, optimistic concurrency): security
+  baseline, policy approval and separation of duties, exception limits and
+  approval threshold, onboarding defaults, rollout thresholds, alert
+  aggregation, time zone. Relaxing a control needs confirmation, a reason and a
+  recent sign-in, and is audited and notified.
+- Repository inventory with separate dimensions (connection, archived,
+  onboarding, mode, enforcement, policy propagation); discovery from
+  installation events and synchronisation; `enforce` and `monitor` modes;
+  installation synchronisation health.
+- Repository groups (archived, never deleted) and background bulk operations
+  (group membership, onboarding, mode, monitoring, scans) that are bounded,
+  idempotent, retryable, cancellable and audited.
+- Policy targets for organization, repository groups and repositories, with
+  **mandatory** (floor) and **default** entries; pure per-rule resolver
+  (`commitguard.policies.governance`) with provenance, conflicts, exceptions and
+  monitor mode; effective policy cache with same-transaction invalidation,
+  background propagation and propagation status; governance versions and
+  provenance recorded with every scan.
+- Policy workflow: drafts, submission, approval bound to the document
+  fingerprint, rejection, publication against the base version, emergency
+  publication (owners, critical audit and notification).
+- Read-only policy simulation of drafts against recorded scans and findings
+  with the real policy evaluator, queued with leases and bounded.
+- Staged policy rollouts (pilot repositories, cumulative percentages),
+  pause/resume, automatic pause on error or block thresholds, optional
+  automatic rollback through the Phase 7 rollback path.
+- Policy exceptions scoped to a repository, group or organization, lowering one
+  rule to `warn` or `allow` until expiry; approval rules, separation of duties,
+  revocation, expiry worker, expiry warnings and notifications.
+- Organization rules: versioned identity data (AI agents and bots) compiled into
+  the trusted rule set without patterns or code; rules version recorded per scan.
+- Scheduled scans of default branches (daily/weekly, time zones) through the
+  normal worker, skipping unchanged heads, with per-run records.
+- Security posture with explicit states and reasons, compliance fraction,
+  repository security matrix with drift, trends from history and daily
+  snapshots, security events with acknowledgement, organization search,
+  JSON/CSV compliance reports that state they are not certifications.
+- Notification types `violation_digest`, `policy_approval_requested`,
+  `policy_emergency_published`, `policy_rollout_failed`,
+  `policy_propagation_failed`, `exception_requested`, `exception_approved`,
+  `exception_expiring`, `exception_ended`, `repository_unprotected`,
+  `organization_settings_changed`; optional hourly violation digests for
+  e-mail and webhooks.
+- Dashboard pages under `/organization` and `/settings/organization`.
+- Documentation: organization governance, policy inheritance, simulation,
+  exceptions, rollouts, repository management, security posture and compliance
+  reporting; architecture, threat model, deployment, policy management,
+  notifications and dashboard updated.
+- Tests: resolver and governance unit tests; integration tests for policies,
+  workflow, rollouts, operations, cross-tenant and role sweeps over every
+  governance route, a 39-step end-to-end scenario and performance budgets with
+  1,000 repositories; `scripts/benchmark_governance.py` for 10,000 repositories,
+  100,000 scans and 1,000,000 findings.
+
+### Changed (Phase 8)
+
+- Database schema 4 (automatic migration; existing repositories become
+  `onboarded` in `enforce` mode, so enforcement is unchanged).
+- Audit events are immutable (update trigger); retention purging also removes
+  finished simulations, bulk operations and scheduled scan runs.
+- Removing a member's last membership ends their sessions immediately.
+- With `require_policy_approval`, the direct organization policy save returns
+  `APPROVAL_REQUIRED`.
+- `policy_source` lists the governance layers applied (for example
+  `+ group Backend policy v2 + 1 exception(s)`).
+
 ### Added (Phase 7 — notifications, merge queue, check re-runs and policy recovery)
 
 - Notification subsystem (`commitguard.notifications`): typed notification

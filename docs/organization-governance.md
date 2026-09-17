@@ -96,9 +96,11 @@ bulk operation idempotency keys; one run per schedule slot.
 **Deletion.** Organizations are GitHub accounts: uninstalling the App marks the
 installation deleted and keeps its history for the retention period. There is
 no endpoint that deletes an organization, a policy version, an exception or an
-audit event. Groups are archived. Retention purges (scans, audit events) are
-the existing operator-configured maintenance, documented in
-[deployment.md](deployment.md#data-backups-and-retention).
+audit event. Groups are archived. Retention purges (scans, audit events,
+finished background work) are the existing operator-configured maintenance,
+documented in [deployment.md](deployment.md#data-backups-and-retention); audit
+retention defaults to 30 days, which limits how far back compliance evidence
+reaches ([compliance-reporting.md](compliance-reporting.md#retention-decides-how-far-back-evidence-goes)).
 
 ## Members, roles and permissions
 
@@ -126,8 +128,9 @@ Members are managed in **Settings → Organization → Members**
 (`commitguard dashboard members` on the command line). Access is re-evaluated
 on **every request** from the database: a removed member or a lowered role
 takes effect on the member's next request, with no stale authorization state.
-When a member's last membership is removed, their sessions are ended as well. There are no invitations: a member signs in with GitHub
-and must also have GitHub access to the installation (see
+When a member's last membership is removed, their sessions are ended as well.
+There are no invitations: a member signs in with GitHub and must also have
+GitHub access to the installation (see
 [dashboard.md](dashboard.md#sign-in-and-sessions)).
 
 ## Tenant isolation
@@ -213,7 +216,7 @@ Each invariant is enforced in code and covered by tests:
 | 6 | Cross-tenant data is never returned. | resource-scoped authorization; 404 for other tenants; sweep test over every route |
 | 7 | Simulation never changes enforcement. | read-only service; tests compare versions, checks and violations before and after |
 | 8 | Failed propagation never becomes a false PASS. | a scan resolves directly when the cache is not current; resolution failure fails the scan closed; propagation errors are reported, not hidden |
-| 9 | GitHub API failure never becomes false security success. | scheduled scans and synchronisation record `failed`; installations show `degraded`/`failed`; posture is `at_risk` |
+| 9 | GitHub API failure never becomes false security success. | scheduled scans and synchronisation record `failed` (a synchronisation that never finishes is `failed` after 15 minutes); installations show `degraded`/`failed`; posture is `at_risk` |
 | 10 | Custom configuration cannot execute arbitrary code. | policy documents, settings and organization rules are validated data; no regular expressions in organization rules; architecture test forbids `eval`/`exec`/dynamic imports in governance and policies |
 
 ## API and dashboard
@@ -251,7 +254,16 @@ All routes are listed with their permissions in
   repository - the practical meaning of "optional".
 * **No escalation chains.** Critical events can be acknowledged; escalation to
   other people after a delay is not implemented.
-* **PDF reports are not produced**: JSON and CSV only.
+* **PDF reports are not produced**: JSON and CSV only, at most 10,000 rows per
+  report (larger results say `truncated`).
+* **Audit retention is short by default** (30 days). Organizations that need
+  a longer trail must configure it before they need the evidence.
+* **Counts depend on the viewer.** Repository-level numbers include only the
+  repositories the viewer can see on GitHub; two members can see different
+  totals.
+* **No full re-synchronisation on a timer.** The inventory follows GitHub
+  webhooks and on-demand synchronisation; an installation not synchronised for
+  7 days is shown as `degraded`.
 * **Scheduled scans** re-evaluate default branches only; the first scheduled
   scan of a branch uses built-in defaults for the repository configuration
   (organization governance still applies).
