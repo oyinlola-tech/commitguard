@@ -43,7 +43,19 @@ export type Permission =
   | "members:manage"
   | "policies:rollback"
   | "notifications:read"
-  | "notifications:manage";
+  | "notifications:manage"
+  | "organization:read"
+  | "organization:manage"
+  | "policies:publish"
+  | "policies:approve"
+  | "policies:emergency"
+  | "rules:manage"
+  | "exceptions:read"
+  | "exceptions:create"
+  | "exceptions:approve"
+  | "exceptions:revoke"
+  | "security:read"
+  | "security:manage";
 
 export interface Envelope<T> {
   data: T;
@@ -347,7 +359,9 @@ export interface PolicyRule {
   organization_floor: PolicyAction | null;
   minimum_action: PolicyAction | null;
   repository_override: "any" | "stricter_only";
-  source: "built_in_default" | "service_policy" | "organization_policy";
+  source: "built_in_default" | "service_policy" | "organization_policy" | "organization_default";
+  /** A default-strength organization entry: the baseline repositories may change. */
+  organization_default: PolicyAction | null;
 }
 
 export interface OrganizationPolicy {
@@ -367,6 +381,7 @@ export interface PolicyChange {
   old: PolicyAction | null;
   new: PolicyAction | null;
   weakening: boolean;
+  enforcement: PolicyStrength;
 }
 
 export interface PolicyVersion {
@@ -382,6 +397,12 @@ export interface PolicyVersion {
   restored_version: number | null;
   changes: PolicyChange[];
   summary: string;
+  /** Default-strength entries (organization governance). */
+  defaults: Record<string, PolicyAction>;
+  /** The reviewed draft this version was published from. */
+  draft_id: string | null;
+  /** Published without the approval workflow. */
+  emergency: boolean;
 }
 
 export interface PolicyDiffEntry {
@@ -389,6 +410,7 @@ export interface PolicyDiffEntry {
   old: PolicyAction | null;
   new: PolicyAction | null;
   weakening: boolean;
+  enforcement: PolicyStrength;
 }
 
 export interface PolicyDiff {
@@ -625,4 +647,663 @@ export interface NotificationDelivery {
 export interface CreatedWebhook {
   endpoint: WebhookEndpoint;
   signing_secret: string;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Organization governance. These mirror `commitguard.governance.*`,        */
+/* `commitguard.policies.governance` and the scoped policy views; posture,  */
+/* compliance, drift and propagation are decided on the server.             */
+/* ------------------------------------------------------------------------ */
+
+export type PolicyStrength = "mandatory" | "default";
+export type PolicyTargetType = "organization" | "group" | "repository";
+export type Posture = "secure" | "at_risk" | "unprotected" | "unknown";
+export type RepositoryMode = "enforce" | "monitor";
+export type OnboardingState = "discovered" | "onboarded" | "excluded";
+export type PropagationState = "up_to_date" | "stale" | "syncing" | "error" | "pending";
+export type DriftState = "compliant" | "customized" | "drift" | "unknown";
+export type SyncHealth = "healthy" | "syncing" | "degraded" | "failed" | "never";
+export type PolicyLevel =
+  | "built_in"
+  | "service"
+  | "organization"
+  | "group"
+  | "repository_policy"
+  | "repository_configuration"
+  | "exception"
+  | "monitor_mode";
+export type DraftState = "draft" | "pending_approval" | "approved" | "rejected" | "cancelled" | "published";
+export type ExceptionStatus = "requested" | "active" | "rejected" | "cancelled" | "revoked" | "expired";
+export type RolloutState = "pilot" | "rollout" | "active" | "paused" | "rolled_back";
+export type SimulationState = "queued" | "running" | "completed" | "failed";
+export type BulkOperationType = "add_to_group" | "remove_from_group" | "onboard" | "set_mode" | "set_monitoring" | "schedule_scan";
+export type BulkStatus = "queued" | "running" | "completed" | "partial" | "failed" | "cancelled";
+export type ReportKind = "compliance" | "coverage" | "violations" | "exceptions" | "policy_changes" | "installations";
+
+/** `commitguard.governance.settings.OrganizationSettings` */
+export interface OrganizationSettings {
+  security_baseline: Record<string, PolicyAction>;
+  require_policy_approval: boolean;
+  require_separate_approver: boolean;
+  exception_approval_min_severity: Severity;
+  exception_max_days: number;
+  allow_permanent_exceptions: boolean;
+  exception_warning_days: number[];
+  default_onboarding_mode: RepositoryMode;
+  auto_onboard_new_repositories: boolean;
+  archived_repositories: "keep" | "exclude";
+  rollout_auto_pause: boolean;
+  rollout_max_error_rate: number;
+  rollout_max_block_rate: number;
+  rollout_min_scans: number;
+  rollout_auto_rollback: boolean;
+  aggregate_violation_alerts: boolean;
+  timezone: string;
+}
+
+export interface SettingsView {
+  organization_id: number;
+  /** 0: organization defaults, never saved. */
+  version: number;
+  settings: OrganizationSettings;
+  updated_at: string | null;
+  updated_by: string | null;
+  can_manage: boolean;
+}
+
+export interface InstallationHealth {
+  installation_id: number;
+  account_login: string;
+  state: "active" | "suspended" | "deleted" | string;
+  sync: SyncHealth;
+  sync_detail: string;
+  last_success_at: string | null;
+  repositories: number;
+}
+
+export interface OrganizationPolicyStatus {
+  organization_version: number;
+  updated_at: string | null;
+  updated_by: string | null;
+  approvals_pending: number;
+  exceptions_requested: number;
+  rollouts_in_progress: number;
+  propagation: Partial<Record<PropagationState, number>>;
+  baseline: Record<string, PolicyAction>;
+}
+
+export interface ActivityItem {
+  id: string;
+  type: string;
+  occurred_at: string;
+  actor: string | null;
+}
+
+/** `commitguard.governance.posture.OrganizationPostureView` */
+export interface OrganizationPosture {
+  organization_id: number;
+  login: string;
+  type: string;
+  github_url: string;
+  posture: Posture;
+  posture_reasons: string[];
+  members: number;
+  repositories: number;
+  required_repositories: number;
+  compliant_repositories: number;
+  /** The server's sentence, e.g. "94 of 100 required repositories satisfy all mandatory controls". */
+  compliance: string;
+  by_posture: Record<Posture, number>;
+  by_protection: Partial<Record<ProtectionStatus, number>>;
+  monitor_mode: number;
+  critical_open: number;
+  high_open: number;
+  active_exceptions: number;
+  expiring_exceptions: number;
+  expired_exceptions_30d: number;
+  drift: Record<DriftState, number>;
+  installations: InstallationHealth[];
+  policy: OrganizationPolicyStatus;
+  recent_activity: ActivityItem[];
+  computed_at: string;
+}
+
+export interface OrganizationDetail {
+  organization: OrganizationPosture;
+  settings: SettingsView;
+}
+
+export interface DriftDifference {
+  policy_id: string;
+  requested: PolicyAction | "disabled";
+  requested_by: string;
+  required: PolicyAction;
+  required_by: string;
+  effective: PolicyAction;
+}
+
+export interface GroupRef {
+  id: string;
+  name: string;
+}
+
+/** One row of the repository security matrix. */
+export interface RepositoryPosture {
+  repository_id: number;
+  full_name: string;
+  github_url: string;
+  installation_id: number;
+  groups: GroupRef[];
+  connection: AppConnection;
+  archived: boolean;
+  onboarding: OnboardingState;
+  mode: RepositoryMode;
+  protection: ProtectionStatus;
+  protection_reason: string;
+  posture: Posture;
+  posture_reasons: string[];
+  organization_policy_version: number | null;
+  policy_state: PropagationState;
+  last_scan_result: ScanResult | null;
+  last_scan_at: string | null;
+  open_violations: number;
+  open_warnings: number;
+  critical_open: number;
+  active_exceptions: number;
+  expiring_exceptions: number;
+  drift: DriftState;
+  drift_differences: DriftDifference[];
+}
+
+export interface MatrixPage extends Page<RepositoryPosture> {
+  total: number;
+  computedAt: string | null;
+}
+
+export interface TrendPoint {
+  day: string;
+  values: Record<string, number>;
+}
+
+export interface TrendsView {
+  organization_id: number;
+  days: number;
+  history: TrendPoint[];
+  snapshots: TrendPoint[];
+  snapshot_note: string;
+  computed_at: string;
+}
+
+export interface SecurityEvent {
+  id: string;
+  type: string;
+  severity: Severity;
+  title: string;
+  body: string;
+  occurrences: number;
+  last_occurred_at: string;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
+}
+
+export interface Acknowledgement {
+  event_id: string;
+  acknowledged_by: string;
+  acknowledged_at: string;
+  meaning: string;
+}
+
+export interface SearchResult {
+  kind: "repository" | "group" | "policy" | "rule" | "exception" | "finding" | string;
+  id: string;
+  title: string;
+  detail: string;
+  link: string;
+}
+
+/* Repository groups ------------------------------------------------------ */
+export interface RepositoryGroup {
+  id: string;
+  organization_id: number;
+  name: string;
+  description: string | null;
+  repository_count: number;
+  policy_version: number;
+  active_exceptions: number;
+  created_at: string;
+  created_by: string | null;
+  updated_at: string;
+  archived_at: string | null;
+}
+
+export interface GroupMember {
+  repository_id: number;
+  full_name: string;
+  added_at: string;
+  added_by: string | null;
+}
+
+export interface RepositoryGroupDetail {
+  group: RepositoryGroup;
+  repositories: GroupMember[];
+  /** Members GitHub did not report to this session. */
+  hidden_repositories: number;
+  can_manage: boolean;
+}
+
+/* Scoped policies, drafts, approvals ------------------------------------ */
+export interface PolicyTarget {
+  type: PolicyTargetType;
+  /** "" for the organization, a group ID or a repository ID. */
+  id: string;
+  label: string;
+}
+
+export interface ScopedRule {
+  policy_id: string;
+  name: string;
+  mandatory: PolicyAction | null;
+  default: PolicyAction | null;
+}
+
+export interface ScopedPolicy {
+  organization: OrganizationRef;
+  target: PolicyTarget;
+  /** 0: nothing published yet. */
+  version: number;
+  fingerprint: string | null;
+  updated_at: string | null;
+  updated_by: { id: number | null; login: string | null } | null;
+  reason: string | null;
+  rules: ScopedRule[];
+  can_write: boolean;
+}
+
+export interface PolicyTargets {
+  organization: OrganizationPolicy;
+  groups: ScopedPolicy[];
+  repositories: ScopedPolicy[];
+}
+
+export interface TargetVersions {
+  policy: OrganizationPolicy | ScopedPolicy;
+  versions: PolicyVersion[];
+}
+
+export interface PolicyApproval {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "cancelled" | string;
+  requested_by: string | null;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+}
+
+/** `commitguard.governance.workflow.PolicyDraftView` */
+export interface PolicyDraft {
+  id: string;
+  organization_id: number;
+  target: PolicyTarget;
+  title: string;
+  reason: string | null;
+  state: DraftState;
+  revision: number;
+  base_version: number;
+  /** The target's published version right now. */
+  current_version: number;
+  floors: Record<string, PolicyAction>;
+  defaults: Record<string, PolicyAction>;
+  changes: PolicyChange[];
+  diff: PolicyDiff;
+  weakening: boolean;
+  rebase_required: boolean;
+  requires_approval: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  submitted_by: string | null;
+  submitted_at: string | null;
+  published_version: number | null;
+  published_at: string | null;
+  published_by: string | null;
+  emergency: boolean;
+  rollout_id: string | null;
+  approvals: PolicyApproval[];
+  can_edit: boolean;
+  can_submit: boolean;
+  can_approve: boolean;
+  can_publish: boolean;
+}
+
+/* Simulations ------------------------------------------------------------ */
+export interface RepositoryImpact {
+  repository_id: number;
+  /** null: not visible to the caller. */
+  full_name: string | null;
+  scans: number;
+  new_blocks: number;
+  new_warnings: number;
+  no_longer_blocked: number;
+}
+
+export interface SimulationResult {
+  repositories_analyzed: number;
+  repositories_without_data: number;
+  scans_analyzed: number;
+  findings_analyzed: number;
+  new_blocks: number;
+  new_warnings: number;
+  no_longer_blocked: number;
+  unchanged: number;
+  scans_newly_blocked: number;
+  scans_no_longer_blocked: number;
+  /** Scans without recorded repository configuration: built-in defaults were assumed. */
+  scans_assumed_defaults: number;
+  most_affected: RepositoryImpact[];
+  truncated: boolean;
+  disclaimer: string;
+}
+
+export interface Simulation {
+  id: string;
+  organization_id: number;
+  target: PolicyTarget;
+  draft_id: string | null;
+  current_version: number;
+  state: SimulationState;
+  parameters: { period_days?: number; repository_ids?: number[] | null } & Record<string, unknown>;
+  requested_by: string | null;
+  requested_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  result: SimulationResult | null;
+  error: string | null;
+}
+
+/* Rollouts and propagation ---------------------------------------------- */
+export interface RolloutStage {
+  index: number;
+  name: string;
+  kind: "repositories" | "percent";
+  percent: number | null;
+  /** Planned size (explicit list) or enrolled so far. */
+  repositories: number;
+  enrolled: number;
+  state: "done" | "current" | "planned";
+}
+
+export interface Rollout {
+  id: string;
+  organization_id: number;
+  target: PolicyTarget;
+  from_version: number;
+  to_version: number;
+  state: RolloutState;
+  stages: RolloutStage[];
+  current_stage: number;
+  scope_repositories: number;
+  enrolled: number;
+  /** Enrolled and effective policy resolved with the new version. */
+  propagated: number;
+  scanned: number;
+  passed: number;
+  blocked: number;
+  errors: number;
+  complete: boolean;
+  thresholds: { max_error_rate?: number; max_block_rate?: number; min_scans?: number };
+  auto_pause: boolean;
+  auto_rollback: boolean;
+  paused_reason: string | null;
+  created_by: string | null;
+  created_at: string;
+  stage_started_at: string;
+  completed_at: string | null;
+  rolled_back_at: string | null;
+  rollback_version: number | null;
+  can_manage: boolean;
+}
+
+export interface RolloutRequest {
+  stages: ({ name?: string; repositories: number[] } | { name?: string; percent: number })[];
+  thresholds?: { max_error_rate?: number; max_block_rate?: number; min_scans?: number };
+  auto_pause?: boolean;
+  auto_rollback?: boolean;
+}
+
+export interface PropagationStatus {
+  organization_id: number;
+  repositories: number;
+  up_to_date: number;
+  stale: number;
+  syncing: number;
+  error: number;
+  /** Never resolved yet. */
+  pending: number;
+  /** Every repository up to date. */
+  complete: boolean;
+  failing: { repository_id: number; full_name: string; error: string | null }[];
+  checked_at: string;
+}
+
+export interface SecurityPolicies {
+  targets: PolicyTargets;
+  drafts: PolicyDraft[];
+  rollouts: Rollout[];
+  propagation: PropagationStatus;
+}
+
+/* Effective policy ------------------------------------------------------- */
+export interface EffectivePolicyEntry {
+  id: string;
+  enabled: boolean;
+  action: PolicyAction;
+  description: string;
+}
+
+export interface PolicyConflict {
+  policy_id: string;
+  requested_action: PolicyAction;
+  requested_enabled: boolean;
+  requested_by: PolicyLevel;
+  requested_label: string;
+  required_action: PolicyAction;
+  required_by: PolicyLevel;
+  required_label: string;
+  effective_action: PolicyAction;
+  reason: string;
+}
+
+export interface RuleProvenance {
+  policy_id: string;
+  enabled: boolean;
+  action: PolicyAction;
+  source: PolicyLevel;
+  source_label: string;
+  enforcement: PolicyStrength | null;
+  /** The floor, when a mandatory entry exists. */
+  required_action: PolicyAction | null;
+  required_by: PolicyLevel | null;
+  required_label: string | null;
+  conflict: PolicyConflict | null;
+  exception_id: string | null;
+  exception_expires_at: string | null;
+  action_before_exception: PolicyAction | null;
+  /** Block reported as warn. */
+  monitor_mode: boolean;
+  repository_configuration_known: boolean;
+}
+
+export interface EffectivePolicy {
+  policies: EffectivePolicyEntry[];
+  rules: RuleProvenance[];
+  inputs_fingerprint: string;
+  description: string;
+  mode: RepositoryMode;
+}
+
+export interface GovernanceVersions {
+  organization_policy: number | null;
+  settings: number | null;
+  groups: Record<string, number>;
+  repository_policy: number | null;
+  rollouts: Record<string, number>;
+  exceptions: string[];
+  organization_rules: number | null;
+}
+
+/** `commitguard.governance.resolver.EffectivePolicyView` */
+export interface EffectivePolicyView {
+  organization_id: number;
+  repository_id: number;
+  full_name: string;
+  mode: RepositoryMode;
+  effective: EffectivePolicy;
+  versions: GovernanceVersions;
+  propagation: PropagationState;
+  resolved_at: string;
+  last_scan_id: string | null;
+  last_scan_completed_at: string | null;
+  /** Conflicts involving the repository's own .commitguard.yaml are only known at scan time. */
+  last_scan_effective: EffectivePolicy | null;
+  last_scan_used_current_policy: boolean | null;
+}
+
+/* Exceptions ------------------------------------------------------------- */
+export interface PolicyException {
+  id: string;
+  organization_id: number;
+  rule_id: string;
+  rule_name: string;
+  severity: Severity;
+  scope: { type: PolicyTargetType; id: string; label: string };
+  action: PolicyAction;
+  reason: string;
+  status: ExceptionStatus;
+  requires_approval: boolean;
+  permanent: boolean;
+  expires_at: string | null;
+  expiring_soon: boolean;
+  requested_at: string;
+  requested_by: string | null;
+  decided_at: string | null;
+  decided_by: string | null;
+  decision_note: string | null;
+  activated_at: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  revoke_reason: string | null;
+  expired_at: string | null;
+  can_approve: boolean;
+  can_revoke: boolean;
+  can_cancel: boolean;
+}
+
+export interface SecurityExceptions {
+  counts: Partial<Record<ExceptionStatus | "expiring_soon", number>>;
+  exceptions: PolicyException[];
+}
+
+/* Bulk operations -------------------------------------------------------- */
+export interface BulkItem {
+  repository_id: number;
+  full_name: string | null;
+  status: "pending" | "completed" | "failed" | "skipped" | "cancelled" | string;
+  attempts: number;
+  detail: string | null;
+}
+
+export interface BulkOperation {
+  id: string;
+  organization_id: number;
+  type: BulkOperationType;
+  parameters: Record<string, unknown>;
+  status: BulkStatus;
+  total: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  pending: number;
+  requested_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  cancelled_by: string | null;
+  items: BulkItem[];
+  can_manage: boolean;
+}
+
+/* Scan schedules --------------------------------------------------------- */
+export interface ScheduleRun {
+  id: string;
+  slot: string;
+  state: "running" | "completed" | "partial" | "failed" | string;
+  started_at: string;
+  completed_at: string | null;
+  repositories: number;
+  queued: number;
+  skipped: number;
+  failed: number;
+  /** Skip and failure reasons with counts. */
+  detail: Record<string, number>;
+}
+
+export interface ScanSchedule {
+  id: string;
+  organization_id: number;
+  name: string;
+  target: PolicyTarget;
+  cadence: "daily" | "weekly";
+  hour: number;
+  minute: number;
+  /** 0 = Monday … 6 = Sunday (weekly only). */
+  weekday: number | null;
+  timezone: string;
+  enabled: boolean;
+  next_run_at: string | null;
+  revision: number;
+  repositories_covered: number;
+  last_run: ScheduleRun | null;
+  created_by: string | null;
+  created_at: string;
+  updated_by: string | null;
+  updated_at: string;
+  can_manage: boolean;
+}
+
+/* Organization rules ----------------------------------------------------- */
+export interface OrganizationIdentity {
+  id: string;
+  display_name: string;
+  names: string[];
+  name_prefixes: string[];
+  emails: string[];
+  github_logins: string[];
+}
+
+export interface OrganizationRuleDocument {
+  ai_identities: OrganizationIdentity[];
+  bot_identities: OrganizationIdentity[];
+}
+
+export interface OrganizationRules {
+  organization_id: number;
+  version: number;
+  fingerprint: string | null;
+  document: OrganizationRuleDocument;
+  /** As recorded with scans. */
+  rules_version: string;
+  created_at: string | null;
+  created_by: string | null;
+  reason: string | null;
+  trust_levels: { level: string; source: string; can: string }[];
+  can_manage: boolean;
+}
+
+export interface OrganizationRuleVersion {
+  version: number;
+  fingerprint: string;
+  created_at: string;
+  created_by: string | null;
+  reason: string | null;
 }

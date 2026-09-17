@@ -24,9 +24,30 @@ export const routes = {
   installation: (id: number) => `/github/installations/${segment(id)}`,
   settings: "/settings",
   login: "/login",
+  organization: "/organization",
+  organizationRepositories: "/organization/repositories",
+  addRepositories: "/organization/repositories/add",
+  group: (id: string) => `/organization/groups/${segment(id)}`,
+  policyGovernance: "/organization/policies",
+  newDraft: (target?: { type: "organization" | "group" | "repository"; id?: string | number | null }) => {
+    if (!target) return "/organization/policies/drafts/new";
+    const params = new URLSearchParams({ target: target.type });
+    if (target.type !== "organization" && target.id !== undefined && target.id !== null) params.set("id", String(target.id));
+    return `/organization/policies/drafts/new?${params.toString()}`;
+  },
+  draft: (id: string) => `/organization/policies/drafts/${segment(id)}`,
+  rollout: (id: string) => `/organization/policies/rollouts/${segment(id)}`,
+  exceptions: "/organization/exceptions",
+  newException: "/organization/exceptions/new",
+  exception: (id: string) => `/organization/exceptions/${segment(id)}`,
+  organizationSecurity: "/organization/security",
+  organizationAudit: "/organization/audit",
+  organizationSettings: "/settings/organization",
+  organizationMembers: "/settings/organization/members",
 };
 
-const INTERNAL_LINK = /^\/(violations|scans|github\/installations|repositories|policies)\/[A-Za-z0-9]{1,64}$/;
+const INTERNAL_LINK =
+  /^\/(?:(?:violations|scans|github\/installations|repositories|policies|organization\/exceptions|organization\/groups|organization\/policies\/drafts|organization\/policies\/rollouts)\/[A-Za-z0-9]{1,64}|organization)$/;
 
 /** A dashboard path from a server-built notification link, or null (never an external URL). */
 export function internalLink(path: string | null | undefined): string | null {

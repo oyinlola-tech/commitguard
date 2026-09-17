@@ -259,6 +259,7 @@ export function policy(canWrite = true, floors: Record<string, "block" | "warn" 
       minimum_action: floors[id] ?? null,
       repository_override: floors[id] ? "stricter_only" : "any",
       source: floors[id] ? "organization_policy" : "built_in_default",
+      organization_default: null,
     })),
     can_write: canWrite,
   };
@@ -296,6 +297,9 @@ export function policyVersion(overrides: Partial<PolicyVersion> = {}): PolicyVer
     restored_version: null,
     changes: [],
     summary: "ai_coauthor: repository -> block",
+    defaults: {},
+    draft_id: null,
+    emergency: false,
     ...overrides,
   };
 }

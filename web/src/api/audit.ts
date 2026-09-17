@@ -8,6 +8,10 @@ export interface AuditFilters {
   actor?: string;
   from?: string;
   to?: string;
+  /** Governance filters: a rule ID, an exception ID, and `organization` or a draft, group or rollout ID. */
+  rule?: string;
+  exception?: string;
+  policy?: string;
   sort?: string;
   cursor?: string | null;
   limit?: number;
