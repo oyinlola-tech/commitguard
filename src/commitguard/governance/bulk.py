@@ -3,10 +3,11 @@
 ::
 
     Admin ─ POST bulk operation ─► validate (permission, repositories visible, limits)
-                                    │ one row + one item per repository   (201, "queued")
+                                    │ one row + one item per repository   (202, "queued")
                                     ▼
     maintenance loop ─ claim (lease) ─► next batch of pending items
-                                    │ each item in its own transaction
+                                    │ BATCH_SIZE items per transaction; a failing
+                                    │ batch is retried item by item
                                     ▼
                          completed / failed (with a reason) / skipped
                                     │
@@ -48,13 +49,13 @@ Safety:
 
 import json
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from commitguard.audit.models import Actor, AuditEventType
+from commitguard.audit.models import Actor, AuditEvent, AuditEventType
 from commitguard.controlplane.access import Permission, Principal
 from commitguard.controlplane.errors import (
     ConfirmationRequiredError,
@@ -96,6 +97,8 @@ log = get_logger(__name__)
 MAX_ITEMS = 5000
 MAX_OPEN_OPERATIONS = 10
 ITEMS_PER_TICK = 200
+#: Items applied per database transaction (a failure is isolated per batch, then per item).
+BATCH_SIZE = 100
 LEASE = timedelta(minutes=5)
 TYPES = (
     "add_to_group",
@@ -170,9 +173,7 @@ class BulkOperationService:
         confirm: object,
     ) -> BulkOperationView:
         if operation_type not in TYPES:
-            raise InputValidationError(
-                f"type must be one of {', '.join(TYPES)}", field="type"
-            )
+            raise InputValidationError(f"type must be one of {', '.join(TYPES)}", field="type")
         assert isinstance(operation_type, str)  # noqa: S101 - checked above
         permission = (
             Permission.SCANS_TRIGGER
@@ -484,11 +485,113 @@ class BulkOperationService:
                 "AND status = 'pending' ORDER BY repository_id LIMIT ?",
                 (operation_id, budget - processed),
             )
-            for item in items:
-                self._process_item(operation, int(item["repository_id"]))
-                processed += 1
+            ids = [int(item["repository_id"]) for item in items]
+            if str(operation["type"]) == "schedule_scan":
+                for repository_id in ids:  # each one calls GitHub: one at a time
+                    self._process_item(operation, repository_id)
+            else:
+                # The organization's repositories, once per pass (not per batch).
+                known = account_repositories(self._store, int(operation["account_id"]))
+                for start in range(0, len(ids), BATCH_SIZE):
+                    self._process_batch(operation, ids[start : start + BATCH_SIZE], known)
+            processed += len(ids)
             self._finish_if_done(operation)
         return processed
+
+    def _process_batch(
+        self, operation: sqlite3.Row, ids: list[int], known: Mapping[int, object]
+    ) -> None:
+        """Apply a batch in one transaction; on an unexpected database error, item by item."""
+        account_id = int(operation["account_id"])
+        operation_id = str(operation["operation_id"])
+        params = json.loads(str(operation["parameters"]))
+        kind = str(operation["type"])
+        actor = Actor.user(
+            int(operation["requested_by_id"] or 0),
+            str(operation["requested_by_login"] or "bulk operation"),
+        )
+        now = self._now()
+        events: list[AuditEvent] = []
+        try:
+            with self._store.transaction() as db:
+                results: dict[int, tuple[str, str | None]] = {
+                    i: ("failed", "repository not found in this organization")
+                    for i in ids
+                    if i not in known
+                }
+                valid = [i for i in ids if i in known]
+                changed: set[int] = set()
+                db.execute("SAVEPOINT bulk_batch")
+                try:
+                    if kind in ("add_to_group", "remove_from_group"):
+                        method = (
+                            self._groups.add_members_in
+                            if kind == "add_to_group"
+                            else self._groups.remove_members_in
+                        )
+                        done, event = method(
+                            db,
+                            account_id,
+                            str(params["group_id"]),
+                            valid,
+                            actor=actor,
+                            known=known.keys(),
+                        )
+                        changed.update(done)
+                        events.extend([event] if event is not None else [])
+                    elif kind in ("onboard", "set_mode"):
+                        done, mode_events = self._inventory.apply_in(
+                            db,
+                            account_id,
+                            valid,
+                            mode=RepositoryMode(params["mode"]),
+                            actor=actor,
+                            onboard=kind == "onboard",
+                            reason=params.get("reason"),
+                            known=known.keys(),
+                        )
+                        changed.update(done)
+                        events.extend(mode_events)
+                    else:
+                        for repository_id in valid:
+                            if self._apply_in(db, kind, account_id, repository_id, params, actor):
+                                continue
+                            changed.add(repository_id)
+                    db.execute("RELEASE bulk_batch")
+                except (ControlPlaneError, CommitGuardError) as exc:
+                    db.execute("ROLLBACK TO bulk_batch")
+                    db.execute("RELEASE bulk_batch")
+                    events.clear()
+                    changed.clear()
+                    message = (
+                        str(exc)[:200]
+                        if isinstance(exc, ControlPlaneError)
+                        else (type(exc).__name__)
+                    )
+                    results.update({i: ("failed", message) for i in valid})
+                for repository_id in valid:
+                    results.setdefault(
+                        repository_id,
+                        ("completed", None)
+                        if repository_id in changed
+                        else ("skipped", "unchanged"),
+                    )
+                db.executemany(
+                    "UPDATE bulk_operation_items SET status = ?, attempts = attempts + 1, "
+                    "detail = ?, updated_at = ? WHERE operation_id = ? AND repository_id = ? "
+                    "AND status = 'pending'",
+                    [
+                        (status, detail, ts(now), operation_id, repository_id)
+                        for repository_id, (status, detail) in results.items()
+                    ],
+                )
+        except CommitGuardError:
+            log.warning("bulk_batch_failed_retrying_items", operation=operation_id)
+            for repository_id in ids:
+                self._process_item(operation, repository_id)
+            return
+        for event in events:
+            self._audit.log_stored(event)
 
     def _process_item(self, operation: sqlite3.Row, repository_id: int) -> None:
         account_id = int(operation["account_id"])
@@ -549,7 +652,7 @@ class BulkOperationService:
                 if kind == "add_to_group"
                 else self._groups.remove_members_in
             )
-            event = method(db, account_id, str(params["group_id"]), [repository_id], actor=actor)
+            _, event = method(db, account_id, str(params["group_id"]), [repository_id], actor=actor)
             return None if event is not None else "unchanged"
         if kind in ("onboard", "set_mode"):
             changed, _ = self._inventory.apply_in(
@@ -573,6 +676,19 @@ class BulkOperationService:
                 ).fetchall()
             ]
             for installation_id in installations:
+                self._store.insert_audit_event(
+                    db,
+                    self._audit.build(
+                        AuditEventType.REPOSITORY_MONITORING_ENABLED
+                        if params["enabled"]
+                        else AuditEventType.REPOSITORY_MONITORING_DISABLED,
+                        actor=actor,
+                        account_id=account_id,
+                        installation_id=installation_id,
+                        repository_id=repository_id,
+                        source="bulk operation",
+                    ),
+                )
                 db.execute(
                     "INSERT INTO repository_settings (installation_id, repository_id, "
                     "monitoring_enabled, updated_at, updated_by_login) VALUES (?, ?, ?, ?, ?) "
@@ -588,18 +704,6 @@ class BulkOperationService:
                         actor.login,
                     ),
                 )
-            self._store.insert_audit_event(
-                db,
-                self._audit.build(
-                    AuditEventType.REPOSITORY_MONITORING_ENABLED
-                    if params["enabled"]
-                    else AuditEventType.REPOSITORY_MONITORING_DISABLED,
-                    actor=actor,
-                    account_id=account_id,
-                    repository_id=repository_id,
-                    source="bulk operation",
-                ),
-            )
             return None
         raise InputValidationError("unknown bulk operation")  # pragma: no cover
 

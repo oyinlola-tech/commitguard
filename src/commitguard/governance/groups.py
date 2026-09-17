@@ -13,7 +13,7 @@ the repositories added or removed.
 """
 
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict
@@ -254,11 +254,14 @@ class RepositoryGroupService:
             raise InputValidationError("Nothing to change.")
         now = self._now()
         with self._store.transaction() as db:
-            if new_name != row["name"] and db.execute(
-                "SELECT 1 FROM repository_groups WHERE account_id = ? AND name_key = ? "
-                "AND archived_at IS NULL AND group_id != ?",
-                (account_id, _name_key(str(new_name)), group_id),
-            ).fetchone():
+            if (
+                new_name != row["name"]
+                and db.execute(
+                    "SELECT 1 FROM repository_groups WHERE account_id = ? AND name_key = ? "
+                    "AND archived_at IS NULL AND group_id != ?",
+                    (account_id, _name_key(str(new_name)), group_id),
+                ).fetchone()
+            ):
                 raise ConflictError("A group with this name already exists.")
             db.execute(
                 "UPDATE repository_groups SET name = ?, name_key = ?, description = ?, "
@@ -329,7 +332,7 @@ class RepositoryGroupService:
         require(principal, Permission.REPOSITORIES_MANAGE, account_id)
         ids = require_visible_repositories(self._store, principal, account_id, repository_ids)
         with self._store.transaction() as db:
-            added = self.add_members_in(
+            _, added = self.add_members_in(
                 db, account_id, group_id, ids, actor=Actor.user(principal.user_id, principal.login)
             )
         if added is not None:
@@ -344,10 +347,14 @@ class RepositoryGroupService:
         repository_ids: Sequence[int],
         *,
         actor: Actor,
-    ) -> AuditEvent | None:
+        known: Collection[int] | None = None,
+    ) -> tuple[list[int], AuditEvent | None]:
         """Add members inside a caller's transaction (also used by bulk operations).
 
-        Returns the stored audit event, or None when every repository was already a member.
+        ``known`` - the organization's repository IDs when the caller already has them.
+
+        Returns the repositories added and the stored audit event (None when every
+        repository was already a member).
         """
         group = db.execute(
             "SELECT archived_at FROM repository_groups WHERE group_id = ? AND account_id = ?",
@@ -358,7 +365,8 @@ class RepositoryGroupService:
         if group["archived_at"] is not None:
             raise ConflictError("An archived group cannot be changed.")
         now = self._now()
-        known = account_repositories(db, account_id)
+        if known is None:
+            known = account_repositories(db, account_id).keys()
         added = []
         for repository_id in repository_ids:
             if repository_id not in known:
@@ -371,12 +379,12 @@ class RepositoryGroupService:
             if cursor.rowcount:
                 added.append(repository_id)
         if not added:
-            return None
+            return [], None
         db.execute(
             "UPDATE repository_groups SET updated_at = ? WHERE group_id = ?", (ts(now), group_id)
         )
         invalidate_repositories(db, account_id, added, now)
-        return self._store.insert_audit_event(
+        return added, self._store.insert_audit_event(
             db,
             self._audit.build(
                 AuditEventType.REPOSITORY_GROUP_MEMBERS_ADDED,
@@ -396,7 +404,7 @@ class RepositoryGroupService:
         require(principal, Permission.REPOSITORIES_MANAGE, account_id)
         ids = require_visible_repositories(self._store, principal, account_id, repository_ids)
         with self._store.transaction() as db:
-            stored = self.remove_members_in(
+            _, stored = self.remove_members_in(
                 db, account_id, group_id, ids, actor=Actor.user(principal.user_id, principal.login)
             )
         if stored is not None:
@@ -411,7 +419,9 @@ class RepositoryGroupService:
         repository_ids: Sequence[int],
         *,
         actor: Actor,
-    ) -> AuditEvent | None:
+        known: Collection[int] | None = None,  # accepted for symmetry: removal needs no lookup
+    ) -> tuple[list[int], AuditEvent | None]:
+        del known
         now = self._now()
         removed = []
         for repository_id in repository_ids:
@@ -423,9 +433,9 @@ class RepositoryGroupService:
             if cursor.rowcount:
                 removed.append(repository_id)
         if not removed:
-            return None
+            return [], None
         invalidate_repositories(db, account_id, removed, now)
-        return self._store.insert_audit_event(
+        return removed, self._store.insert_audit_event(
             db,
             self._audit.build(
                 AuditEventType.REPOSITORY_GROUP_MEMBERS_REMOVED,

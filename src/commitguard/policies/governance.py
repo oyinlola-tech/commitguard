@@ -406,7 +406,11 @@ def resolve_policy(
         floor = floors.get(policy_id)
         if floor is not None:
             floor_action, floor_level, floor_label = floor
-            if _effective_rank(before_floor) < floor_action.rank:
+            if source is PolicyLevel.BUILT_IN:
+                # Nobody asked for less: the floor simply decides the rule.
+                if policy.action.rank == floor_action.rank:
+                    source, label, enforcement = floor_level, floor_label, Enforcement.MANDATORY
+            elif _effective_rank(before_floor) < floor_action.rank:
                 asked = before_floor.action if before_floor.enabled else Action.ALLOW
                 conflict = PolicyConflict(
                     policy_id=policy_id,
@@ -423,8 +427,6 @@ def resolve_policy(
                         f"{label} cannot weaken it."
                     ),
                 )
-                source, label, enforcement = floor_level, floor_label, Enforcement.MANDATORY
-            elif policy.action.rank == floor_action.rank and source is PolicyLevel.BUILT_IN:
                 source, label, enforcement = floor_level, floor_label, Enforcement.MANDATORY
 
         exception_id = None

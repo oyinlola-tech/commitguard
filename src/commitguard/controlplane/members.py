@@ -185,6 +185,16 @@ class MembershipService:
                 "DELETE FROM memberships WHERE account_id = ? AND user_id = ?",
                 (int(account_id), int(user_id)),
             )
+            # Access is re-read on every request, so the organization is gone from the
+            # member's next request. With no membership left, their sessions end too.
+            remaining = db.execute(
+                "SELECT COUNT(*) AS n FROM memberships WHERE user_id = ?", (int(user_id),)
+            ).fetchone()["n"]
+            sessions_ended = 0
+            if int(remaining) == 0:
+                sessions_ended = db.execute(
+                    "DELETE FROM sessions WHERE user_id = ?", (int(user_id),)
+                ).rowcount
             event = self._store.insert_audit_event(
                 db,
                 self._audit.build(
@@ -193,6 +203,7 @@ class MembershipService:
                     account_id=account_id,
                     member=int(user_id),
                     old_role=existing["role"],
+                    sessions_ended=sessions_ended,
                 ),
             )
         self._audit.log_stored(event)

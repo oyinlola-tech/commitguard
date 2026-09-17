@@ -267,6 +267,11 @@ class OrganizationSettingsService:
         reason_text = text(reason, "reason", limit=MAX_REASON_CHARS)
         now = self._now()
         current = self.get(account_id)
+        if current.version != expected_version:
+            raise ConflictError(
+                f"The settings were changed by someone else (now version {current.version}). "
+                "Reload before saving."
+            )
         merged: dict[str, Any] = {**current.settings.model_dump(mode="json"), **dict(changes)}
         try:
             updated = OrganizationSettings.model_validate(merged)

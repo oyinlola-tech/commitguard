@@ -1,6 +1,7 @@
 """Authentication, authorization, tenant isolation and IDOR protection."""
 
 import itertools
+import re
 
 import pytest
 
@@ -80,7 +81,10 @@ def test_unauthenticated_requests_are_rejected(dash, tenants) -> None:  # type: 
             .replace("{version:version}", "1")
             .replace("{notification_id:hex}", "0" * 32)
             .replace("{endpoint_id:hex}", "0" * 32)
+            .replace("{kind:ident}", "compliance")
+            .replace("{target_type:ident}", "organization")
         )
+        path = re.sub(r"\{[a-z_]+:hex\}", "0" * 32, path)
         result = anonymous.request(route.method, path, body={} if route.method != "GET" else None)
         assert result.status == 401, (route.template, result.raw)
         assert result.error["code"] == "UNAUTHENTICATED"
@@ -212,12 +216,19 @@ def test_every_permission_is_checked_somewhere() -> None:
 
     import commitguard
 
-    source = "\n".join(
-        p.read_text() for p in Path(commitguard.__file__).parent.joinpath("api").glob("*.py")
-    ) + "\n".join(
-        p.read_text()
-        for p in Path(commitguard.__file__).parent.joinpath("controlplane").glob("*.py")
-        if p.name != "access.py"
+    source = (
+        "\n".join(
+            p.read_text() for p in Path(commitguard.__file__).parent.joinpath("api").glob("*.py")
+        )
+        + "\n".join(
+            p.read_text()
+            for p in Path(commitguard.__file__).parent.joinpath("controlplane").glob("*.py")
+            if p.name != "access.py"
+        )
+        + "\n".join(
+            p.read_text()
+            for p in Path(commitguard.__file__).parent.joinpath("governance").glob("*.py")
+        )
     )
     for permission in Permission:
         assert f"Permission.{permission.name}" in source or f"p.{permission.name}" in source, (
@@ -273,7 +284,13 @@ def test_admin_changes_policy_and_it_is_audited(dash) -> None:  # type: ignore[n
     assert result.status == 200, result.raw
     assert result.data["version"] == 1
     assert result.meta["changes"] == [
-        {"policy_id": "bot_identity", "old": None, "new": "block", "weakening": False, "enforcement": "mandatory"}
+        {
+            "policy_id": "bot_identity",
+            "old": None,
+            "new": "block",
+            "weakening": False,
+            "enforcement": "mandatory",
+        }
     ]
     alice = dash.sign_in(ALICE)
     [event] = alice.get("/api/v1/audit", type="organization_policy_changed").data
@@ -303,8 +320,9 @@ def test_role_changes_apply_to_the_next_request(dash) -> None:  # type: ignore[n
     victor = dash.sign_in(VICTOR)
     assert victor.get("/api/v1/repositories").status == 200
     assert alice.delete(f"/api/v1/organizations/{ORG_A}/members/{VICTOR[0]}").status == 200
-    assert victor.get("/api/v1/repositories").status == 403
-    assert victor.get("/api/v1/auth/session").data["organizations"] == []
+    # Victor's last membership is gone: the same session is refused on the next request.
+    assert victor.get("/api/v1/repositories").status == 401
+    assert victor.get("/api/v1/auth/session").status == 401
     types = [e["type"] for e in alice.get("/api/v1/audit", limit=50).data]
     assert "member_removed" in types
 

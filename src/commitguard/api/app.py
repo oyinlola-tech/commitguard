@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import quote
 from wsgiref.types import StartResponse, WSGIEnvironment
 
+from commitguard.api.governance import GovernanceRoutes
 from commitguard.api.http import (
     API_SECURITY_HEADERS,
     MAX_BODY_BYTES,
@@ -45,7 +46,7 @@ from commitguard.api.settings import DashboardSettings, Environment
 from commitguard.audit.models import Actor, AuditEventType
 from commitguard.controlplane.access import Permission, Principal, Role
 from commitguard.controlplane.commands import ControlPlaneCommands
-from commitguard.controlplane.errors import ControlPlaneError
+from commitguard.controlplane.errors import ApprovalRequiredError, ControlPlaneError
 from commitguard.controlplane.identity import (
     SESSION_LIFETIME,
     AuthService,
@@ -71,6 +72,7 @@ from commitguard.controlplane.policies import (
     REAUTHENTICATION_WINDOW,
     OrganizationPolicyService,
     policy_changes,
+    validate_defaults,
     validate_floors,
 )
 from commitguard.controlplane.queries import (
@@ -97,6 +99,7 @@ from commitguard.controlplane.views import (
 )
 from commitguard.core.decision import Action
 from commitguard.core.result import Severity
+from commitguard.governance.service import GovernanceServices
 from commitguard.notifications.models import NotificationState
 from commitguard.observability.logging import correlation, get_logger
 from commitguard.policies.defaults import KNOWN_POLICY_IDS
@@ -173,6 +176,7 @@ class DashboardApi:
         policies: OrganizationPolicyService,
         members: MembershipService,
         notifications: NotificationCenter,
+        governance: GovernanceServices | None = None,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -183,6 +187,7 @@ class DashboardApi:
         self._policies = policies
         self._members = members
         self._notifications = notifications
+        self._governance = governance
         self._now = now
         self._limiters = {k: RequestRateLimiter(v, clock) for k, v in RATE_LIMITS.items()}
         self._routes = self._build_routes()
@@ -387,6 +392,15 @@ class DashboardApi:
         return OrganizationRef(
             id=organization_id, login=membership.account_login, type=membership.account_type
         )
+
+    @staticmethod
+    def _hex_arg(request: Request, name: str) -> str | None:
+        raw = request.arg(name)
+        if raw is None or raw == "":
+            return None
+        if len(raw) != 32 or any(ch not in "0123456789abcdef" for ch in raw):
+            raise bad_request(f"{name} must be a resource ID", name)
+        return raw
 
     @staticmethod
     def _bool(value: object, field: str) -> bool:
@@ -759,12 +773,21 @@ class DashboardApi:
         if reason is not None and (not isinstance(reason, str) or len(reason) > 500):
             raise bad_request("reason must be text of at most 500 characters", "reason")
         confirm = body.get("confirm_weakening", False)
+        if self._governance is not None:
+            settings = self._governance.settings.get(organization.id).settings
+            if settings.require_policy_approval:
+                raise ApprovalRequiredError(
+                    "This organization requires policy changes to be approved. Create a policy "
+                    "draft, submit it for approval, then publish it."
+                )
+        defaults = body.get("defaults")
         _, changes = self._policies.update(
             account_id=organization.id,
             actor=Actor.user(principal.user_id, principal.login),
             authenticated_at=principal.authenticated_at,
             expected_version=expected,
             floors=validate_floors(body.get("floors")),
+            defaults=validate_defaults(defaults) if defaults is not None else None,
             reason=reason,
             confirm_weakening=self._bool(confirm, "confirm_weakening"),
         )
@@ -872,6 +895,13 @@ class DashboardApi:
             start=parse_timestamp(request.arg("from"), "from"),
             end=parse_timestamp(request.arg("to"), "to"),
             sort=parse_choice(request.arg("sort"), {s: s for s in AUDIT_SORTS}, "sort") or "newest",
+            rule_id=parse_choice(request.arg("rule"), {r: r for r in KNOWN_POLICY_IDS}, "rule"),
+            exception_id=self._hex_arg(request, "exception"),
+            policy=(
+                "organization"
+                if request.arg("policy") == "organization"
+                else self._hex_arg(request, "policy")
+            ),
         )
         limit = parse_limit(request.arg("limit"))
         page = self._queries.list_audit(
@@ -1330,6 +1360,8 @@ class DashboardApi:
                 "read",
             ),
         ]
+        if self._governance is not None:
+            table.extend(GovernanceRoutes(self._governance).routes())
         routes = []
         for method, template, handler, permission, public, rate in table:
             full = API_PREFIX + template

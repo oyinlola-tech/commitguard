@@ -291,6 +291,49 @@ def test_control_plane_does_not_detect_or_evaluate_policy(package: str) -> None:
     assert offenders == []
 
 
+def test_governance_never_detects_and_only_simulation_evaluates() -> None:
+    """Governance decides which policy applies; the policy engine decides what it means.
+
+    Simulation re-evaluates recorded findings with the real policy evaluator (it must
+    not contain a second evaluator); nothing in governance runs detectors or scans.
+    """
+    offenders = []
+    for path in (PACKAGE_ROOT / "governance").rglob("*.py"):
+        module = _module_name(path)
+        for name in _imports(path):
+            if (
+                _matches(name, "commitguard.detectors")
+                or _matches(name, "commitguard.core.engine")
+                or _matches(name, "commitguard.services.analysis")
+            ):
+                offenders.append(f"{module} imports {name}")
+            if (
+                _matches(name, "commitguard.policies.evaluator")
+                and module != "commitguard.governance.simulation"
+            ):
+                offenders.append(f"{module} imports {name}")
+    assert offenders == []
+
+
+def test_governance_policies_do_not_execute_configuration() -> None:
+    """Policy documents, organization rules and settings are data: no eval, exec or imports."""
+    offenders = []
+    for package in ("governance", "policies"):
+        for path in (PACKAGE_ROOT / package).rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                called = (
+                    node.func.id
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    else None
+                )
+                if called in ("eval", "exec", "compile", "__import__"):
+                    offenders.append(f"{_module_name(path)} calls {called}")
+                if isinstance(node, ast.Attribute) and node.attr == "import_module":
+                    offenders.append(f"{_module_name(path)} uses importlib.import_module")
+    assert offenders == []
+
+
 def test_api_routes_contain_no_sql() -> None:
     """Routes call control plane services; SQL lives in the control plane and storage."""
     offenders = [

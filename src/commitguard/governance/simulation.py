@@ -36,6 +36,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -468,9 +469,7 @@ class PolicySimulationService:
             # The security baseline is a separate organization-level layer and stays.
             or layer.source_id == "baseline"
         )
-        return inputs.model_copy(
-            update={"layers": (*kept, draft) if draft is not None else kept}
-        )
+        return inputs.model_copy(update={"layers": (*kept, draft) if draft is not None else kept})
 
     def _scope(self, db: sqlite3.Connection, account_id: int, target: PolicyTarget) -> list[int]:
         repositories = sorted(account_repositories(db, account_id))
@@ -523,10 +522,11 @@ class PolicySimulationService:
         )
         impacts: list[RepositoryImpact] = []
         repositories_without_data = 0
+        repositories_analyzed = 0
         truncated = False
         for repository_id in scope:
             if totals["scans"] >= MAX_SCANS or totals["findings"] >= MAX_FINDINGS:
-                truncated = True
+                truncated = True  # the remaining repositories were not analyzed
                 break
             scans = self._store.query(
                 "SELECT j.job_id, j.repository_policies, j.group_key, j.sequence FROM scan_jobs j "
@@ -540,14 +540,23 @@ class PolicySimulationService:
             if not scans:
                 repositories_without_data += 1
                 continue
+            repositories_analyzed += 1
             current_inputs, draft_inputs = policy_sets[repository_id]
             impact = {"new_blocks": 0, "new_warnings": 0, "no_longer_blocked": 0, "scans": 0}
+            # Scans of one repository usually share a configuration: resolve each once.
+            policy_cache: dict[str | None, tuple[Any, Any, bool]] = {}
             for scan in scans:
-                configs, recorded = _config_from_overrides(scan["repository_policies"])
+                key = scan["repository_policies"]
+                if key not in policy_cache:
+                    configs, recorded = _config_from_overrides(key)
+                    policy_cache[key] = (
+                        resolve_policy(current_inputs, configs).policy_set(),
+                        resolve_policy(draft_inputs, configs).policy_set(),
+                        recorded,
+                    )
+                current_policy, draft_policy, recorded = policy_cache[key]
                 if not recorded:
                     totals["assumed"] += 1
-                current_policy = resolve_policy(current_inputs, configs).policy_set()
-                draft_policy = resolve_policy(draft_inputs, configs).policy_set()
                 findings = self._store.query(
                     "SELECT detector, rule_id, severity, confidence, title, message, "
                     "remediation, evidence, commit_sha FROM findings WHERE job_id = ? LIMIT 2000",
@@ -559,9 +568,7 @@ class PolicySimulationService:
                 totals["scans"] += 1
                 impact["scans"] += 1
                 totals["findings"] += len(rebuilt)
-                result = DetectionResult(
-                    commit_sha=None, detectors_run=(), findings=tuple(rebuilt)
-                )
+                result = DetectionResult(commit_sha=None, detectors_run=(), findings=tuple(rebuilt))
                 before = PolicyEvaluator(current_policy).evaluate(result)
                 after = PolicyEvaluator(draft_policy).evaluate(result)
                 for old, new in zip(before.explanations, after.explanations, strict=True):
@@ -592,10 +599,10 @@ class PolicySimulationService:
                     )
                 )
         impacts.sort(
-            key=lambda i: (i.new_blocks + i.new_warnings + i.no_longer_blocked), reverse=True
+            key=lambda i: i.new_blocks + i.new_warnings + i.no_longer_blocked, reverse=True
         )
         return SimulationResult(
-            repositories_analyzed=len(scope) - repositories_without_data,
+            repositories_analyzed=repositories_analyzed,
             repositories_without_data=repositories_without_data,
             scans_analyzed=totals["scans"],
             findings_analyzed=totals["findings"],

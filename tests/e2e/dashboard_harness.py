@@ -39,6 +39,7 @@ import sys
 import tempfile
 import threading
 from collections.abc import Callable, Iterable
+from datetime import timedelta
 from pathlib import Path
 from socketserver import ThreadingMixIn
 from typing import Any
@@ -58,6 +59,7 @@ from commitguard.api.settings import DashboardSettings, Environment  # noqa: E40
 from commitguard.audit.models import Actor, ActorType  # noqa: E402
 from commitguard.controlplane.access import Role  # noqa: E402
 from commitguard.controlplane.members import MembershipService  # noqa: E402
+from commitguard.controlplane.policies import ORGANIZATION_TARGET  # noqa: E402
 from commitguard.core.decision import Action  # noqa: E402
 from commitguard.github.app import GitHubAppService  # noqa: E402
 from commitguard.github.client import TransportError  # noqa: E402
@@ -464,6 +466,9 @@ class Stack:
             confirm=True,
         )
 
+        # Organization governance: groups, scoped policies, exceptions, rollout, schedule.
+        self.demo_governance()
+
         # The installation is suspended and reconnected.
         installation = self.github.installations[fake.INSTALLATION_ID]
         repositories = (PROJECT, WEB, DOCS)
@@ -482,6 +487,191 @@ class Stack:
         service.notifications.run_once()
         self.dashboard._auth.sign_out(alice)
         print(f"demo: blocked {blocked['head'][:12]}, fixed {fixed['head'][:12]}", flush=True)
+
+    # -- Phase 8: organization governance --------------------------------- #
+    def principal(self, user: tuple[int, str]) -> Any:
+        token, _ = self.sign_in(user[0])
+        principal = self.dashboard._auth.authenticate(token)
+        assert principal is not None
+        return principal
+
+    def seed_governance(self) -> dict[str, str]:
+        """Groups, scoped policies, exceptions, a schedule and a completed bulk operation.
+
+        Organization policy versions are left untouched so the Phase 6 and 7 browser
+        tests see the same versions as before.
+        """
+        governance = self.service.governance
+        alice = self.principal(OWNER)
+        production = governance.groups.create(
+            alice, ORG, name="Production", description="Customer-facing services"
+        )
+        documentation = governance.groups.create(
+            alice, ORG, name="Documentation", description="Handbooks and internal docs"
+        )
+        governance.groups.add_members(alice, production.id, [PROJECT.id, WEB.id])
+        bulk = governance.bulk.create(
+            alice,
+            ORG,
+            operation_type="add_to_group",
+            repository_ids=[DOCS.id],
+            parameters={"group_id": documentation.id},
+            idempotency_key="seed-documentation-group",
+            confirm=False,
+        )
+        governance.bulk.run_pending()
+        group_draft = governance.workflow.create(
+            alice,
+            ORG,
+            target_type="group",
+            target_id=production.id,
+            floors={"ai_coauthor": Action.BLOCK},
+            defaults={"bot_identity": Action.WARN},
+            title="Production baseline",
+            reason="Customer-facing services never accept AI co-authors",
+        )
+        governance.workflow.publish(alice, group_draft.id, confirm_weakening=False)
+        repository_draft = governance.workflow.create(
+            alice,
+            ORG,
+            target_type="repository",
+            target_id=DOCS.id,
+            floors={},
+            defaults={"bot_identity": Action.ALLOW},
+            title="Handbook automation",
+            reason="Documentation bots regenerate the handbook index",
+        )
+        governance.workflow.publish(alice, repository_draft.id, confirm_weakening=True)
+        pending = governance.workflow.create(
+            alice,
+            ORG,
+            target_type="organization",
+            target_id=None,
+            floors={"ai_coauthor": Action.BLOCK, "ai_trailer": Action.BLOCK},
+            defaults={},
+            title="Block AI attribution trailers everywhere",
+            reason="Generated-by trailers are attribution too",
+        )
+        governance.workflow.submit(alice, pending.id)
+        now = self.dashboard._now()
+        exception = governance.exceptions.request(
+            alice,
+            ORG,
+            rule_id="malformed_trailer",
+            scope_type="repository",
+            scope_id=DOCS.id,
+            action="allow",
+            reason="The handbook generator writes non-standard trailers",
+            expires_at=(now + timedelta(days=21)).isoformat(),
+        )
+        requested = governance.exceptions.request(
+            alice,
+            ORG,
+            rule_id="ai_coauthor",
+            scope_type="repository",
+            scope_id=WEB.id,
+            action="warn",
+            reason="Migrating legacy history imported from the old monorepo",
+            expires_at=(now + timedelta(days=10)).isoformat(),
+        )
+        schedule = governance.schedules.create(
+            alice,
+            ORG,
+            {
+                "name": "Production nightly",
+                "target_type": "group",
+                "target_id": production.id,
+                "cadence": "daily",
+                "hour": 2,
+                "minute": 0,
+                "timezone": "UTC",
+            },
+        )
+        governance.resolver.propagate()
+        governance.posture.snapshot_metrics()
+        self.dashboard._auth.sign_out(alice)
+        return {
+            "production": production.id,
+            "documentation": documentation.id,
+            "bulk": bulk.id,
+            "draft": pending.id,
+            "exception": exception.id,
+            "requested_exception": requested.id,
+            "schedule": schedule.id,
+        }
+
+    def demo_governance(self) -> None:
+        """Phase 8 on top of the demo: approvals, a staged rollout, a simulation."""
+        governance = self.service.governance
+        ids = self.seed_governance()
+        alice, ada, sam = self.principal(OWNER), self.principal(ADMIN), self.principal(SECURITY)
+        governance.exceptions.approve(
+            ada, ids["requested_exception"], "until the import is cleaned"
+        )
+        governance.exceptions.request(
+            sam,
+            ORG,
+            rule_id="bot_identity",
+            scope_type="group",
+            scope_id=ids["documentation"],
+            action="allow",
+            reason="Handbook bots commit directly",
+            expires_at=(self.dashboard._now() + timedelta(days=30)).isoformat(),
+        )
+        governance.simulations.create(
+            ada,
+            ORG,
+            target=ORGANIZATION_TARGET,
+            document='{"ai_coauthor":"block","ai_trailer":"block"}',
+            draft_id=ids["draft"],
+            period_days=30,
+        )
+        governance.simulations.run_pending()
+        rollout_draft = governance.workflow.create(
+            ada,
+            ORG,
+            target_type="organization",
+            target_id=None,
+            floors={"ai_coauthor": Action.BLOCK, "ai_identity": Action.BLOCK},
+            defaults={},
+            title="AI identities as authors",
+            reason="Commits authored by AI agents are blocked, not only co-authors",
+        )
+        current = governance.policies.current(ORG).version
+        if current != rollout_draft.base_version:  # pragma: no cover - defensive
+            return
+        governance.workflow.publish(
+            ada,
+            rollout_draft.id,
+            confirm_weakening=False,
+            rollout=governance.rollouts.creator(
+                ada,
+                stages=[
+                    {"name": "Pilot", "kind": "repositories", "repositories": [PROJECT.id]},
+                    {"name": "Half", "kind": "percent", "percent": 50},
+                    {"name": "All repositories", "kind": "percent", "percent": 100},
+                ],
+                thresholds=None,
+                auto_pause=True,
+                auto_rollback=False,
+            ),
+        )
+        settings = governance.settings.get(ORG)
+        governance.settings.update(
+            alice,
+            ORG,
+            expected_version=settings.version,
+            changes={
+                "security_baseline": {"ai_identity": "block"},
+                "require_policy_approval": True,
+            },
+            reason="Baseline agreed by the security team",
+            confirm=False,
+        )
+        governance.resolver.propagate()
+        governance.posture.snapshot_metrics()
+        for principal in (alice, ada, sam):
+            self.dashboard._auth.sign_out(principal)
 
     def demo_sign_in(
         self, environ: WSGIEnvironment, start_response: StartResponse
@@ -570,6 +760,7 @@ def main() -> None:
         stack.demo()
     elif args.seed:
         stack.seed()
+        stack.seed_governance()
     stack.service.start()
     server = make_server(
         "127.0.0.1", args.port, stack.wsgi, server_class=_Server, handler_class=_Quiet

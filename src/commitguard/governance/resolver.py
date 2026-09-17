@@ -206,7 +206,10 @@ class GovernanceResolver:
     # -- invalidation hooks ----------------------------------------------- #
     def on_policy_published(self, db: sqlite3.Connection, published: PublishedPolicy) -> None:
         invalidate_scope(
-            db, published.account_id, published.target.type.value, published.target.id,
+            db,
+            published.account_id,
+            published.target.type.value,
+            published.target.id,
             published.now,
         )
 
@@ -534,8 +537,11 @@ class GovernanceResolver:
             counts[state] += 1
             if state == "error" and repository_id in visible and len(failing) < 50:
                 failing.append(
-                    {"repository_id": repository_id, "full_name": repository.full_name,
-                     "error": error}
+                    {
+                        "repository_id": repository_id,
+                        "full_name": repository.full_name,
+                        "error": error,
+                    }
                 )
         return PropagationStatus(
             organization_id=account_id,
@@ -612,9 +618,7 @@ class GovernanceResolver:
         )
 
 
-def scan_governance_record(
-    resolved: ResolvedGovernance, effective: EffectivePolicy | None
-) -> str:
+def scan_governance_record(resolved: ResolvedGovernance, effective: EffectivePolicy | None) -> str:
     """The governance record stored with a completed scan (immutable history)."""
     return json.dumps(
         {

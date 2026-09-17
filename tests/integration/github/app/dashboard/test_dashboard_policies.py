@@ -98,7 +98,13 @@ def test_weakening_needs_confirmation_reason_and_recent_sign_in(dash, clock) -> 
     preview = alice.post(f"/api/v1/policies/{ORG}/preview", {"floors": {"bot_identity": "warn"}})
     assert preview.data["weakening"] is True
     assert preview.data["changes"] == [
-        {"policy_id": "ai_coauthor", "old": "block", "new": None, "weakening": True, "enforcement": "mandatory"}
+        {
+            "policy_id": "ai_coauthor",
+            "old": "block",
+            "new": None,
+            "weakening": True,
+            "enforcement": "mandatory",
+        }
     ]
 
     unconfirmed = _save(alice, 1, {"bot_identity": "warn"}, reason="migration")
@@ -116,8 +122,20 @@ def test_weakening_needs_confirmation_reason_and_recent_sign_in(dash, clock) -> 
     weakened = _save(alice, 2, {"bot_identity": "warn"}, confirm_weakening=True, reason="migration")
     assert weakened.status == 200, weakened.raw
     assert weakened.meta["changes"] == [
-        {"policy_id": "ai_coauthor", "old": "block", "new": None, "weakening": True, "enforcement": "mandatory"},
-        {"policy_id": "bot_identity", "old": "block", "new": "warn", "weakening": True, "enforcement": "mandatory"},
+        {
+            "policy_id": "ai_coauthor",
+            "old": "block",
+            "new": None,
+            "weakening": True,
+            "enforcement": "mandatory",
+        },
+        {
+            "policy_id": "bot_identity",
+            "old": "block",
+            "new": "warn",
+            "weakening": True,
+            "enforcement": "mandatory",
+        },
     ]
     [event] = alice.get("/api/v1/audit", type="organization_policy_changed", limit=1).data
     assert event["data"]["weakening"] is True

@@ -138,21 +138,15 @@ class PolicyDraftView(BaseModel):
     can_publish: bool
 
 
-def parse_target(
-    target_type: object, target_id: object
-) -> PolicyTarget:
-    if not isinstance(target_type, str) or target_type not in {
-        t.value for t in PolicyTargetType
-    }:
+def parse_target(target_type: object, target_id: object) -> PolicyTarget:
+    if not isinstance(target_type, str) or target_type not in {t.value for t in PolicyTargetType}:
         raise InputValidationError(
             "target_type must be organization, group or repository", field="target_type"
         )
     kind = PolicyTargetType(target_type)
     if kind is PolicyTargetType.ORGANIZATION:
         if target_id not in (None, ""):
-            raise InputValidationError(
-                "an organization policy has no target_id", field="target_id"
-            )
+            raise InputValidationError("an organization policy has no target_id", field="target_id")
         return ORGANIZATION_TARGET
     if kind is PolicyTargetType.GROUP:
         if not is_hex_id(target_id):
@@ -178,9 +172,7 @@ def parse_rules(body: Mapping[str, Any]) -> tuple[dict[str, Action], dict[str, A
             field="defaults",
         )
     if not floors and not defaults:
-        raise InputValidationError(
-            "a policy must set at least one rule", field="floors"
-        )
+        raise InputValidationError("a policy must set at least one rule", field="floors")
     return floors, defaults
 
 
@@ -238,6 +230,10 @@ class PolicyWorkflowService:
             raise PermissionDeniedError()
         return row
 
+    def authorize(self, principal: Principal, draft_id: str, permission: Permission) -> int:
+        """The draft's organization after checking ``permission`` (404 across tenants)."""
+        return int(self._authorized_draft(principal, draft_id, permission)["account_id"])
+
     def _view(self, row: sqlite3.Row, principal: Principal) -> PolicyDraftView:
         account_id = int(row["account_id"])
         target = self._target_of(row)
@@ -245,8 +241,12 @@ class PolicyWorkflowService:
         current = self._policies.current(account_id, target)
         changes = policy_changes(current.floors, floors, current.defaults, defaults)
         diff = policy_diff(
-            current.version, current.floors, current.version + 1, floors,
-            current.defaults, defaults,
+            current.version,
+            current.floors,
+            current.version + 1,
+            floors,
+            current.defaults,
+            defaults,
         )
         settings = load_settings(self._store, account_id).settings
         state = str(row["state"])
@@ -459,9 +459,7 @@ class PolicyWorkflowService:
                 ),
             ).rowcount
             if changed != 1:
-                raise ConflictError(
-                    "The draft was changed by someone else. Reload before editing."
-                )
+                raise ConflictError("The draft was changed by someone else. Reload before editing.")
             # An edited draft loses its approval: what was approved is no longer what would
             # be published.
             db.execute(

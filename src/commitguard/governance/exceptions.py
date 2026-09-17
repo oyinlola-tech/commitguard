@@ -439,6 +439,11 @@ class PolicyExceptionService:
                 ),
             )
             label = scope_label(db, account_id, scope.value, clean_scope_id) or clean_scope_id
+            repository = (
+                account_repositories(db, account_id).get(int(clean_scope_id))
+                if scope is ExceptionScope.REPOSITORY
+                else None
+            )
             stored.append(
                 self._store.insert_audit_event(
                     db,
@@ -446,9 +451,11 @@ class PolicyExceptionService:
                         AuditEventType.EXCEPTION_REQUESTED,
                         actor=actor,
                         account_id=account_id,
-                        repository_id=int(clean_scope_id)
-                        if scope is ExceptionScope.REPOSITORY
-                        else None,
+                        # Repository events carry the installation too: audit visibility is
+                        # scoped by (installation, repository) per session.
+                        installation_id=repository.installation_id if repository else None,
+                        repository_id=repository.repository_id if repository else None,
+                        repository=repository.full_name if repository else None,
                         exception=exception_id,
                         rule=rule_id,
                         scope=scope.value,

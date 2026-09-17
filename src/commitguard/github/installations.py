@@ -421,6 +421,72 @@ class InstallationService:
         existing = self._store.get_installation(installation_id)
         if existing is None or existing.state is InstallationState.DELETED:
             raise AuthorizationError("GitHub App installation removed")
+        self._sync_status(installation_id, existing.account_id, "syncing")
+        try:
+            result = self._sync_repositories(installation_id, existing, actor)
+        except Exception as exc:
+            self._sync_status(
+                installation_id,
+                existing.account_id,
+                "failed",
+                error=f"synchronisation failed ({type(exc).__name__})",
+            )
+            raise
+        self._sync_status(
+            installation_id,
+            existing.account_id,
+            "healthy",
+            repositories=len(result.repositories),
+            added=len(result.added),
+            removed=len(result.removed),
+        )
+        return result
+
+    def _sync_status(
+        self,
+        installation_id: int,
+        account_id: int,
+        state: str,
+        *,
+        error: str | None = None,
+        repositories: int | None = None,
+        added: int | None = None,
+        removed: int | None = None,
+    ) -> None:
+        """Record synchronisation health (separate from "connected")."""
+        now = self._now().timestamp()
+        with self._store.transaction() as db:
+            db.execute(
+                "INSERT INTO installation_sync_status (installation_id, account_id, state, "
+                "started_at, completed_at, last_success_at, repositories, added, removed, error, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (installation_id) DO UPDATE SET state = excluded.state, "
+                "started_at = COALESCE(excluded.started_at, installation_sync_status.started_at), "
+                "completed_at = COALESCE(excluded.completed_at, "
+                "installation_sync_status.completed_at), last_success_at = "
+                "COALESCE(excluded.last_success_at, installation_sync_status.last_success_at), "
+                "repositories = COALESCE(excluded.repositories, "
+                "installation_sync_status.repositories), added = excluded.added, "
+                "removed = excluded.removed, error = excluded.error, "
+                "updated_at = excluded.updated_at",
+                (
+                    installation_id,
+                    account_id,
+                    state,
+                    now if state == "syncing" else None,
+                    now if state != "syncing" else None,
+                    now if state == "healthy" else None,
+                    repositories,
+                    added,
+                    removed,
+                    error,
+                    now,
+                ),
+            )
+
+    def _sync_repositories(
+        self, installation_id: int, existing: InstallationRecord, actor: Actor
+    ) -> RepositorySync:
         info = self._fetch_installation(installation_id)
         if info.account.id != existing.account_id:
             raise AuthorizationError("installation account mismatch")

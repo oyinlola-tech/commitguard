@@ -232,6 +232,10 @@ class AuditFilters:
     start: datetime | None = None
     end: datetime | None = None
     sort: str = "newest"
+    rule_id: str | None = None  # events about one rule (exceptions, violations)
+    exception_id: str | None = None
+    #: "organization" (organization policy events) or a draft, group or rollout ID.
+    policy: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -1342,6 +1346,31 @@ class DashboardQueries:
             where.add("a.occurred_at >= ?", filters.start.timestamp())
         if filters.end is not None:
             where.add("a.occurred_at < ?", filters.end.timestamp())
+        if filters.rule_id is not None:
+            where.add(
+                "(json_extract(a.document, '$.data.rule') = ? OR "
+                "json_extract(a.document, '$.data.rules') = ?)",
+                filters.rule_id,
+                filters.rule_id,
+            )
+        if filters.exception_id is not None:
+            where.add("json_extract(a.document, '$.data.exception') = ?", filters.exception_id)
+        if filters.policy == "organization":
+            where.add(
+                "a.type IN ('organization_policy_changed', 'organization_policy_rolled_back', "
+                "'policy_emergency_published', 'organization_settings_changed')"
+            )
+        elif filters.policy is not None:
+            where.add(
+                "(json_extract(a.document, '$.data.draft') = ? OR "
+                "json_extract(a.document, '$.data.target_id') = ? OR "
+                "json_extract(a.document, '$.data.group') = ? OR "
+                "json_extract(a.document, '$.data.rollout') = ?)",
+                filters.policy,
+                filters.policy,
+                filters.policy,
+                filters.policy,
+            )
         newest = filters.sort != "oldest"
         # Ties on the timestamp are broken by insertion order (rowid), so events
         # recorded in one transaction keep their order.

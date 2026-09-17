@@ -31,12 +31,16 @@ from commitguard.controlplane.policies import REAUTHENTICATION_WINDOW
 from commitguard.controlplane.queries import DashboardQueries
 from commitguard.controlplane.results import clean_text
 from commitguard.controlplane.views import SyncResult
+from commitguard.core.result import Severity
 from commitguard.exceptions.base import CommitGuardError
 from commitguard.github.enforcement_status import EnforcementProbe
 from commitguard.github.errors import AuthorizationError, GitHubAPIError
 from commitguard.github.identifiers import RepositoryRef
 from commitguard.github.installations import InstallationService
 from commitguard.github.storage import ScanTrigger, SqliteStateStore
+from commitguard.notifications.deduplication import domain_key
+from commitguard.notifications.models import NotificationEvent, NotificationType
+from commitguard.notifications.outbox import account_for_installation, emit
 from commitguard.observability.logging import get_logger
 from commitguard.services.audit import AuditService
 

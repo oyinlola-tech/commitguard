@@ -165,6 +165,7 @@ def build_dashboard(
         notifications=NotificationCenter(
             store, service.audit, service.notifications.settings, now=now
         ),
+        governance=service.governance,
         now=now,
     )
 

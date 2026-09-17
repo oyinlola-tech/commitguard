@@ -385,7 +385,10 @@ class ScanScheduleService:
         name = text(body.get("name"), "name", limit=MAX_NAME_CHARS, required=True)
         timezone = body.get("timezone") or load_settings(self._store, account_id).settings.timezone
         cadence, hour, minute, weekday, zone = _schedule_fields(
-            body.get("cadence"), body.get("hour"), body.get("minute", 0), body.get("weekday"),
+            body.get("cadence"),
+            body.get("hour"),
+            body.get("minute", 0),
+            body.get("weekday"),
             timezone,
         )
         enabled = body.get("enabled", True)
@@ -408,9 +411,22 @@ class ScanScheduleService:
                 "created_by_login, updated_at, updated_by_login) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    schedule_id, account_id, target.type.value, target.id, name, cadence, hour,
-                    minute, weekday, zone, 1 if enabled else 0, ts(next_run), ts(now),
-                    principal.login, ts(now), principal.login,
+                    schedule_id,
+                    account_id,
+                    target.type.value,
+                    target.id,
+                    name,
+                    cadence,
+                    hour,
+                    minute,
+                    weekday,
+                    zone,
+                    1 if enabled else 0,
+                    ts(next_run),
+                    ts(now),
+                    principal.login,
+                    ts(now),
+                    principal.login,
                 ),
             )
             stored = self._store.insert_audit_event(
@@ -465,8 +481,18 @@ class ScanScheduleService:
                 "weekday = ?, timezone = ?, enabled = ?, next_run_at = ?, revision = revision + 1, "
                 "updated_at = ?, updated_by_login = ? WHERE schedule_id = ? AND revision = ?",
                 (
-                    name, cadence, hour, minute, weekday, zone, 1 if enabled else 0,
-                    ts(next_run), ts(now), principal.login, schedule_id, expected,
+                    name,
+                    cadence,
+                    hour,
+                    minute,
+                    weekday,
+                    zone,
+                    1 if enabled else 0,
+                    ts(next_run),
+                    ts(now),
+                    principal.login,
+                    schedule_id,
+                    expected,
                 ),
             ).rowcount
             if changed != 1:
@@ -523,8 +549,14 @@ class ScanScheduleService:
                     "INSERT OR IGNORE INTO scan_schedule_runs (run_id, schedule_id, account_id, "
                     "slot, state, started_at, repositories, detail) "
                     "VALUES (?, ?, ?, ?, 'running', ?, ?, '{}')",
-                    (new_id(), row["schedule_id"], row["account_id"], slot, ts(now),
-                     len(repositories)),
+                    (
+                        new_id(),
+                        row["schedule_id"],
+                        row["account_id"],
+                        slot,
+                        ts(now),
+                        len(repositories),
+                    ),
                 )
                 started += cursor.rowcount
         processed = self._process_runs()
@@ -596,9 +628,14 @@ class ScanScheduleService:
                     "failed = ?, "
                     "detail = ?, state = ?, completed_at = ? WHERE run_id = ?",
                     (
-                        position, counts["queued"], counts["skipped"], counts["failed"],
-                        json.dumps(detail, sort_keys=True), state,
-                        ts(self._now()) if finished else None, run["run_id"],
+                        position,
+                        counts["queued"],
+                        counts["skipped"],
+                        counts["failed"],
+                        json.dumps(detail, sort_keys=True),
+                        state,
+                        ts(self._now()) if finished else None,
+                        run["run_id"],
                     ),
                 )
                 if finished:

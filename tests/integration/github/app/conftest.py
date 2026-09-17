@@ -103,6 +103,8 @@ class FakeGitHub:
         self.branches: dict[int, dict[str, Any]] = {}
         self.rulesets: dict[int, list[dict[str, Any]]] = {}
         self.workflows: dict[int, dict[str, str]] = {}
+        # branch head commits per repository ID (scheduled scans read them)
+        self.branch_heads: dict[int, str] = {}
 
     # -- test controls --------------------------------------------------- #
     def add_installation(
@@ -451,9 +453,10 @@ class FakeGitHub:
         if repository is None or self._repo_for_token(credential, repository.id) is None:
             return _json(404, {"message": "Not Found"})
         if kind == "branches":
-            branch = self.branches.get(repository.id)
-            if branch is None:
-                return _json(200, {"name": unquote(rest), "protected": False})
+            branch = dict(self.branches.get(repository.id) or {"protected": False})
+            head = self.branch_heads.get(repository.id)
+            if head is not None:
+                branch["commit"] = {"sha": head}
             return _json(200, {"name": unquote(rest), **branch})
         if kind == "rules/branches":
             return _json(200, self.rulesets.get(repository.id, []))

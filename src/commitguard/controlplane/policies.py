@@ -710,6 +710,18 @@ class OrganizationPolicyService:
             can_write=can_write,
         )
 
+    def repository_targets(self, account_id: int) -> list[int]:
+        """Repositories of the account that have a dashboard repository policy."""
+        return [
+            int(r["target_id"])
+            for r in self._store.query(
+                "SELECT DISTINCT target_id FROM scoped_policy_versions WHERE account_id = ? "
+                "AND target_type = 'repository'",
+                (int(account_id),),
+            )
+            if str(r["target_id"]).isdigit()
+        ]
+
     def target_label(self, account_id: int, target: PolicyTarget) -> str | None:
         with self._store.transaction() as db:
             return target_label(db, account_id, target)

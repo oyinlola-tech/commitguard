@@ -251,9 +251,7 @@ class OrganizationRuleService:
         version, document, fingerprint = self.current(account_id)
         if version == 0 or not (document.ai_identities or document.bot_identities):
             return None, rules_version_label(0)
-        return _compiled_for(fingerprint or "", document.canonical()), rules_version_label(
-            version
-        )
+        return _compiled_for(fingerprint or "", document.canonical()), rules_version_label(version)
 
     def view(self, principal: Principal, account_id: int) -> OrganizationRulesView:
         require(principal, Permission.RULES_READ, account_id)

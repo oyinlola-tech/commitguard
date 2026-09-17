@@ -36,7 +36,7 @@ merges; switching to ``monitor`` stops blocking and also needs a reason.
 
 import json
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -141,9 +141,7 @@ class RepositoryInventory:
             onboarded: list[int] = []
             excluded: list[int] = []
             for repository in repositories:
-                onboarding = (
-                    "onboarded" if settings.auto_onboard_new_repositories else "discovered"
-                )
+                onboarding = "onboarded" if settings.auto_onboard_new_repositories else "discovered"
                 info = known.get(repository.id)
                 exclude_archived = settings.archived_repositories == "exclude"
                 if info is not None and info.archived and exclude_archived:
@@ -303,10 +301,12 @@ class RepositoryInventory:
         actor: Actor,
         onboard: bool,
         reason: str | None = None,
+        known: Collection[int] | None = None,
     ) -> tuple[list[int], list[AuditEvent]]:
         """Onboard and/or set the mode inside a caller's transaction (bulk operations too)."""
         now = self._now()
-        known = account_repositories(db, account_id)
+        if known is None:
+            known = account_repositories(db, account_id).keys()
         changed_mode: list[int] = []
         newly_onboarded: list[int] = []
         for repository_id in repository_ids:

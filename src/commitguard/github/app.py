@@ -161,7 +161,15 @@ class GitHubAppService:
         )
         self.recorder = ScanResultRecorder(store, self.audit, now=now)
         # Organization governance: groups, onboarding, exceptions, effective policy per repository.
-        self.governance = GovernanceServices(store, self.audit, self.policies, now=now)
+        self.governance = GovernanceServices(
+            store,
+            self.audit,
+            self.policies,
+            installations=self.installations,
+            client=client,
+            enqueue=self.queue.put,
+            now=now,
+        )
         self.installations.add_discovery_listener(self._repositories_discovered)
         self.worker = ScanWorker(
             store=store,

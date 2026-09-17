@@ -322,10 +322,14 @@ class PolicyRolloutService:
         if stage["kind"] == "repositories":
             wanted = [r for r in stage["repositories"] if r in set(scope) and r not in already]
         else:
+            # Cumulative: after this stage, ``percent`` of the scope is enrolled (earlier
+            # explicit pilot repositories count towards it).
             share = int(stage["percent"])
             ordered = sorted(scope, key=lambda r: _order_key(rollout_id, r))
             target_count = max(1, (len(ordered) * share + 99) // 100)
-            wanted = [r for r in ordered[:target_count] if r not in already]
+            enrolled_in_scope = len(already & set(scope))
+            remaining = [r for r in ordered if r not in already]
+            wanted = remaining[: max(0, target_count - enrolled_in_scope)]
         for repository_id in wanted:
             db.execute(
                 "INSERT OR IGNORE INTO policy_rollout_repositories (rollout_id, repository_id, "
@@ -444,9 +448,10 @@ class PolicyRolloutService:
             except (ValueError, TypeError):
                 continue
             versions = document.get("versions", {})
-            if versions.get("organization_policy") == version or version in (
-                versions.get("groups") or {}
-            ).values():
+            if (
+                versions.get("organization_policy") == version
+                or version in (versions.get("groups") or {}).values()
+            ):
                 count += 1
         return count
 
