@@ -6,7 +6,7 @@
     "analyzer: AI co-author appended to arbitrary text": 300,
     "analyzer: determinism": 150,
     "analyzer: disguised AI co-author trailer": 300,
-    "analyzer: human trailers with list prefixes": 300,
+    "analyzer: human trailers with list prefixes": 303,
     "analyzer: mandatory floor decisions": 300,
     "controlplane.pagination": 300,
     "encode_cursor/decode_cursor": 300,
@@ -28,5 +28,5 @@
     "split_full_name": 300,
     "verify_signature": 300
   },
-  "total_executed": 7476
+  "total_executed": 7479
 }

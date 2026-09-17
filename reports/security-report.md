@@ -1,6 +1,6 @@
 # CommitGuard security report
 
-Generated 2026-09-17T20:24:22.154855+00:00 for CommitGuard 0.1.0.dev0.
+Generated 2026-09-17T21:23:37.968817+00:00 for CommitGuard 0.1.0.dev0.
 
 Every row is labelled: **Measured** (a number from a recorded benchmark run),
 **Tested** (an automated test asserts it), **Observed** (an experiment recorded what
@@ -10,7 +10,7 @@ or **Not tested**. Nothing in this report is estimated.
 ## Environment of the latest runs
 
 - Detection: Linux 7.1.5+kali-amd64 (x86_64), Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz, 8 CPUs, Python 3.13.15, Git 2.53.0
-- Source revision: `a89d5915fd34352bcc3568049ebc6826de2cfb2e` (dirty: True)
+- Source revision: `f680f18797c82a4ca7e98c94f110a982e98d6f67` (dirty: True)
 
 ## Detection
 
@@ -20,15 +20,15 @@ or **Not tested**. Nothing in this report is estimated.
 | False positives | Measured | 0 of 5465 clean cases |
 | Precision / recall | Measured | 100.000% / 100.000% |
 | False positive rate / false negative rate | Measured | 0.000% / 0.000% |
-| Detection latency per commit | Measured | p50 0.2215 ms, p95 0.4383 ms, p99 0.6728 ms |
+| Detection latency per commit | Measured | p50 0.1885 ms, p95 0.3949 ms, p99 0.7847 ms |
 
 ## Performance
 
 | Statement | Label | Evidence |
 |---|---|---|
-| Throughput | Measured | 6900.8 commits/s on 10000 commits (p50 0.1162 ms per commit) |
-| Large commit messages | Measured | 10,485,736 byte message: p50 751.804 ms |
-| Peak memory | Measured | 82.0 MiB for the whole run |
+| Throughput | Measured | 7592.2 commits/s on 10000 commits (p50 0.1027 ms per commit) |
+| Large commit messages | Measured | 10,485,736 byte message: p50 592.200 ms |
+| Peak memory | Measured | 83.1 MiB for the whole run |
 | Repository history scanning | Measured | 100000 commits in 43.9 s (2279 commits/s); 5000 of 5000 seeded violations found |
 | Hook overhead: git commit (clean) | Measured | +947 ms (6.2 -> 953.0 ms, median of 20 runs) |
 | Hook overhead: git push (clean, one commit) | Measured | +455 ms (17.1 -> 471.9 ms, median of 20 runs) |
@@ -52,10 +52,10 @@ or **Not tested**. Nothing in this report is estimated.
 
 | Area | Attack | Outcome | Observed | Mitigation |
 |---|---|---|---|---|
-| GitHub Actions | A pull request removes or neuters the CommitGuard workflow so no check runs | **prevented** | no check conclusion for c61279998f75; modelled gate allows merge: False | Require the check in branch protection or a ruleset; prefer the GitHub App, which runs outside the repository |
+| GitHub Actions | A pull request removes or neuters the CommitGuard workflow so no check runs | **prevented** | no check conclusion for 13196fdab6ea; modelled gate allows merge: False | Require the check in branch protection or a ruleset; prefer the GitHub App, which runs outside the repository |
 | GitHub App events | Redeliver an old webhook (same delivery ID), then deliver the old event again under a new delivery ID after a newer commit was scanned | **prevented** | replay response {'status': 'duplicate'}; late event response {'status': 'duplicate'}; newest commit check still failure; old commit job states ['passed'] | Delivery records with payload digests; check ownership per repository, SHA and check name; newest-scan-wins |
 | GitHub App webhooks | Deliver a pull_request webhook signed with a wrong secret, a correctly signed body altered after signing, and an unsigned body | **prevented** | HTTP 401 (wrong secret), 401 (altered body), 401 (unsigned), reasons ["{'error': 'invalid webhook signature'}", "{'error': 'invalid webhook signature'}", "{'error': 'missing webhook signature'}"]; scans processed 0; check runs before the control 0; correctly signed control: {'status': 'queued'} | HMAC-SHA256 signature verified in constant time over the raw body |
-| GitHub checks | Re-run the passing check of an outdated commit after a violating commit was pushed; queue a pull request whose own head passed while an AI-attributed change is queued ahead of it | **prevented** | stale re-run response {'status': 'ignored'}; newest pull request check failure; pull request head check success; merge group 268db8c11243 check failure | Re-runs only for the newest commit of a pull request or branch; merge_group events scan base..merge-group SHA |
+| GitHub checks | Re-run the passing check of an outdated commit after a violating commit was pushed; queue a pull request whose own head passed while an AI-attributed change is queued ahead of it | **prevented** | stale re-run response {'status': 'ignored'}; newest pull request check failure; pull request head check success; merge group 96bce542fa73 check failure | Re-runs only for the newest commit of a pull request or branch; merge_group events scan base..merge-group SHA |
 | GitHub integration | The GitHub App installation is suspended, then a pull request is opened | **detected** | installation state suspended; scans processed 0; checks []; audit contains installation_suspended: True; notification installation_disconnected: True | Installation lifecycle events, critical notification, AT RISK posture |
 | central policy | The repository's merged (trusted) .commitguard.yaml disables ai_coauthor | **prevented** | without mandatory policy: success; with mandatory policy: failure | Mandatory policy floors (service policy, Phase 8 organization/group mandatory entries) |
 | local hooks | Delete the pre-commit, commit-msg and pre-push hook files, then commit and push | **detected** | commit exit 0 (allowed); doctor exit 2, reports missing hooks: True; pull request check exit 1 (BLOCK) | commitguard doctor; server-side required check |
@@ -68,8 +68,8 @@ or **Not tested**. Nothing in this report is estimated.
 
 ## Fuzzing and ReDoS
 
-- **Tested**: 7476 property-based examples across 25 properties (derandomized).
-- **Measured**: 33 regular expressions run against 70 adversarial inputs of 50000 characters; worst case 133.9 ms (budget 500 ms).
+- **Tested**: 7479 property-based examples across 25 properties (derandomized).
+- **Measured**: 33 regular expressions run against 70 adversarial inputs of 50000 characters; worst case 118.9 ms (budget 500 ms).
 
 ## Recorded runs
 
@@ -77,9 +77,9 @@ Results are immutable: a new run is a new file, and earlier results are kept.
 
 | Benchmark | Runs |
 |---|---|
-| detection | 13 |
+| detection | 14 |
 | hooks | 1 |
-| performance | 2 |
+| performance | 3 |
 | platform | 1 |
 | repository | 1 |
 

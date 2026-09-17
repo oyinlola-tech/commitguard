@@ -364,10 +364,10 @@ tampering experiments, webhook and GitHub integration security, dashboard
 authorization and tenant isolation). It is declared in `pyproject.toml`, and
 `--strict-markers` is on. Notes:
 
-- `SECURITY_TEST_PATHS` lists `tests/security`, which does not exist yet.
-- The `tests/conftest.py` docstring and the marker description mention
-  `commitguard test security` and `commitguard benchmark security`; neither
-  command exists in the CLI today. Use `pytest -m security`.
+- `SECURITY_TEST_PATHS` lists `tests/security`: fuzzing, ReDoS and invariant tests.
+- `pytest -m security` runs the marked suite (350 tests). `commitguard reproduce
+  security --evidence-dir <dir>` runs the same suite and writes the experiment,
+  fuzzing and ReDoS evidence that `commitguard report security` reads.
 - Some security-relevant tests are not in the marker set, for example
   `tests/integration/github/app/dashboard/test_governance_workflow.py`
   (separation of duties), `tests/unit/test_architecture.py`,

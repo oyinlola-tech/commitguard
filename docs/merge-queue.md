@@ -88,7 +88,7 @@ through the queue:
    requests and merge groups.
 4. Refresh the repository's enforcement status in the dashboard.
 
-`commitguard github doctor` warns when the App lacks the permission or the
+`commitguard github validate` warns when the App lacks the permission or the
 `merge_group` subscription. Without them, merge groups are simply not scanned
 and the queue waits for (then times out on) the required check.
 

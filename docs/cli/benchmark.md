@@ -31,11 +31,33 @@ manifest: CommitGuard, Python and Git versions, the source revision (and whether
 the tree was dirty), OS, CPU, memory, rule and policy fingerprints, the dataset
 version and fingerprint, and the command.
 
+## `commitguard benchmark compare`
+
+```text
+commitguard benchmark compare [--results DIR] [--benchmark NAME] [--baseline FILE] [--current FILE] [--json]
+```
+
+Compares a result with an earlier one (by default the two most recent runs of that
+benchmark) using documented thresholds:
+
+| Kind of change | Counts as a regression |
+|---|---|
+| Correctness (false negatives, false positives, failed platform checks, missed seeded violations) | at any size |
+| Latency, throughput | beyond 20% |
+| Memory, hook overhead, rule loading | beyond 25% |
+
+It warns when the two runs came from different CPUs or different dataset versions,
+because those numbers are not comparable. Exit code 1 when something regressed.
+
+```bash
+commitguard benchmark compare --results benchmarks/results --benchmark performance
+```
+
 ## Exit codes
 
 | Code | When |
 |---|---|
-| `0` | the benchmark ran and every correctness check held |
+| `0` | the benchmark ran and every correctness check held (or, for `compare`, nothing regressed) |
 | `1` | it ran, but a correctness check failed (a detection mismatch, a hook that did not enforce, a platform check that failed) |
 | `2` | error |
 
