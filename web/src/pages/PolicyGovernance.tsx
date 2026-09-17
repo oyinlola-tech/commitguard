@@ -227,7 +227,7 @@ function Governance({ scope }: { scope: GovernanceScope }) {
               <Panel title="Policy changes" id="drafts">
                 <Drafts drafts={data.drafts} />
               </Panel>
-              <div className="grid-2">
+              <div className="stack-lg">
                 <Panel title="Rollouts in progress" id="rollouts" flush>
                   <Rollouts rollouts={inProgress} />
                   {finished.length ? (

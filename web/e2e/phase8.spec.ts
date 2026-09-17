@@ -187,3 +187,129 @@ test("the repository matrix and governance pages fit a 375 px screen", async ({ 
     expect(overflow, path).toBeLessThanOrEqual(1);
   }
 });
+
+// The tests below change the seeded governance state, so they run after the read-only ones.
+const ADMIN = 504;
+
+test("an administrator approves an exception request and later revokes it", async ({ context, page }) => {
+  await signIn(context, page, ADMIN, "/organization/exceptions?status=requested");
+  const requested = await api<{ id: string; rule_id: string; requested_by: string }[]>(page, "/organizations/1001/exceptions?status=requested");
+  const request = requested.find((e) => e.rule_id === "ai_coauthor");
+  expect(request, "seeded ai_coauthor request").toBeTruthy();
+  await page.goto(`/organization/exceptions/${request?.id ?? ""}`);
+  await expect(page.getByText("REQUESTED").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Approve" }).click();
+  const approve = page.getByRole("dialog", { name: "Approve this exception" });
+  await approve.getByLabel("Note (optional)").fill("Reviewed the migration plan");
+  await approve.getByRole("button", { name: "Approve" }).click();
+  await expect(approve).toHaveCount(0);
+  await expect(page.getByText("ACTIVE").first()).toBeVisible();
+  const lifecycle = page.getByRole("region", { name: "Lifecycle" });
+  await expect(lifecycle.getByText("Approved by ada")).toBeVisible();
+
+  await page.getByRole("button", { name: "Revoke" }).click();
+  const revoke = page.getByRole("dialog", { name: "Revoke this exception" });
+  await expect(revoke.getByRole("button", { name: "Revoke" })).toBeDisabled(); // a reason is required
+  await revoke.getByLabel(/Reason \(required/).fill("Migration finished early");
+  await revoke.getByRole("button", { name: "Revoke" }).click();
+  await expect(page.getByText("REVOKED").first()).toBeVisible();
+  await expect(lifecycle.getByText("Revoked by ada")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Revoke" })).toHaveCount(0);
+});
+
+test("an administrator approves another member's policy change", async ({ context, page }) => {
+  await signIn(context, page, ADMIN, "/organization/policies");
+  const { draft } = await seededIds(page);
+  await page.goto(`/organization/policies/drafts/${draft}`);
+  await page.getByRole("button", { name: "Approve" }).click();
+  const approve = page.getByRole("dialog", { name: "Approve this policy change" });
+  await approve.getByLabel("Note (optional)").fill("Reviewed with the platform team");
+  await approve.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByText("APPROVED").first()).toBeVisible();
+  await expect(page.getByText("Reviewed with the platform team")).toBeVisible();
+});
+
+test("a group policy change is published as a staged rollout that can be paused and resumed", async ({ context, page }) => {
+  // A group target, so earlier specs that publish organization policies cannot make it stale.
+  await signIn(context, page, ADMIN, "/organization/policies/drafts/new");
+  await page.getByRole("radio", { name: /Group — the repositories of one group/ }).check();
+  await page.getByLabel("Group", { exact: true }).selectOption({ label: "Production" });
+  const rule = page.getByRole("group", { name: /ai_identity/ });
+  await rule.getByRole("radio", { name: "Mandatory" }).check();
+  await rule.getByLabel("Action for ai_identity").selectOption("block");
+  await page.getByLabel("Title").fill("Block AI identities in production");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("heading", { name: "Block AI identities in production", level: 1 })).toBeVisible();
+
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  const publish = page.getByRole("dialog", { name: /Publish/ });
+  await publish.getByLabel(/Reason/).fill("Agents must not author production commits");
+  await publish.getByLabel("Roll out in stages").check();
+  await publish.getByRole("checkbox", { name: /^octo-org\/payments-api/ }).check();
+  await publish.getByLabel(/Percentage stages/).fill("50");
+  await publish.getByRole("button", { name: /^Publish v\d+$/ }).click();
+  await expect(page.getByText("PUBLISHED").first()).toBeVisible();
+
+  await page.getByRole("link", { name: "Follow the staged rollout" }).click();
+  await expect(page.getByRole("heading", { name: /Staged rollout/, level: 1 })).toBeVisible();
+  await expect(page.getByText("PILOT").first()).toBeVisible();
+  await expect(page.getByText("Not complete")).toBeVisible();
+  await expect(page.getByText(/1 repository of 2 enrolled/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Pause" }).click();
+  const pause = page.getByRole("dialog", { name: "Pause the rollout" });
+  await pause.getByLabel(/Reason \(required/).fill("Waiting for the payments team");
+  await pause.getByRole("button", { name: "Pause" }).click();
+  await expect(page.getByText("PAUSED").first()).toBeVisible();
+  await page.getByRole("button", { name: "Resume" }).click();
+  await expect(page.getByText("PILOT").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Advance to/ })).toBeVisible();
+});
+
+test("an owner publishes a group policy in an emergency, with a reason and without approval", async ({ context, page }) => {
+  await signIn(context, page, OWNER, "/organization/policies/drafts/new");
+  await page.getByRole("radio", { name: /Group — the repositories of one group/ }).check();
+  await page.getByLabel("Group", { exact: true }).selectOption({ label: "Documentation" });
+  const rule = page.getByRole("group", { name: /bot_identity/ });
+  await rule.getByRole("radio", { name: "Mandatory" }).check();
+  await rule.getByLabel("Action for bot_identity").selectOption("block");
+  await page.getByLabel("Title").fill("Stop release bots in documentation");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("heading", { name: "Stop release bots in documentation", level: 1 })).toBeVisible();
+
+  await page.getByRole("button", { name: "Emergency publish" }).click();
+  const dialog = page.getByRole("dialog", { name: "Emergency publication" });
+  const confirm = dialog.getByRole("button", { name: "Publish without approval" });
+  await expect(confirm).toBeDisabled();
+  await dialog.getByLabel(/Reason \(required/).fill("A compromised release bot is pushing to docs");
+  await dialog.getByLabel("This is an emergency that cannot wait for approval.").check();
+  await confirm.click();
+  await expect(page.getByText("PUBLISHED").first()).toBeVisible();
+  await expect(page.getByText("Emergency publication").first()).toBeVisible();
+});
+
+test("the onboarding wizard queues a background operation and shows its progress", async ({ context, page }) => {
+  test.setTimeout(180_000);
+  await signIn(context, page, OWNER, "/organization/repositories/add");
+  await expect(page.getByRole("heading", { name: "Step 1 of 5: Select repositories" })).toBeVisible();
+  const next = page.getByRole("button", { name: "Next" });
+  await expect(next).toBeDisabled();
+  await page.getByLabel(/Show every repository/).check();
+  await page.getByRole("checkbox", { name: /^octo-org\/engineering-handbook/ }).check();
+  await next.click();
+  await expect(page.getByRole("heading", { name: "Step 2 of 5: Choose a group" })).toBeVisible();
+  await next.click();
+  await expect(page.getByRole("heading", { name: "Step 3 of 5: Choose a mode" })).toBeVisible();
+  await page.getByRole("radio", { name: /^Enforce/ }).check();
+  await next.click();
+  await expect(page.getByRole("heading", { name: "Step 4 of 5: Review and confirm" })).toBeVisible();
+  const submit = page.getByRole("button", { name: "Onboard 1 repository" });
+  await expect(submit).toBeDisabled();
+  await page.getByLabel("I reviewed the impact on these repositories.").check();
+  await submit.click();
+  await expect(page.getByRole("heading", { name: "Step 5 of 5: Apply" })).toBeVisible();
+  // The handbook is already onboarded in enforce mode: the operation is idempotent and skips it.
+  const progress = page.getByRole("region", { name: "Onboard (enforce) · 1 repository" });
+  await expect(progress.getByText("COMPLETED: 0 completed · 0 failed · 1 skipped · 0 pending", { exact: true })).toBeVisible({ timeout: 150_000 });
+});

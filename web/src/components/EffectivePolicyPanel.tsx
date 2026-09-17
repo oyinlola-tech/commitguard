@@ -181,14 +181,14 @@ export function EffectivePolicyPanel({ repositoryId, canManage }: { repositoryId
           ["Mode", <><Badge map={REPOSITORY_MODE} value={view.mode} compact /> <span className="muted small">{view.mode === "monitor" ? "Violations are reported, not blocked." : "Blocks according to policy."}</span></>],
           ["Propagation", <><Badge map={PROPAGATION} value={view.propagation} compact /> <span className="muted small">resolved <Time value={view.resolved_at} /></span></>],
           [
-            "Latest scan",
+            "Latest decision",
             view.last_scan_id ? (
               <>
                 <Link to={routes.scan(view.last_scan_id)}>Scan</Link> <Time value={view.last_scan_completed_at} /> ·{" "}
                 {view.last_scan_used_current_policy === true ? "used the current policy" : view.last_scan_used_current_policy === false ? <strong>used an earlier policy</strong> : "policy not recorded"}
               </>
             ) : (
-              <span className="muted">No completed scan</span>
+              <span className="muted">No scan has passed or blocked yet</span>
             ),
           ],
           [

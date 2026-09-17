@@ -1917,7 +1917,7 @@ kbd {
 }
 
 .matrix td.table__primary {
-  min-width: 13rem;
+  min-width: 11rem;
   overflow-wrap: anywhere;
 }
 
@@ -1929,6 +1929,21 @@ kbd {
   width: 1rem;
   height: 1rem;
   accent-color: var(--ink);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.matrix__state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.exceptions__metrics {
+  margin-bottom: var(--space-5);
 }
 
 .matrix__summary {
@@ -2466,7 +2481,7 @@ kbd {
 
 .settings-section__fields {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
   align-items: end;
   gap: var(--space-3) var(--space-4);
   margin-top: var(--space-3);

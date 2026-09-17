@@ -128,15 +128,11 @@ function MatrixTable({
             <th scope="col">Repository</th>
             <th scope="col">Posture</th>
             <th scope="col">Protection</th>
-            <th scope="col">Connection</th>
-            <th scope="col">Mode</th>
-            <th scope="col">Onboarding</th>
+            <th scope="col">State</th>
             <th scope="col">Groups</th>
-            <th scope="col">Policy</th>
+            <th scope="col">Policy and drift</th>
             <th scope="col">Last scan</th>
-            <th scope="col">Findings</th>
-            <th scope="col">Exceptions</th>
-            <th scope="col">Drift</th>
+            <th scope="col">Findings and exceptions</th>
           </tr>
         </thead>
         <tbody>
@@ -155,9 +151,13 @@ function MatrixTable({
               </td>
               <td data-label="Posture"><PostureCell row={row} /></td>
               <td data-label="Protection"><Badge map={PROTECTION} value={row.protection} compact title={row.protection_reason} /></td>
-              <td data-label="Connection"><Badge map={APP_CONNECTION} value={row.connection} compact /></td>
-              <td data-label="Mode"><Badge map={REPOSITORY_MODE} value={row.mode} compact /></td>
-              <td data-label="Onboarding"><Badge map={ONBOARDING} value={row.onboarding} compact /></td>
+              <td data-label="State">
+                <span className="matrix__state">
+                  <Badge map={APP_CONNECTION} value={row.connection} compact />
+                  <Badge map={REPOSITORY_MODE} value={row.mode} compact />
+                  <Badge map={ONBOARDING} value={row.onboarding} compact />
+                </span>
+              </td>
               <td data-label="Groups">
                 {row.groups.length ? (
                   <span className="link-list">
@@ -169,36 +169,37 @@ function MatrixTable({
                   <span className="muted">None</span>
                 )}
               </td>
-              <td data-label="Policy">
+              <td data-label="Policy and drift">
                 <span className="stack">
                   <Badge map={PROPAGATION} value={row.policy_state} compact />
-                  <span className="muted small" title="Organization policy version recorded by the latest scan">{row.organization_policy_version ? `Org. v${row.organization_policy_version} at last scan` : "No org. version at last scan"}</span>
+                  <DriftCell row={row} />
+                  <span className="muted small nowrap" title="Organization policy version recorded by the latest scan">{row.organization_policy_version ? `Org. v${row.organization_policy_version} at scan` : "No org. policy"}</span>
                 </span>
               </td>
               <td data-label="Last scan">
                 {row.last_scan_at ? (
                   <span className="stack">
                     {row.last_scan_result ? <Badge map={SCAN_RESULT} value={row.last_scan_result} compact /> : null}
-                    <span className="small"><Time value={row.last_scan_at} /></span>
+                    <span className="small nowrap"><Time value={row.last_scan_at} /></span>
                   </span>
                 ) : (
                   <span className="muted">Never</span>
                 )}
               </td>
-              <td data-label="Findings">
-                <span className="stack small">
+              <td data-label="Findings and exceptions">
+                <span className="stack small nowrap">
                   <span className={row.open_violations ? "strong" : undefined}>{count(row.open_violations)} open</span>
-                  <span className={row.critical_open ? "text-critical strong" : undefined}>{count(row.critical_open)} critical</span>
-                  <span>{plural(row.open_warnings, "warning")}</span>
+                  <span>
+                    <span className={row.critical_open ? "text-critical strong" : undefined}>{count(row.critical_open)} critical</span>
+                    {" · "}
+                    {count(row.open_warnings)} warn.
+                  </span>
+                  <span>
+                    {plural(row.active_exceptions, "exception")}
+                    {row.expiring_exceptions ? <span className="tag tag--warning">{count(row.expiring_exceptions)} expiring</span> : null}
+                  </span>
                 </span>
               </td>
-              <td data-label="Exceptions">
-                <span className="small">
-                  {count(row.active_exceptions)} active
-                  {row.expiring_exceptions ? <span className="tag tag--warning">{count(row.expiring_exceptions)} expiring</span> : null}
-                </span>
-              </td>
-              <td data-label="Drift"><DriftCell row={row} /></td>
             </tr>
           ))}
         </tbody>
