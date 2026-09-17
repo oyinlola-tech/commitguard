@@ -7,6 +7,7 @@ import type {
   RepositoryGroup,
   RepositoryPosture,
   RuleProvenance,
+  SecurityEvent,
   SettingsView,
   Simulation,
   Execution,
@@ -517,6 +518,8 @@ export function draft(overrides: Partial<PolicyDraft> = {}): PolicyDraft {
     can_submit: false,
     can_approve: false,
     can_publish: false,
+    can_cancel: true,
+    can_emergency_publish: true,
     ...overrides,
   };
 }
@@ -653,6 +656,24 @@ export function effectivePolicy(overrides: Partial<EffectivePolicyView> = {}): E
     last_scan_completed_at: NOW,
     last_scan_effective: null,
     last_scan_used_current_policy: true,
+    ...overrides,
+  };
+}
+
+export function securityEvent(overrides: Partial<SecurityEvent> = {}): SecurityEvent {
+  return {
+    id: "7".repeat(32),
+    type: "policy_approval_requested",
+    severity: "high",
+    repository_id: null,
+    resource_type: "draft",
+    resource_id: DRAFT_ID,
+    title: "Policy approval requested: Block AI attribution trailers everywhere",
+    body: "alice submitted a policy change for Organization for approval.",
+    occurrences: 1,
+    last_occurred_at: NOW,
+    acknowledged_by: null,
+    acknowledged_at: null,
     ...overrides,
   };
 }

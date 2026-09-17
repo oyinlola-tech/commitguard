@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Check, CircleX, FilePlus2, Save, Send, Siren, Upload, UserX } from "lucide-react";
+import { Ban, Check, CircleX, FilePlus2, GitMerge, Save, Send, Siren, Upload, UserX } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
@@ -12,9 +12,9 @@ import {
   createDraft,
   emergencyPublishDraft,
   getDraft,
-  listRollouts,
   listTargetVersions,
   publishDraft,
+  rebaseDraft,
   rejectDraft,
   submitDraft,
   updateDraft,
@@ -398,9 +398,11 @@ function RolloutBuilder({ draft, value, onChange }: { draft: Draft; value: Rollo
 function PublishDialog({ draft, onClose, onDone }: { draft: Draft; onClose: () => void; onDone: (draft: Draft) => void }) {
   const [confirmed, setConfirmed] = useState(false);
   const [rollout, setRollout] = useState<RolloutRequest | null>(null);
-  const publish = useMutation({ mutationFn: () => publishDraft(draft.id, draft.weakening && confirmed, rollout), onSuccess: onDone });
+  const [reason, setReason] = useState("");
+  const publish = useMutation({ mutationFn: () => publishDraft(draft.id, draft.weakening && confirmed, rollout, reason.trim() || null), onSuccess: onDone });
   const stageable = draft.target.type !== "repository";
-  const missingReason = draft.weakening && !draft.reason;
+  // A weakening publication needs a reason: the draft's, or one given here.
+  const reasonRequired = draft.weakening && !draft.reason;
   return (
     <ConfirmDialog
       open
@@ -409,7 +411,7 @@ function PublishDialog({ draft, onClose, onDone }: { draft: Draft; onClose: () =
       confirmLabel={`Publish v${draft.current_version + 1}`}
       onCancel={onClose}
       onConfirm={() => publish.mutate()}
-      confirmDisabled={(draft.weakening && !confirmed) || missingReason || draft.rebase_required || (rollout !== null && rollout.stages.length === 0)}
+      confirmDisabled={(draft.weakening && !confirmed) || (reasonRequired && !reason.trim()) || draft.rebase_required || (rollout !== null && rollout.stages.length === 0)}
       busy={publish.isPending}
     >
       <p>
@@ -426,7 +428,16 @@ function PublishDialog({ draft, onClose, onDone }: { draft: Draft; onClose: () =
           </label>
         </>
       ) : null}
-      {missingReason ? <Notice tone="danger">A change that weakens enforcement needs a reason. Edit the draft to add one before publishing.</Notice> : null}
+      <div className="field">
+        <label htmlFor="publish-reason">
+          {reasonRequired
+            ? "Reason (required: this change weakens enforcement; recorded with the version)"
+            : draft.reason
+              ? "Reason (optional; replaces the draft's reason on the version)"
+              : "Reason (optional, recorded with the version)"}
+        </label>
+        <textarea id="publish-reason" rows={2} maxLength={500} value={reason} placeholder={draft.reason ?? undefined} onChange={(e) => setReason(e.target.value)} />
+      </div>
       {stageable ? <RolloutBuilder draft={draft} value={rollout} onChange={setRollout} /> : <p className="muted small">A repository policy applies to one repository, so it is published without stages.</p>}
       <ActionError error={publish.error} fallback="The draft could not be published. The current version is unchanged." />
     </ConfirmDialog>
@@ -491,11 +502,9 @@ function Workflow({ draft, can, onChange }: { draft: Draft; can: (permission: Pe
   const reject = useMutation({ mutationFn: () => rejectDraft(draft.id, reason.trim()), onSuccess: done });
   const cancel = useMutation({ mutationFn: () => cancelDraft(draft.id), onSuccess: done });
   const open = !["published", "cancelled"].includes(draft.state);
-  const canCancel = open && can("policies:write");
-  const canEmergency = ["draft", "pending_approval", "approved"].includes(draft.state) && can("policies:emergency");
   const author = draft.created_by === session.user.login || draft.submitted_by === session.user.login;
   const separation = draft.state === "pending_approval" && !draft.can_approve && author && can("policies:approve");
-  const any = draft.can_submit || draft.can_approve || draft.can_publish || canCancel || canEmergency;
+  const any = draft.can_submit || draft.can_approve || draft.can_publish || draft.can_cancel || draft.can_emergency_publish;
   return (
     <>
       {separation ? (
@@ -528,12 +537,12 @@ function Workflow({ draft, can, onChange }: { draft: Draft; can: (permission: Pe
               <Upload size={14} aria-hidden="true" /> Publish
             </button>
           ) : null}
-          {canEmergency ? (
+          {draft.can_emergency_publish ? (
             <button type="button" className="button button--danger-outline" onClick={() => setDialog("emergency")} disabled={draft.rebase_required}>
               <Siren size={14} aria-hidden="true" /> Emergency publish
             </button>
           ) : null}
-          {canCancel ? (
+          {draft.can_cancel ? (
             <button type="button" className="button button--ghost" onClick={() => setDialog("cancel")}>
               <Ban size={14} aria-hidden="true" /> Cancel draft
             </button>
@@ -599,18 +608,70 @@ function ProposedDocument({ draft }: { draft: Draft }) {
   );
 }
 
-function PublishedRollout({ draft }: { draft: Draft }) {
-  // The draft does not record its rollout; find it by target and published version.
-  const query = useQuery({ queryKey: ["governance", draft.organization_id, "rollouts"], queryFn: () => listRollouts(draft.organization_id) });
-  const rollout = draft.rollout_id
-    ? { id: draft.rollout_id }
-    : query.data?.find((r) => r.target.type === draft.target.type && r.target.id === draft.target.id && r.to_version === draft.published_version);
-  return rollout ? (
-    <>
-      {" "}
-      <Link to={routes.rollout(rollout.id)}>Follow the staged rollout</Link>.
-    </>
-  ) : null;
+function RebaseNotice({ draft, can, onChange }: { draft: Draft; can: (permission: Permission) => boolean; onChange: (draft: Draft) => void }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const rebase = useMutation({
+    mutationFn: () => rebaseDraft(draft.id, draft.revision),
+    onSuccess: (updated) => {
+      setOpen(false);
+      onChange(updated);
+    },
+  });
+  return (
+    <Notice tone="warning" title="The target changed since this draft was created">
+      <p>
+        The draft is based on v{draft.base_version}; the current version is v{draft.current_version}. Publishing it would be refused, because it would overwrite changes it has not reviewed.
+        {draft.can_edit ? ` Rebase it on v${draft.current_version} to compare the proposed rules with the current version again.` : ""}
+      </p>
+      <div className="notice__actions">
+        {draft.can_edit ? (
+          <button type="button" className="button button--secondary" onClick={() => setOpen(true)}>
+            <GitMerge size={14} aria-hidden="true" /> Rebase on v{draft.current_version}
+          </button>
+        ) : null}
+        {!draft.can_edit && can("policies:write") ? (
+          <button
+            type="button"
+            className="button button--ghost"
+            onClick={() =>
+              navigate(routes.newDraft({ type: draft.target.type, id: draft.target.id }), {
+                state: { prefill: { floors: draft.floors, defaults: draft.defaults, title: draft.title, reason: draft.reason } },
+              })
+            }
+          >
+            <FilePlus2 size={14} aria-hidden="true" /> New draft with these rules
+          </button>
+        ) : null}
+      </div>
+      {!draft.can_edit && draft.state === "pending_approval" ? <p className="small">A draft waiting for approval cannot be rebased. Cancel it, or start a new draft with the same rules.</p> : null}
+      <ConfirmDialog
+        open={open}
+        tone="default"
+        title={`Rebase on v${draft.current_version}`}
+        confirmLabel={`Rebase on v${draft.current_version}`}
+        onCancel={() => {
+          setOpen(false);
+          rebase.reset();
+        }}
+        onConfirm={() => rebase.mutate()}
+        busy={rebase.isPending}
+      >
+        <p>The proposed rules stay as they are and are compared with v{draft.current_version} again; review the new diff before publishing.</p>
+        <p>Like any edit, rebasing returns the draft to DRAFT and cancels its approvals.</p>
+        <ActionError
+          error={rebase.error}
+          fallback="The draft could not be rebased."
+          onReload={() => {
+            setOpen(false);
+            rebase.reset();
+            void queryClient.invalidateQueries({ queryKey: ["governance", "draft", draft.id] });
+          }}
+        />
+      </ConfirmDialog>
+    </Notice>
+  );
 }
 
 function targetLink(draft: Draft): string {
@@ -621,7 +682,6 @@ function targetLink(draft: Draft): string {
 
 function ExistingDraft({ draftId }: { draftId: string }) {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const { organizations } = useSession();
   const query = useQuery({ queryKey: ["governance", "draft", draftId], queryFn: () => getDraft(draftId) });
   useDocumentTitle(query.data?.title ?? "Policy change");
@@ -655,29 +715,17 @@ function ExistingDraft({ draftId }: { draftId: string }) {
         </div>
       </PageHeader>
 
-      {draft.rebase_required ? (
-        <Notice tone="warning" title="The target changed since this draft was created">
-          The draft was based on v{draft.base_version}; the current version is v{draft.current_version}. Publishing it would be refused, because it would overwrite changes it has not reviewed. Start a new draft from the current version.{" "}
-          {can("policies:write") ? (
-            <button
-              type="button"
-              className="link-button"
-              onClick={() =>
-                navigate(routes.newDraft({ type: draft.target.type, id: draft.target.id }), {
-                  state: { prefill: { floors: draft.floors, defaults: draft.defaults, title: draft.title, reason: draft.reason } },
-                })
-              }
-            >
-              <FilePlus2 size={12} aria-hidden="true" /> New draft with these rules
-            </button>
-          ) : null}
-        </Notice>
-      ) : null}
+      {draft.rebase_required ? <RebaseNotice draft={draft} can={can} onChange={onChange} /> : null}
       {draft.state === "published" ? (
         <Notice tone="success" title={`Published as v${draft.published_version ?? "?"}`}>
           {draft.published_by ?? "unknown"} published this change <Time value={draft.published_at} />
           {draft.emergency ? " as an emergency publication" : ""}.
-          <PublishedRollout draft={draft} />
+          {draft.rollout_id ? (
+            <>
+              {" "}
+              <Link to={routes.rollout(draft.rollout_id)}>Follow the staged rollout</Link>.
+            </>
+          ) : null}
         </Notice>
       ) : null}
 
@@ -720,9 +768,14 @@ function ExistingDraft({ draftId }: { draftId: string }) {
         </Panel>
       </div>
 
-      <Panel title="Changes from the current version" id="changes">
-        {draft.state === "published" ? (
-          <p className="muted small">This change is published, so it now is the current version. Its changes are recorded in the version history of the target.</p>
+      <Panel title={draft.state === "published" && draft.published_version ? `Changes published in v${draft.published_version}` : "Changes from the current version"} id="changes">
+        {draft.state === "published" && draft.published_version ? (
+          <ChangesTable
+            changes={draft.changes}
+            caption={`Changes published in v${draft.published_version}`}
+            fromLabel={`v${draft.published_version - 1}`}
+            toLabel={`v${draft.published_version}`}
+          />
         ) : (
           <>
             <ChangesTable changes={draft.changes} caption="Changes from the current version" />

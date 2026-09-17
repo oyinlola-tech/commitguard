@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { idempotencyKey } from "../api/bulk";
 import { getEffectivePolicy, listRepositoryMatrix, reportUrl } from "../api/governance";
 import { archiveGroup } from "../api/groups";
-import { setCsrfToken } from "../api/client";
+import { ApiError, setCsrfToken } from "../api/client";
 import type { BulkOperation, Rule } from "../api/types";
 import { relaxedControls } from "../pages/OrganizationSettings";
 import * as f from "./fixtures";
@@ -78,12 +78,12 @@ describe("governance API client", () => {
     expect(idempotencyKey()).not.toBe(key);
   });
 
-  it("splits the relaxed controls of a confirmation message", () => {
-    expect(relaxedControls("This change relaxes security controls and must be confirmed: permanent exceptions allowed; policy approval no longer required")).toEqual([
-      "permanent exceptions allowed",
-      "policy approval no longer required",
-    ]);
-    expect(relaxedControls("Confirm this")).toEqual(["Confirm this"]);
+  it("reads relaxed controls from the error details, falling back to the message", () => {
+    const structured = new ApiError(409, "CONFIRMATION_REQUIRED", "This change relaxes security controls and must be confirmed: a; b", null, null, {
+      changes: ["permanent exceptions allowed", "policy approval no longer required"],
+    });
+    expect(relaxedControls(structured)).toEqual(["permanent exceptions allowed", "policy approval no longer required"]);
+    expect(relaxedControls(new ApiError(409, "CONFIRMATION_REQUIRED", "Confirm this"))).toEqual(["Confirm this"]);
   });
 });
 
@@ -91,7 +91,7 @@ describe("organization command center", () => {
   it("shows the posture with its reasons and the server's compliance sentence, never a score", async () => {
     const api = mockFetch(f.session("owner"));
     api.on("GET", `${ORG}/security/overview`, data(f.organizationPosture()));
-    api.on("GET", `${ORG}/security/events`, data([{ id: "7".repeat(32), type: "policy_changed", severity: "critical", title: "Organization policy changed", body: "alice weakened ai_coauthor.", occurrences: 1, last_occurred_at: "2026-09-01T12:00:00Z", acknowledged_by: null, acknowledged_at: null }]));
+    api.on("GET", `${ORG}/security/events`, data([f.securityEvent({ type: "policy_changed", severity: "critical", title: "Organization policy changed", body: "alice weakened ai_coauthor.", resource_type: "policy", resource_id: "1001" })]));
     api.on("POST", `${ORG}/security/events/${"7".repeat(32)}/acknowledge`, data({ event_id: "7".repeat(32), acknowledged_by: "alice", acknowledged_at: "2026-09-01T12:00:00Z", meaning: "seen" }));
     renderApp("/organization");
     const posture = await screen.findByRole("region", { name: "Organization posture" });
@@ -112,7 +112,7 @@ describe("organization command center", () => {
   it("does not offer acknowledgement to a viewer", async () => {
     const api = mockFetch(f.session("viewer"));
     api.on("GET", `${ORG}/security/overview`, data(f.organizationPosture()));
-    api.on("GET", `${ORG}/security/events`, data([{ id: "7".repeat(32), type: "policy_changed", severity: "high", title: "Changed", body: "b", occurrences: 1, last_occurred_at: "2026-09-01T12:00:00Z", acknowledged_by: null, acknowledged_at: null }]));
+    api.on("GET", `${ORG}/security/events`, data([f.securityEvent({ title: "Changed", body: "b" })]));
     renderApp("/organization");
     expect(await screen.findByText("Changed")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Acknowledge/ })).toBeNull();
@@ -326,7 +326,17 @@ describe("organization settings", () => {
     api.on("PUT", `${ORG}/settings`, ({ body }) => {
       puts += 1;
       if (!(body as { confirm: boolean }).confirm) {
-        return apiError(409, "CONFIRMATION_REQUIRED", "This change relaxes security controls and must be confirmed: longer exceptions allowed (90 -> 120 days)");
+        return {
+          status: 409,
+          body: {
+            error: {
+              code: "CONFIRMATION_REQUIRED",
+              message: "This change relaxes security controls and must be confirmed: longer exceptions allowed (90 -> 120 days)",
+              request_id: "r",
+              details: { changes: ["longer exceptions allowed (90 -> 120 days)"] },
+            },
+          },
+        };
       }
       return data(f.settingsView({ version: 3 }));
     });
@@ -338,6 +348,7 @@ describe("organization settings", () => {
     await user.click(screen.getByRole("button", { name: /Save settings/ }));
     const dialog = await screen.findByRole("dialog", { name: "You are relaxing security controls" });
     expect(within(dialog).getByText("longer exceptions allowed (90 -> 120 days)")).toBeInTheDocument();
+    expect(within(dialog).getAllByRole("listitem")).toHaveLength(1);
     const confirm = within(dialog).getByRole("button", { name: "Relax controls" });
     expect(confirm).toBeDisabled();
     await user.type(within(dialog).getByLabelText(/Reason \(required/), "long migrations");
@@ -406,5 +417,149 @@ describe("organization navigation", () => {
     expect(within(nav).getByRole("link", { name: "Command center" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "Exceptions" })).toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: "Organization audit" })).toBeNull();
+  });
+});
+
+describe("security event links", () => {
+  it("links events to the pages of their resources, and nothing else", async () => {
+    const api = mockFetch(f.session("viewer"));
+    api.on("GET", `${ORG}/security/overview`, data(f.organizationPosture()));
+    api.on("GET", `${ORG}/security/events`, data([
+      f.securityEvent({ id: "a1".repeat(16), title: "Approval requested" }),
+      f.securityEvent({ id: "a2".repeat(16), title: "Repository protection lost", resource_type: "repository", resource_id: "5001", repository_id: 5001 }),
+      f.securityEvent({ id: "a3".repeat(16), title: "Hidden repository event", resource_type: "repository", resource_id: "5009", repository_id: null }),
+      f.securityEvent({ id: "a4".repeat(16), title: "Installation suspended", resource_type: "installation", resource_id: "42" }),
+      f.securityEvent({ id: "a5".repeat(16), title: "Exception requested", resource_type: "exception", resource_id: f.EXCEPTION_ID }),
+      f.securityEvent({ id: "a6".repeat(16), title: "Rollout paused", resource_type: "rollout", resource_id: "9".repeat(32) }),
+      f.securityEvent({ id: "a7".repeat(16), title: "Settings changed", resource_type: "organization", resource_id: "1001" }),
+      f.securityEvent({ id: "a8".repeat(16), title: "Tampered draft", resource_type: "draft", resource_id: "../../admin" }),
+    ]));
+    renderApp("/organization");
+    const events = await screen.findByRole("region", { name: "Critical and high security events" });
+    expect(await within(events).findByRole("link", { name: "Approval requested" })).toHaveAttribute("href", `/organization/policies/drafts/${f.DRAFT_ID}`);
+    expect(within(events).getByRole("link", { name: "Repository protection lost" })).toHaveAttribute("href", "/repositories/5001");
+    expect(within(events).getByRole("link", { name: "Installation suspended" })).toHaveAttribute("href", "/github/installations/42");
+    expect(within(events).getByRole("link", { name: "Exception requested" })).toHaveAttribute("href", `/organization/exceptions/${f.EXCEPTION_ID}`);
+    expect(within(events).getByRole("link", { name: "Rollout paused" })).toHaveAttribute("href", `/organization/policies/rollouts/${"9".repeat(32)}`);
+    for (const title of ["Hidden repository event", "Settings changed", "Tampered draft"]) {
+      expect(within(events).getByText(title).tagName).not.toBe("A");
+    }
+  });
+});
+
+describe("draft rebase, publication reason and flags", () => {
+  function setup(draft: ReturnType<typeof f.draft>) {
+    const api = mockFetch(f.session("admin"));
+    api.on("GET", `/api/v1/policy-drafts/${f.DRAFT_ID}`, data(draft));
+    api.on("GET", `${ORG}/simulations`, data([]));
+    api.on("GET", `${ORG}/settings`, data(f.settingsView()));
+    api.on("GET", `${ORG}/policy-targets/organization/versions`, data({ policy: f.policy(true), versions: [] }, { next_cursor: null, limit: 10 }));
+    api.on("GET", `${ORG}/security/repositories`, page([f.repositoryPosture()]));
+    return api;
+  }
+
+  it("rebases an editable draft on the current version", async () => {
+    const stale = f.draft({ state: "draft", base_version: 2, current_version: 3, rebase_required: true, requires_approval: false, can_edit: true, can_publish: true, revision: 4, approvals: [] });
+    const api = setup(stale);
+    api.on("PATCH", `/api/v1/policy-drafts/${f.DRAFT_ID}`, data({ ...stale, base_version: 3, rebase_required: false, revision: 5 }));
+    renderApp(`/organization/policies/drafts/${f.DRAFT_ID}`);
+    const user = userEvent.setup();
+    expect(await screen.findByText("The target changed since this draft was created")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /New draft with these rules/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Rebase on v3" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rebase on v3" });
+    expect(within(dialog).getByText(/cancels its approvals/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Rebase on v3" }));
+    await waitFor(() => expect(api.calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({ expected_revision: 4, rebase: true });
+    await waitFor(() => expect(screen.queryByText("The target changed since this draft was created")).toBeNull());
+  });
+
+  it("offers a new draft instead of a rebase while the draft waits for approval", async () => {
+    setup(f.draft({ created_by: "ada", submitted_by: "ada", base_version: 2, current_version: 3, rebase_required: true, can_edit: false }));
+    renderApp(`/organization/policies/drafts/${f.DRAFT_ID}`);
+    expect(await screen.findByRole("button", { name: /New draft with these rules/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Rebase on/ })).toBeNull();
+    expect(screen.getByText(/A draft waiting for approval cannot be rebased/)).toBeInTheDocument();
+  });
+
+  it("requires a publication reason for a weakening change without one", async () => {
+    const weakening = f.draft({
+      state: "approved",
+      created_by: "ada",
+      submitted_by: "ada",
+      reason: null,
+      weakening: true,
+      can_publish: true,
+      changes: [{ policy_id: "ai_coauthor", old: "block", new: "warn", weakening: true, enforcement: "mandatory" }],
+    });
+    const api = setup(weakening);
+    api.on("POST", `/api/v1/policy-drafts/${f.DRAFT_ID}/publish`, data({ ...weakening, state: "published", published_version: 4 }));
+    renderApp(`/organization/policies/drafts/${f.DRAFT_ID}`);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Publish" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish a change that weakens enforcement" });
+    const confirm = within(dialog).getByRole("button", { name: "Publish v4" });
+    await user.click(within(dialog).getByLabelText(/I confirm publishing/));
+    expect(confirm).toBeDisabled();
+    await user.type(within(dialog).getByLabelText(/Reason \(required: this change weakens enforcement/), "temporary during migration");
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+    await waitFor(() => expect(api.calls.some((c) => c.path.endsWith("/publish"))).toBe(true));
+    expect(api.calls.find((c) => c.path.endsWith("/publish"))?.body).toEqual({ confirm_weakening: true, reason: "temporary during migration" });
+  });
+
+  it("keeps the reason optional when the change does not weaken enforcement", async () => {
+    setup(f.draft({ state: "approved", created_by: "ada", submitted_by: "ada", can_publish: true }));
+    renderApp(`/organization/policies/drafts/${f.DRAFT_ID}`);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Publish" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish this policy change" });
+    expect(within(dialog).getByLabelText(/Reason \(optional; replaces the draft's reason/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Publish v4" })).toBeEnabled();
+  });
+
+  it("follows the server's cancel and emergency flags", async () => {
+    setup(f.draft({ created_by: "ada", submitted_by: "ada", can_cancel: false, can_emergency_publish: false }));
+    renderApp(`/organization/policies/drafts/${f.DRAFT_ID}`);
+    expect(await screen.findByText("Your role can review this change but not act on it.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Cancel draft/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Emergency publish/ })).toBeNull();
+  });
+
+  it("shows what a published draft changed and links its rollout", async () => {
+    setup(
+      f.draft({
+        state: "published",
+        published_version: 4,
+        published_by: "ada",
+        published_at: "2026-09-01T12:00:00Z",
+        rollout_id: "9".repeat(32),
+        can_cancel: false,
+        can_emergency_publish: false,
+        changes: [{ policy_id: "ai_trailer", old: null, new: "block", weakening: false, enforcement: "mandatory" }],
+      }),
+    );
+    renderApp(`/organization/policies/drafts/${f.DRAFT_ID}`);
+    const table = await screen.findByRole("table", { name: "Changes published in v4" });
+    expect(within(table).getByRole("columnheader", { name: "v3" })).toBeInTheDocument();
+    expect(within(table).getByText("ai_trailer")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Follow the staged rollout" })).toHaveAttribute("href", `/organization/policies/rollouts/${"9".repeat(32)}`);
+  });
+});
+
+describe("group exceptions", () => {
+  it("asks the server for the group's exceptions", async () => {
+    const api = mockFetch(f.session("admin"));
+    api.on("GET", `/api/v1/repository-groups/${f.GROUP_ID}`, data({ group: f.group(), repositories: [], hidden_repositories: 0, can_manage: true }));
+    api.on("GET", `${ORG}/policy-targets/group/versions`, data({ policy: { organization: { id: 1001, login: "octo-org", type: "Organization" }, target: { type: "group", id: f.GROUP_ID, label: "Group Production" }, version: 0, fingerprint: null, updated_at: null, updated_by: null, reason: null, rules: [], can_write: true }, versions: [] }));
+    api.on("GET", `${ORG}/exceptions`, page([f.policyException({ scope: { type: "group", id: f.GROUP_ID, label: "Group Production" }, rule_name: "Automation or bot identity", rule_id: "bot_identity" })]));
+    renderApp(`/organization/groups/${f.GROUP_ID}`);
+    const panel = await screen.findByRole("region", { name: "Group exceptions" });
+    expect(await within(panel).findByText("Automation or bot identity")).toBeInTheDocument();
+    const call = api.calls.find((c) => c.path === `${ORG}/exceptions`);
+    expect(call?.search).toContain(`group=${f.GROUP_ID}`);
+    expect(api.calls.some((c) => c.path.endsWith("/security/exceptions"))).toBe(false);
   });
 });

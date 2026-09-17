@@ -54,6 +54,30 @@ export function internalLink(path: string | null | undefined): string | null {
   return path && INTERNAL_LINK.test(path) ? path : null;
 }
 
+const HEX_ID = /^[0-9a-f]{32}$/;
+const NUMERIC_ID = /^[1-9][0-9]{0,15}$/;
+
+/**
+ * The dashboard page of a security event's resource, or null. Only resources
+ * with a page are linked, and IDs are validated before a route is built.
+ */
+export function securityEventLink(event: { repository_id: number | null; resource_type: string; resource_id: string }): string | null {
+  switch (event.resource_type) {
+    case "repository":
+      return event.repository_id !== null ? routes.repository(event.repository_id) : null;
+    case "installation":
+      return NUMERIC_ID.test(event.resource_id) ? routes.installation(Number(event.resource_id)) : null;
+    case "exception":
+      return HEX_ID.test(event.resource_id) ? routes.exception(event.resource_id) : null;
+    case "draft":
+      return HEX_ID.test(event.resource_id) ? routes.draft(event.resource_id) : null;
+    case "rollout":
+      return HEX_ID.test(event.resource_id) ? routes.rollout(event.resource_id) : null;
+    default:
+      return null;
+  }
+}
+
 /** Only GitHub URLs produced by the server for validated owners and names are linked. */
 export function isGitHubUrl(url: string): boolean {
   try {

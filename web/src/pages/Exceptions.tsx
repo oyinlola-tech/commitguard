@@ -4,6 +4,7 @@ import { Link } from "react-router";
 
 import { listExceptions } from "../api/exceptions";
 import { getSecurityExceptions, listRepositoryMatrix } from "../api/governance";
+import { listGroups } from "../api/groups";
 import type { ExceptionStatus, PolicyException } from "../api/types";
 import { Badge } from "../components/Badge";
 import { FilterBar, SelectField } from "../components/FilterBar";
@@ -18,7 +19,7 @@ import { count } from "../lib/format";
 import { EXCEPTION_STATUS, EXCEPTION_STATUS_OPTIONS, POLICY_ACTION, RULE_OPTIONS, TARGET_TYPE_LABEL, statusStyle } from "../lib/labels";
 import { routes } from "../lib/routes";
 
-const KEYS = ["status", "rule", "repository"] as const;
+const KEYS = ["status", "rule", "repository", "group"] as const;
 
 export function ExpiryText({ exception }: { exception: PolicyException }) {
   if (exception.permanent) return <span className="strong">Permanent</span>;
@@ -76,6 +77,7 @@ function ExceptionList({ scope }: { scope: GovernanceScope }) {
   const { values, cursor, update } = useUrlState(KEYS);
   const pager = useCursorPager(JSON.stringify([values, scope.id]), cursor, (c) => update({ cursor: c }, { resetCursor: false }));
   const summary = useQuery({ queryKey: ["governance", scope.id, "exceptions-summary"], queryFn: () => getSecurityExceptions(scope.id) });
+  const groups = useQuery({ queryKey: ["governance", scope.id, "groups", false], queryFn: () => listGroups(scope.id) });
   const repositories = useQuery({ queryKey: ["governance", scope.id, "repository-picker", "", { sort: "name" }], queryFn: () => listRepositoryMatrix(scope.id, { sort: "name", limit: 100 }) });
   const query = useQuery({
     queryKey: ["governance", scope.id, "exceptions", values, cursor],
@@ -84,6 +86,7 @@ function ExceptionList({ scope }: { scope: GovernanceScope }) {
         status: (values.status as ExceptionStatus) || undefined,
         rule: values.rule || undefined,
         repository: values.repository ? Number(values.repository) : null,
+        group: values.group || undefined,
         cursor,
       }),
     placeholderData: (previous) => previous,
@@ -115,7 +118,7 @@ function ExceptionList({ scope }: { scope: GovernanceScope }) {
           <Metric label="Rejected or cancelled" value={count((counts.rejected ?? 0) + (counts.cancelled ?? 0))} />
         </div>
       ) : null}
-      <FilterBar active={active} onClear={() => update({ status: null, rule: null, repository: null })}>
+      <FilterBar active={active} onClear={() => update({ status: null, rule: null, repository: null, group: null })}>
         <SelectField label="Status" value={values.status} onChange={(status) => update({ status })} options={EXCEPTION_STATUS_OPTIONS.map((s) => [s, statusStyle(EXCEPTION_STATUS, s).label] as [string, string])} />
         <SelectField label="Rule" value={values.rule} onChange={(rule) => update({ rule })} options={RULE_OPTIONS} />
         <SelectField
@@ -124,6 +127,7 @@ function ExceptionList({ scope }: { scope: GovernanceScope }) {
           onChange={(repository) => update({ repository })}
           options={(repositories.data?.items ?? []).map((r) => [String(r.repository_id), r.full_name] as [string, string])}
         />
+        <SelectField label="Group" value={values.group} onChange={(group) => update({ group })} options={(groups.data ?? []).map((g) => [g.id, g.name] as [string, string])} />
       </FilterBar>
       <Panel flush>
         <QueryBoundary
@@ -146,7 +150,7 @@ function ExceptionList({ scope }: { scope: GovernanceScope }) {
       </Panel>
       {values.repository ? (
         <p className="muted small">
-          The repository filter lists exceptions scoped to that repository only. Group and organization exceptions that also apply to it are shown on its repository page, under Effective policy.
+          The repository filter lists exceptions scoped to that repository only. Group and organization exceptions that also apply to it are shown on its repository page, under Effective policy; use the group filter for a group&apos;s own exceptions.
         </p>
       ) : null}
     </>

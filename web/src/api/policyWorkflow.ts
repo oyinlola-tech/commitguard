@@ -72,12 +72,20 @@ export const createDraft = (organization: number, type: PolicyTargetType, target
   }).then((r) => r.data);
 export const updateDraft = (id: string, expectedRevision: number, document: DraftDocument) =>
   send<PolicyDraft>("PATCH", draft(id), { expected_revision: expectedRevision, ...document }).then((r) => r.data);
+/** Base the draft on the target's current version; like any edit, it returns to DRAFT and loses its approval. */
+export const rebaseDraft = (id: string, expectedRevision: number) =>
+  send<PolicyDraft>("PATCH", draft(id), { expected_revision: expectedRevision, rebase: true }).then((r) => r.data);
 export const submitDraft = (id: string) => send<PolicyDraft>("POST", `${draft(id)}/submit`).then((r) => r.data);
 export const approveDraft = (id: string, reason: string | null) => send<PolicyDraft>("POST", `${draft(id)}/approve`, { reason }).then((r) => r.data);
 export const rejectDraft = (id: string, reason: string) => send<PolicyDraft>("POST", `${draft(id)}/reject`, { reason }).then((r) => r.data);
 export const cancelDraft = (id: string) => send<PolicyDraft>("POST", `${draft(id)}/cancel`).then((r) => r.data);
-export const publishDraft = (id: string, confirmWeakening: boolean, rolloutRequest: RolloutRequest | null) =>
-  send<PolicyDraft>("POST", `${draft(id)}/publish`, { confirm_weakening: confirmWeakening, ...(rolloutRequest ? { rollout: rolloutRequest } : {}) }).then((r) => r.data);
+/** `reason` (optional) overrides the draft's reason on the published version. */
+export const publishDraft = (id: string, confirmWeakening: boolean, rolloutRequest: RolloutRequest | null, reason: string | null = null) =>
+  send<PolicyDraft>("POST", `${draft(id)}/publish`, {
+    confirm_weakening: confirmWeakening,
+    ...(reason ? { reason } : {}),
+    ...(rolloutRequest ? { rollout: rolloutRequest } : {}),
+  }).then((r) => r.data);
 export const emergencyPublishDraft = (id: string, reason: string, confirmWeakening: boolean) =>
   send<PolicyDraft>("POST", `${draft(id)}/emergency-publish`, { reason, confirm_weakening: confirmWeakening }).then((r) => r.data);
 

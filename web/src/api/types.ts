@@ -838,6 +838,10 @@ export interface SecurityEvent {
   id: string;
   type: string;
   severity: Severity;
+  /** Set when the event concerns one repository (visible to the caller). */
+  repository_id: number | null;
+  resource_type: string;
+  resource_id: string;
   title: string;
   body: string;
   occurrences: number;
@@ -974,6 +978,8 @@ export interface PolicyDraft {
   can_submit: boolean;
   can_approve: boolean;
   can_publish: boolean;
+  can_cancel: boolean;
+  can_emergency_publish: boolean;
 }
 
 /* Simulations ------------------------------------------------------------ */

@@ -15,7 +15,7 @@ import type { GovernanceScope } from "../hooks/useGovernanceOrganization";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { count, humanize, plural } from "../lib/format";
 import { INSTALLATION_STATE, POLICY_ACTION, POSTURE, POSTURE_OPTIONS, PROPAGATION, PROPAGATION_OPTIONS, PROTECTION, SEVERITY, SYNC_HEALTH } from "../lib/labels";
-import { routes } from "../lib/routes";
+import { routes, securityEventLink } from "../lib/routes";
 
 const PROTECTION_ORDER = ["protected", "at_risk", "unprotected", "configuration_error", "unknown"] as const;
 
@@ -76,6 +76,18 @@ function PolicyStatus({ data }: { data: OrganizationPosture }) {
   );
 }
 
+/** Links the event to its resource's page when one exists (repository, installation, exception, draft, rollout). */
+function EventTitle({ event }: { event: SecurityEvent }) {
+  const link = securityEventLink(event);
+  return link ? (
+    <Link to={link} className="strong break">
+      {event.title}
+    </Link>
+  ) : (
+    <span className="strong break">{event.title}</span>
+  );
+}
+
 function SecurityEvents({ scope }: { scope: GovernanceScope }) {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ["governance", scope.id, "events"], queryFn: () => listSecurityEvents(scope.id), refetchInterval: 60_000 });
@@ -105,7 +117,7 @@ function SecurityEvents({ scope }: { scope: GovernanceScope }) {
               <li key={event.id} className="events__item">
                 <div className="events__head">
                   <Badge map={SEVERITY} value={event.severity} compact />
-                  <span className="strong break">{event.title}</span>
+                  <EventTitle event={event} />
                 </div>
                 <p className="small break">{event.body}</p>
                 <p className="muted small">

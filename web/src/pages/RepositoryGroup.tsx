@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router";
 
 import { ApiError } from "../api/client";
-import { getSecurityExceptions } from "../api/governance";
+import { listExceptions } from "../api/exceptions";
 import { addGroupMembers, getGroup, removeGroupMembers } from "../api/groups";
 import { listTargetVersions } from "../api/policyWorkflow";
 import type { GroupMember, Permission, RepositoryGroupDetail } from "../api/types";
@@ -168,13 +168,17 @@ function GroupPolicy({ detail, can }: { detail: RepositoryGroupDetail; can: (per
 
 function GroupExceptions({ detail }: { detail: RepositoryGroupDetail }) {
   const group = detail.group;
-  const query = useQuery({ queryKey: ["governance", group.organization_id, "exceptions-summary"], queryFn: () => getSecurityExceptions(group.organization_id) });
+  const query = useQuery({
+    queryKey: ["governance", group.organization_id, "exceptions", { group: group.id }],
+    queryFn: () => listExceptions(group.organization_id, { group: group.id, limit: 25 }),
+  });
   return (
     <QueryBoundary query={query} errorTitle="We could not load exceptions." loading={<SkeletonRows rows={2} />}>
       {(data) => {
-        const items = data.exceptions.filter((e) => e.scope.type === "group" && e.scope.id === group.id);
+        const items = data.items;
         if (items.length === 0) return <EmptyState title="No exceptions for this group." />;
         return (
+          <>
           <div className="table-wrap">
             <table className="table">
               <caption className="visually-hidden">Exceptions for {group.name}</caption>
@@ -200,6 +204,12 @@ function GroupExceptions({ detail }: { detail: RepositoryGroupDetail }) {
               </tbody>
             </table>
           </div>
+          {data.nextCursor ? (
+            <p className="panel__inset small">
+              <Link to={`${routes.exceptions}?group=${encodeURIComponent(group.id)}`}>All exceptions of this group</Link>
+            </p>
+          ) : null}
+          </>
         );
       }}
     </QueryBoundary>

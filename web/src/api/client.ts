@@ -35,14 +35,24 @@ export class ApiError extends Error {
   readonly code: ErrorCode;
   readonly field: string | null;
   readonly requestId: string | null;
+  /** Structured context for some errors, e.g. `changes` for CONFIRMATION_REQUIRED. */
+  readonly details: Record<string, unknown> | null;
 
-  constructor(status: number, code: ErrorCode, message: string, field: string | null = null, requestId: string | null = null) {
+  constructor(
+    status: number,
+    code: ErrorCode,
+    message: string,
+    field: string | null = null,
+    requestId: string | null = null,
+    details: Record<string, unknown> | null = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.field = field;
     this.requestId = requestId;
+    this.details = details;
   }
 
   get unauthenticated(): boolean {
@@ -76,18 +86,21 @@ async function parseError(response: Response): Promise<ApiError> {
   let message = "Something went wrong. Try again.";
   let field: string | null = null;
   let requestId = response.headers.get("X-Request-ID");
+  let details: Record<string, unknown> | null = null;
   try {
-    const body = (await response.json()) as { error?: { code?: string; message?: string; field?: string; request_id?: string } };
+    const body = (await response.json()) as { error?: { code?: string; message?: string; field?: string; request_id?: string; details?: unknown } };
     if (body.error) {
       code = body.error.code ?? code;
       message = body.error.message ?? message;
       field = body.error.field ?? null;
       requestId = body.error.request_id ?? requestId;
+      const raw = body.error.details;
+      details = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
     }
   } catch {
     // Not JSON (e.g. a proxy error page): keep the generic message.
   }
-  return new ApiError(response.status, code, message, field, requestId);
+  return new ApiError(response.status, code, message, field, requestId, details);
 }
 
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";

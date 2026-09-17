@@ -8,6 +8,8 @@ export interface ExceptionFilters {
   status?: ExceptionStatus | "";
   rule?: string;
   repository?: number | null;
+  /** Group-scoped exceptions of one group. */
+  group?: string;
   cursor?: string | null;
   limit?: number;
 }

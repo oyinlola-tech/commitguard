@@ -3,6 +3,7 @@ import { Lock, Save, Users } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
+import type { ApiError } from "../api/client";
 import { getSettings, updateSettings } from "../api/governance";
 import { listRules } from "../api/rules";
 import type { OrganizationSettings as Settings, PolicyAction, SettingsView } from "../api/types";
@@ -22,12 +23,11 @@ type Key = keyof Settings;
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-/** "This change relaxes security controls and must be confirmed: a; b" -> ["a", "b"]. Falls back to the whole message. */
-export function relaxedControls(message: string): string[] {
-  const index = message.indexOf(": ");
-  if (index < 0) return [message];
-  const items = message.slice(index + 2).split("; ").map((item) => item.trim()).filter(Boolean);
-  return items.length ? items : [message];
+/** The relaxed controls the server lists in `error.details.changes`; the message itself when it lists none. */
+export function relaxedControls(error: ApiError): string[] {
+  const changes = error.details?.changes;
+  const items = Array.isArray(changes) ? changes.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
+  return items.length ? items : [error.message];
 }
 
 function timeZones(): string[] {
@@ -96,7 +96,7 @@ function SettingsForm({ scope, view, onSaved }: { scope: GovernanceScope; view: 
       void queryClient.invalidateQueries({ queryKey: ["governance", scope.id] });
     },
     onError: (error) => {
-      if (isApiError(error, "CONFIRMATION_REQUIRED")) setRelaxed(relaxedControls(error.message));
+      if (isApiError(error, "CONFIRMATION_REQUIRED")) setRelaxed(relaxedControls(error));
     },
   });
   const readOnly = !view.can_manage;
