@@ -148,7 +148,7 @@ function MatrixTable({
                 </td>
               ) : null}
               <td data-label="Repository" className="table__primary">
-                <Link to={routes.repository(row.repository_id)} className="strong break">
+                <Link to={routes.repository(row.repository_id)} className="strong">
                   {row.full_name}
                 </Link>
                 {row.archived ? <span className="tag">Archived</span> : null}
@@ -172,7 +172,7 @@ function MatrixTable({
               <td data-label="Policy">
                 <span className="stack">
                   <Badge map={PROPAGATION} value={row.policy_state} compact />
-                  <span className="muted small">{row.organization_policy_version ? `Organization v${row.organization_policy_version} at last scan` : "No organization version at last scan"}</span>
+                  <span className="muted small" title="Organization policy version recorded by the latest scan">{row.organization_policy_version ? `Org. v${row.organization_policy_version} at last scan` : "No org. version at last scan"}</span>
                 </span>
               </td>
               <td data-label="Last scan">
@@ -186,8 +186,10 @@ function MatrixTable({
                 )}
               </td>
               <td data-label="Findings">
-                <span className={row.critical_open ? "text-critical strong small" : "small"}>
-                  {count(row.open_violations)} open · {count(row.critical_open)} critical · {plural(row.open_warnings, "warning")}
+                <span className="stack small">
+                  <span className={row.open_violations ? "strong" : undefined}>{count(row.open_violations)} open</span>
+                  <span className={row.critical_open ? "text-critical strong" : undefined}>{count(row.critical_open)} critical</span>
+                  <span>{plural(row.open_warnings, "warning")}</span>
                 </span>
               </td>
               <td data-label="Exceptions">

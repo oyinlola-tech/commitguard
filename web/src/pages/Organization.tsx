@@ -242,7 +242,7 @@ function CommandCenter({ scope }: { scope: GovernanceScope }) {
             <div className="grid-2">
               <Panel title="GitHub installations" id="installations" actions={<Link to={routes.installations}>Installations</Link>}>
                 {data.installations.length ? (
-                  <ul className="health">
+                  <ul className="health health--wide">
                     {data.installations.map((installation) => (
                       <li key={installation.installation_id} className="health__item">
                         <span className="stack">

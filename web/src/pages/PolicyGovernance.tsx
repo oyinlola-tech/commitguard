@@ -144,7 +144,7 @@ function Drafts({ drafts }: { drafts: PolicyDraft[] }) {
             </table>
           </div>
         ) : (
-          <p className="muted small panel__inset">{group.empty}</p>
+          <p className="muted small">{group.empty}</p>
         );
         const heading = (
           <>

@@ -63,7 +63,7 @@ function Toggle({ label, detail, checked, onChange }: { label: string; detail?: 
 function SettingsForm({ scope, view, onSaved }: { scope: GovernanceScope; view: SettingsView; onSaved: (version: number) => void }) {
   const queryClient = useQueryClient();
   const rules = useQuery({ queryKey: ["rules"], queryFn: listRules });
-  const zones = useMemo(timeZones, []);
+  const zones = useMemo(() => timeZones(), []);
   const [form, setForm] = useState<Settings>(view.settings);
   const [warningDays, setWarningDays] = useState(view.settings.exception_warning_days.join(", "));
   const [reason, setReason] = useState("");
@@ -138,10 +138,10 @@ function SettingsForm({ scope, view, onSaved }: { scope: GovernanceScope; view: 
                   id={`baseline-${rule}`}
                   value={form.security_baseline[rule] ?? ""}
                   onChange={(e) => {
-                    const baseline = { ...form.security_baseline };
-                    if (e.target.value) baseline[rule] = e.target.value as PolicyAction;
-                    else delete baseline[rule];
-                    set("security_baseline", baseline);
+                    const others = Object.entries(form.security_baseline).filter(([id]) => id !== rule);
+                    const entries = e.target.value ? [...others, [rule, e.target.value as PolicyAction] as const] : others;
+                    // Sorted like the server's document, so an undone edit is not reported as a change.
+                    set("security_baseline", Object.fromEntries([...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
                   }}
                 >
                   <option value="">No baseline requirement</option>

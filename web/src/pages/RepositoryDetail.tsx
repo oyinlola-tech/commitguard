@@ -9,6 +9,7 @@ import type { RepositoryDetail as Detail } from "../api/types";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { AuditTable } from "../components/AuditTable";
+import { EffectivePolicyPanel } from "../components/EffectivePolicyPanel";
 import { ExternalLink, KeyValueList, Notice, PageHeader, Panel, Sha, Time } from "../components/Primitives";
 import { EmptyState, ErrorState, SkeletonRows } from "../components/States";
 import { ScansTable, ViolationsTable } from "../components/Tables";
@@ -180,7 +181,7 @@ export default function RepositoryDetail() {
           <Enforcement detail={detail} />
           <p className="muted small">CommitGuard never marks a repository protected without evidence from GitHub. It does not configure branch protection.</p>
         </Panel>
-        <Panel title="Effective policy" id="policy" actions={detail.effective_policy_scan ? <Link to={routes.scan(detail.effective_policy_scan)}>From latest scan</Link> : null}>
+        <Panel title="Policy used by the latest scan" id="policy" actions={detail.effective_policy_scan ? <Link to={routes.scan(detail.effective_policy_scan)}>From latest scan</Link> : null}>
           {detail.effective_policies.length ? (
             <>
               <p className="muted small">
@@ -208,6 +209,10 @@ export default function RepositoryDetail() {
           )}
         </Panel>
       </div>
+
+      <Panel title="Effective policy" id="effective-policy">
+        <EffectivePolicyPanel repositoryId={repo.id} canManage={detail.permissions.manage} />
+      </Panel>
 
       <Panel title="Merge queue" id="merge-queue">
         <MergeQueuePanel repositoryId={repo.id} />

@@ -24,6 +24,20 @@ const Installations = lazy(() => import("./pages/Installations"));
 const InstallationDetail = lazy(() => import("./pages/InstallationDetail"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Notifications = lazy(() => import("./pages/Notifications"));
+const Organization = lazy(() => import("./pages/Organization"));
+const OrganizationRepositories = lazy(() => import("./pages/OrganizationRepositories"));
+const AddRepositories = lazy(() => import("./pages/AddRepositories"));
+const RepositoryGroup = lazy(() => import("./pages/RepositoryGroup"));
+const PolicyGovernance = lazy(() => import("./pages/PolicyGovernance"));
+const PolicyDraft = lazy(() => import("./pages/PolicyDraft"));
+const PolicyRollout = lazy(() => import("./pages/PolicyRollout"));
+const Exceptions = lazy(() => import("./pages/Exceptions"));
+const ExceptionRequest = lazy(() => import("./pages/ExceptionRequest"));
+const ExceptionDetail = lazy(() => import("./pages/ExceptionDetail"));
+const OrganizationSecurity = lazy(() => import("./pages/OrganizationSecurity"));
+const OrganizationAudit = lazy(() => import("./pages/OrganizationAudit"));
+const OrganizationSettings = lazy(() => import("./pages/OrganizationSettings"));
+const OrganizationMembers = lazy(() => import("./pages/OrganizationMembers"));
 
 export function AppRoutes() {
   return (
@@ -51,6 +65,21 @@ export function AppRoutes() {
               <Route path="/github/installations" element={<Installations />} />
               <Route path="/github/installations/:installationId" element={<InstallationDetail />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/organization" element={<Organization />} />
+              <Route path="/organization/repositories" element={<OrganizationRepositories />} />
+              <Route path="/organization/repositories/add" element={<AddRepositories />} />
+              <Route path="/organization/groups/:groupId" element={<RepositoryGroup />} />
+              <Route path="/organization/policies" element={<PolicyGovernance />} />
+              <Route path="/organization/policies/drafts/new" element={<PolicyDraft />} />
+              <Route path="/organization/policies/drafts/:draftId" element={<PolicyDraft />} />
+              <Route path="/organization/policies/rollouts/:rolloutId" element={<PolicyRollout />} />
+              <Route path="/organization/exceptions" element={<Exceptions />} />
+              <Route path="/organization/exceptions/new" element={<ExceptionRequest />} />
+              <Route path="/organization/exceptions/:exceptionId" element={<ExceptionDetail />} />
+              <Route path="/organization/security" element={<OrganizationSecurity />} />
+              <Route path="/organization/audit" element={<OrganizationAudit />} />
+              <Route path="/settings/organization" element={<OrganizationSettings />} />
+              <Route path="/settings/organization/members" element={<OrganizationMembers />} />
             </Route>
           </Route>
           <Route path="*" element={<NotFound />} />

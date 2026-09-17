@@ -190,7 +190,7 @@ export const SYNC_HEALTH: Record<string, StatusStyle> = {
   syncing: style("SYNCING", "info", LoaderCircle),
   degraded: style("DEGRADED", "warning", TriangleAlert),
   failed: style("FAILED", "danger", CircleX),
-  never: style("NEVER SYNCHRONISED", "neutral", CircleDashed),
+  never: style("NEVER SYNCED", "neutral", CircleDashed),
 };
 
 export const INSTALLATION_STATE: Record<string, StatusStyle> = {

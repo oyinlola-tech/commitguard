@@ -193,11 +193,11 @@ export function ModeChoice({ mode, onChange, reason, onReason, name }: { mode: R
         <legend>Mode</legend>
         <label className="radio">
           <input type="radio" name={name} value="enforce" checked={mode === "enforce"} onChange={() => onChange("enforce")} />
-          <span><span className="strong">Enforce</span> <span className="muted small">— block according to policy</span></span>
+          Enforce <span className="muted small">— block according to policy</span>
         </label>
         <label className="radio">
           <input type="radio" name={name} value="monitor" checked={mode === "monitor"} onChange={() => onChange("monitor")} />
-          <span><span className="strong">Monitor</span> <span className="muted small">— scan, record and alert; checks report blocks as warnings</span></span>
+          Monitor <span className="muted small">— scan, record and alert; checks report blocks as warnings</span>
         </label>
       </fieldset>
       {mode === "enforce" ? (

@@ -1,5 +1,14 @@
 import type {
   AuditEvent,
+  EffectivePolicyView,
+  OrganizationPosture,
+  PolicyDraft,
+  PolicyException,
+  RepositoryGroup,
+  RepositoryPosture,
+  RuleProvenance,
+  SettingsView,
+  Simulation,
   Execution,
   Finding,
   NotificationItem,
@@ -22,7 +31,16 @@ const NOW = "2026-09-01T12:00:00Z";
 export const SHA = "8e71c2a4f09b1c2d3e4f5a6b7c8d9e0f1a2b3c4d";
 export const BASE_SHA = "3a91f02e7d5c1b86a4e0f9d2c7b3a1e8d6f40c21";
 
-const VIEWER: Permission[] = ["repositories:read", "scans:read", "violations:read", "policies:read", "rules:read"];
+const VIEWER: Permission[] = [
+  "repositories:read",
+  "scans:read",
+  "violations:read",
+  "policies:read",
+  "rules:read",
+  "organization:read",
+  "exceptions:read",
+  "security:read",
+];
 const ADMIN: Permission[] = [
   ...VIEWER,
   "notifications:read",
@@ -35,10 +53,18 @@ const ADMIN: Permission[] = [
   "github:manage",
   "members:read",
   "notifications:manage",
+  "exceptions:create",
+  "policies:publish",
+  "policies:approve",
+  "organization:manage",
+  "rules:manage",
+  "exceptions:approve",
+  "exceptions:revoke",
+  "security:manage",
 ];
 
 export function organization(role: "viewer" | "admin" | "owner" = "admin"): OrganizationAccess {
-  const permissions = role === "viewer" ? VIEWER : role === "owner" ? [...ADMIN, "members:manage" as Permission] : ADMIN;
+  const permissions = role === "viewer" ? VIEWER : role === "owner" ? [...ADMIN, "members:manage" as Permission, "policies:emergency" as Permission] : ADMIN;
   return { organization: { id: 1001, login: "octo-org", type: "Organization" }, role, implicit_role: false, permissions, installation_ids: [42] };
 }
 
@@ -371,6 +397,262 @@ export function notificationSettings(canManage = true, overrides: Partial<Notifi
     email_recipients: canManage ? ["security@example.com"] : [],
     webhooks: canManage ? [{ id: "d".repeat(32), url: "https://hooks.example.com/commitguard", created_at: NOW, created_by: "ada" }] : [],
     can_manage: canManage,
+    ...overrides,
+  };
+}
+
+/* Organization governance ------------------------------------------------ */
+
+export const GROUP_ID = "1".repeat(32);
+export const DRAFT_ID = "2".repeat(32);
+export const EXCEPTION_ID = "3".repeat(32);
+
+export function organizationPosture(overrides: Partial<OrganizationPosture> = {}): OrganizationPosture {
+  return {
+    organization_id: 1001,
+    login: "octo-org",
+    type: "Organization",
+    github_url: "https://github.com/octo-org",
+    posture: "at_risk",
+    posture_reasons: ["1 repository(ies) at risk.", "Installation octo-org (42): The last synchronisation did not finish."],
+    members: 4,
+    repositories: 3,
+    required_repositories: 3,
+    compliant_repositories: 2,
+    compliance: "2 of 3 required repositories satisfy all mandatory controls",
+    by_posture: { at_risk: 1, unprotected: 0, unknown: 0, secure: 2 },
+    by_protection: { protected: 2, at_risk: 0, unprotected: 0, configuration_error: 0, unknown: 1 },
+    monitor_mode: 1,
+    critical_open: 1,
+    high_open: 2,
+    active_exceptions: 1,
+    expiring_exceptions: 1,
+    expired_exceptions_30d: 0,
+    drift: { compliant: 1, customized: 1, drift: 1, unknown: 0 },
+    installations: [{ installation_id: 42, account_login: "octo-org", state: "active", sync: "failed", sync_detail: "The last synchronisation did not finish.", last_success_at: NOW, repositories: 3 }],
+    policy: { organization_version: 3, updated_at: NOW, updated_by: "alice", approvals_pending: 1, exceptions_requested: 1, rollouts_in_progress: 0, propagation: { up_to_date: 3 }, baseline: {} },
+    recent_activity: [{ id: "e".repeat(32), type: "policy_published", occurred_at: NOW, actor: "alice" }],
+    computed_at: NOW,
+    ...overrides,
+  };
+}
+
+export function repositoryPosture(overrides: Partial<RepositoryPosture> = {}): RepositoryPosture {
+  return {
+    repository_id: 5001,
+    full_name: "octo-org/payments-api",
+    github_url: "https://github.com/octo-org/payments-api",
+    installation_id: 42,
+    groups: [{ id: GROUP_ID, name: "Production" }],
+    connection: "connected",
+    archived: false,
+    onboarding: "onboarded",
+    mode: "enforce",
+    protection: "protected",
+    protection_reason: "GitHub requires the CommitGuard check.",
+    posture: "secure",
+    posture_reasons: ["Protected, enforcing, no open critical violations."],
+    organization_policy_version: 3,
+    policy_state: "up_to_date",
+    last_scan_result: "pass",
+    last_scan_at: NOW,
+    open_violations: 0,
+    open_warnings: 0,
+    critical_open: 0,
+    active_exceptions: 0,
+    expiring_exceptions: 0,
+    drift: "compliant",
+    drift_differences: [],
+    ...overrides,
+  };
+}
+
+export function group(overrides: Partial<RepositoryGroup> = {}): RepositoryGroup {
+  return {
+    id: GROUP_ID,
+    organization_id: 1001,
+    name: "Production",
+    description: "Customer-facing services",
+    repository_count: 2,
+    policy_version: 1,
+    active_exceptions: 0,
+    created_at: NOW,
+    created_by: "alice",
+    updated_at: NOW,
+    archived_at: null,
+    ...overrides,
+  };
+}
+
+export function draft(overrides: Partial<PolicyDraft> = {}): PolicyDraft {
+  return {
+    id: DRAFT_ID,
+    organization_id: 1001,
+    target: { type: "organization", id: "", label: "Organization" },
+    title: "Block AI attribution trailers everywhere",
+    reason: "Generated-by trailers are attribution too",
+    state: "pending_approval",
+    revision: 1,
+    base_version: 3,
+    current_version: 3,
+    floors: { ai_coauthor: "block", ai_trailer: "block" },
+    defaults: {},
+    changes: [{ policy_id: "ai_trailer", old: null, new: "block", weakening: false, enforcement: "mandatory" }],
+    diff: { from_version: 3, to_version: 4, added: [], changed: [], removed: [], weakening: false },
+    weakening: false,
+    rebase_required: false,
+    requires_approval: true,
+    created_by: "alice",
+    created_at: NOW,
+    updated_at: NOW,
+    submitted_by: "alice",
+    submitted_at: NOW,
+    published_version: null,
+    published_at: null,
+    published_by: null,
+    emergency: false,
+    rollout_id: null,
+    approvals: [{ id: "4".repeat(32), status: "pending", requested_by: "alice", requested_at: NOW, decided_by: null, decided_at: null, reason: null }],
+    can_edit: false,
+    can_submit: false,
+    can_approve: false,
+    can_publish: false,
+    ...overrides,
+  };
+}
+
+export function simulation(overrides: Partial<Simulation> = {}): Simulation {
+  return {
+    id: "5".repeat(32),
+    organization_id: 1001,
+    target: { type: "organization", id: "", label: "Organization" },
+    draft_id: DRAFT_ID,
+    current_version: 3,
+    state: "completed",
+    parameters: { period_days: 30, repository_ids: null },
+    requested_by: "ada",
+    requested_at: NOW,
+    started_at: NOW,
+    completed_at: NOW,
+    result: {
+      repositories_analyzed: 3,
+      repositories_without_data: 1,
+      scans_analyzed: 12,
+      findings_analyzed: 9,
+      new_blocks: 2,
+      new_warnings: 0,
+      no_longer_blocked: 0,
+      unchanged: 7,
+      scans_newly_blocked: 1,
+      scans_no_longer_blocked: 0,
+      scans_assumed_defaults: 4,
+      most_affected: [{ repository_id: 5001, full_name: "octo-org/payments-api", scans: 5, new_blocks: 2, new_warnings: 0, no_longer_blocked: 0 }],
+      truncated: false,
+      disclaimer: "SIMULATION - an estimate from recorded scans in the selected period, not the current security state and not a prediction of future commits.",
+    },
+    error: null,
+    ...overrides,
+  };
+}
+
+export function policyException(overrides: Partial<PolicyException> = {}): PolicyException {
+  return {
+    id: EXCEPTION_ID,
+    organization_id: 1001,
+    rule_id: "malformed_trailer",
+    rule_name: "Malformed trailer",
+    severity: "low",
+    scope: { type: "repository", id: "5003", label: "octo-org/engineering-handbook" },
+    action: "allow",
+    reason: "The handbook generator writes non-standard trailers",
+    status: "active",
+    requires_approval: false,
+    permanent: false,
+    expires_at: "2026-09-05T12:00:00Z",
+    expiring_soon: true,
+    requested_at: NOW,
+    requested_by: "alice",
+    decided_at: null,
+    decided_by: null,
+    decision_note: null,
+    activated_at: NOW,
+    revoked_at: null,
+    revoked_by: null,
+    revoke_reason: null,
+    expired_at: null,
+    can_approve: false,
+    can_revoke: true,
+    can_cancel: false,
+    ...overrides,
+  };
+}
+
+export function settingsView(overrides: Partial<SettingsView> = {}): SettingsView {
+  return {
+    organization_id: 1001,
+    version: 2,
+    settings: {
+      security_baseline: {},
+      require_policy_approval: true,
+      require_separate_approver: true,
+      exception_approval_min_severity: "high",
+      exception_max_days: 90,
+      allow_permanent_exceptions: false,
+      exception_warning_days: [7, 3, 1],
+      default_onboarding_mode: "enforce",
+      auto_onboard_new_repositories: true,
+      archived_repositories: "keep",
+      rollout_auto_pause: true,
+      rollout_max_error_rate: 0.2,
+      rollout_max_block_rate: 0.5,
+      rollout_min_scans: 5,
+      rollout_auto_rollback: false,
+      aggregate_violation_alerts: false,
+      timezone: "UTC",
+    },
+    updated_at: NOW,
+    updated_by: "alice",
+    can_manage: true,
+    ...overrides,
+  };
+}
+
+export function provenance(overrides: Partial<RuleProvenance> = {}): RuleProvenance {
+  return {
+    policy_id: "ai_coauthor",
+    enabled: true,
+    action: "block",
+    source: "organization",
+    source_label: "organization policy v3",
+    enforcement: "mandatory",
+    required_action: "block",
+    required_by: "organization",
+    required_label: "organization policy v3",
+    conflict: null,
+    exception_id: null,
+    exception_expires_at: null,
+    action_before_exception: null,
+    monitor_mode: false,
+    repository_configuration_known: true,
+    ...overrides,
+  };
+}
+
+export function effectivePolicy(overrides: Partial<EffectivePolicyView> = {}): EffectivePolicyView {
+  const rules = [provenance()];
+  return {
+    organization_id: 1001,
+    repository_id: 5001,
+    full_name: "octo-org/payments-api",
+    mode: "enforce",
+    effective: { policies: [{ id: "ai_coauthor", enabled: true, action: "block", description: "AI co-author" }], rules, inputs_fingerprint: "f".repeat(64), description: "organization policy v3", mode: "enforce" },
+    versions: { organization_policy: 3, settings: 2, groups: { [GROUP_ID]: 1 }, repository_policy: null, rollouts: {}, exceptions: [], organization_rules: null },
+    propagation: "up_to_date",
+    resolved_at: NOW,
+    last_scan_id: "a".repeat(32),
+    last_scan_completed_at: NOW,
+    last_scan_effective: null,
+    last_scan_used_current_policy: true,
     ...overrides,
   };
 }

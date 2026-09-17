@@ -94,7 +94,7 @@ function RequestForm({ scope }: { scope: GovernanceScope }) {
   if (scopeType !== "repository") reasons.push(`it covers ${scopeType === "group" ? "a whole group" : "the whole organization"}`);
   if (permanent) reasons.push("it is permanent");
   const ready = Boolean(ruleId) && (scopeType === "organization" || Boolean(scopeId)) && reason.trim().length > 0 && (permanent || Boolean(expiryDate));
-  const days = Math.round((new Date(expiryIso(expiryDate)).getTime() - Date.now()) / DAY);
+  const days = Math.round((Date.parse(`${expiryDate}T00:00:00Z`) - Date.parse(`${dateInDays(0)}T00:00:00Z`)) / DAY);
 
   return (
     <form
@@ -188,7 +188,7 @@ function RequestForm({ scope }: { scope: GovernanceScope }) {
               <label htmlFor="exception-expires">Expires on (at the start of the day, your time zone)</label>
               <input id="exception-expires" type="date" required min={dateInDays(1)} max={dateInDays(maxDays)} value={expiryDate} onChange={(e) => setExpires(e.target.value)} />
               <p className="muted small">
-                {days > 0 ? `In about ${plural(days, "day")}. ` : ""}This organization allows at most {plural(maxDays, "day")}. The exception ends automatically.
+                {days > 0 ? `In ${plural(days, "day")}. ` : ""}This organization allows at most {plural(maxDays, "day")}. The exception ends automatically.
               </p>
             </div>
           ) : null}
