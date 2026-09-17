@@ -541,7 +541,7 @@ come from a fixed list per endpoint.
 | `POST /api/v1/policies/{organization_id}/rollback` | `policies:rollback` | Publish a new version restoring `target_version` (`expected_current_version`, `reason`, `confirm`) |
 | `GET /api/v1/rules` | `rules:read` | Bundled rules |
 | `GET /api/v1/rules/{rule_id}` | `rules:read` | Rule detail |
-| `GET /api/v1/audit` | `audit:read` | Audit events (`organization`, `repository`, `type`, `actor`, `from`, `to`, `sort`) |
+| `GET /api/v1/audit` | `audit:read` | Audit events (`organization`, `repository`, `type`, `actor`, `from`, `to`, `rule`, `exception`, `policy`=`organization`\|draft, group or rollout ID, `sort`) |
 | `GET /api/v1/audit/{event_id}` | `audit:read` | One audit event |
 | `GET /api/v1/github/installations` | `repositories:read` | Installations |
 | `GET /api/v1/github/installations/{installation_id}` | `repositories:read` | Installation detail and recent events |
@@ -561,6 +561,79 @@ come from a fixed list per endpoint.
 | `POST /api/v1/organizations/{organization_id}/notification-webhooks` | `notifications:manage` | Add an HTTPS endpoint (`url`, `confirm`; recent sign-in); returns the signing secret once (201) |
 | `DELETE /api/v1/organizations/{organization_id}/notification-webhooks/{endpoint_id}` | `notifications:manage` | Remove an endpoint; pending deliveries are cancelled |
 | `GET /api/v1/organizations/{organization_id}/notification-deliveries` | `notifications:manage` | E-mail and webhook delivery records |
+
+**Organization governance routes** (Phase 8; see
+[organization-governance.md](organization-governance.md)). Authorization is
+checked per resource in the governance services: another organization's
+resource is 404, a missing permission 403.
+
+| Route | Permission | Purpose |
+|---|---|---|
+| `GET /api/v1/organizations/{organization_id}` | `organization:read` | Organization, posture summary and settings |
+| `GET /api/v1/organizations/{organization_id}/settings` | `organization:read` | Security settings (baseline, approval, exceptions, onboarding, rollouts) |
+| `PUT /api/v1/organizations/{organization_id}/settings` | `organization:manage` | Change settings (`expected_version`, `settings`, `reason`, `confirm` and a recent sign-in when relaxing a control) |
+| `GET /api/v1/organizations/{organization_id}/security/overview` | `security:read` | Organization posture with its explicit reasons, compliance fraction, installations, policy status |
+| `GET /api/v1/organizations/{organization_id}/security/repositories` | `security:read` | Repository security matrix (`q`, `group`, `posture`, `protection`, `mode`, `onboarding`, `policy_state`, `drift`, `exceptions`, `severity`, `last_scan`, `sort`, cursor) |
+| `GET /api/v1/organizations/{organization_id}/security/policies` | `policies:read` | Policy targets, drafts, rollouts and propagation in one response |
+| `GET /api/v1/organizations/{organization_id}/security/exceptions` | `exceptions:read` | Exceptions with counts by status |
+| `GET /api/v1/organizations/{organization_id}/security/trends` | `security:read` | Violations, scans and snapshot metrics over `days` |
+| `GET /api/v1/organizations/{organization_id}/security/events` | `security:read` | Recent critical and high security events with acknowledgement |
+| `POST /api/v1/organizations/{organization_id}/security/events/{event_id}/acknowledge` | `violations:manage` | Record that an event was seen (resolves nothing) |
+| `GET /api/v1/organizations/{organization_id}/reports/{kind}` | `security:read` | Point-in-time report (`compliance`, `coverage`, `violations`, `exceptions`, `policy_changes`, `installations`) as `format`=`json`\|`csv` |
+| `GET /api/v1/organizations/{organization_id}/search` | `organization:read` | Search repositories, groups, policy drafts, rules, exceptions and findings (`q`) |
+| `POST /api/v1/organizations/{organization_id}/repositories/onboard` | `repositories:manage` | Onboard repositories in `mode` (`confirm`) |
+| `POST /api/v1/organizations/{organization_id}/repositories/mode` | `repositories:manage` | Switch repositories between `monitor` and `enforce` (`confirm`; `reason` for monitor) |
+| `GET /api/v1/repositories/{repository_id}/effective-policy` | `policies:read` | Effective policy with per-rule provenance, conflicts, exceptions, propagation state |
+| `GET /api/v1/organizations/{organization_id}/repository-groups` | `repositories:read` | Repository groups (`archived=true` includes archived) |
+| `POST /api/v1/organizations/{organization_id}/repository-groups` | `repositories:manage` | Create a group (`name`, `description`) |
+| `GET /api/v1/repository-groups/{group_id}` | `repositories:read` | Group with its visible members |
+| `PATCH /api/v1/repository-groups/{group_id}` | `repositories:manage` | Rename or describe a group |
+| `DELETE /api/v1/repository-groups/{group_id}` | `repositories:manage` | Archive a group (`confirm=true` when it has a policy or exceptions) |
+| `POST /api/v1/repository-groups/{group_id}/repositories` | `repositories:manage` | Add repositories (`repository_ids`) |
+| `POST /api/v1/repository-groups/{group_id}/repositories/remove` | `repositories:manage` | Remove repositories (`repository_ids`) |
+| `GET /api/v1/organizations/{organization_id}/policies` | `policies:read` | Organization, group and repository policies |
+| `GET /api/v1/organizations/{organization_id}/policy-targets/{target_type}/versions` | `policies:read` | Versions of one target (`target_id` for group or repository) |
+| `POST /api/v1/organizations/{organization_id}/policy-targets/{target_type}/rollback` | `policies:rollback` | Roll a target back (`target_id`, `target_version`, `expected_current_version`, `reason`, `confirm`) |
+| `GET /api/v1/organizations/{organization_id}/policy-drafts` | `policies:read` | Policy drafts (`state`) |
+| `POST /api/v1/organizations/{organization_id}/policy-drafts` | `policies:write` | Create a draft (`target_type`, `target_id`, `floors`, `defaults`, `title`, `reason`) |
+| `GET /api/v1/policy-drafts/{draft_id}` | `policies:read` | Draft with diff, approvals and what the caller may do |
+| `PATCH /api/v1/policy-drafts/{draft_id}` | `policies:write` | Edit a draft (`expected_revision`); cancels an approval |
+| `POST /api/v1/policy-drafts/{draft_id}/submit` | `policies:write` | Request approval |
+| `POST /api/v1/policy-drafts/{draft_id}/approve` | `policies:approve` | Approve (not the author when separation of duties is on) |
+| `POST /api/v1/policy-drafts/{draft_id}/reject` | `policies:approve` | Reject (`reason`) |
+| `POST /api/v1/policy-drafts/{draft_id}/cancel` | `policies:write` | Cancel a draft |
+| `POST /api/v1/policy-drafts/{draft_id}/publish` | `policies:publish` | Publish as an immutable version (`confirm_weakening`, optional `rollout`) |
+| `POST /api/v1/policy-drafts/{draft_id}/emergency-publish` | `policies:emergency` | Publish without approval (`reason`; critical audit event and notification) |
+| `POST /api/v1/policy-drafts/{draft_id}/simulations` | `policies:write` | Queue a read-only simulation (`period_days`, `repository_ids`) (202) |
+| `GET /api/v1/organizations/{organization_id}/simulations` | `policies:read` | Simulations (`draft`) |
+| `GET /api/v1/simulations/{simulation_id}` | `policies:read` | Simulation state and estimated impact |
+| `GET /api/v1/organizations/{organization_id}/rollouts` | `policies:read` | Staged rollouts (`active=true`) |
+| `GET /api/v1/rollouts/{rollout_id}` | `policies:read` | Rollout stages, enrollment, propagation and scan results |
+| `POST /api/v1/rollouts/{rollout_id}/advance` | `policies:publish` | Enroll the next stage |
+| `POST /api/v1/rollouts/{rollout_id}/pause` | `policies:publish` | Pause (`reason`) |
+| `POST /api/v1/rollouts/{rollout_id}/resume` | `policies:publish` | Resume |
+| `POST /api/v1/rollouts/{rollout_id}/rollback` | `policies:rollback` | Roll back to the previous version (`reason`, `confirm`) |
+| `GET /api/v1/organizations/{organization_id}/policy-propagation` | `policies:read` | Effective policy propagation counts and failing repositories |
+| `GET /api/v1/organizations/{organization_id}/exceptions` | `exceptions:read` | Exceptions (`status`, `rule`, `repository`, cursor) |
+| `POST /api/v1/organizations/{organization_id}/exceptions` | `exceptions:create` | Request an exception (`rule_id`, `scope_type`, `scope_id`, `action`, `reason`, `expires_at` or `permanent`) |
+| `GET /api/v1/exceptions/{exception_id}` | `exceptions:read` | One exception |
+| `POST /api/v1/exceptions/{exception_id}/approve` | `exceptions:approve` | Approve (not the requester) |
+| `POST /api/v1/exceptions/{exception_id}/reject` | `exceptions:approve` | Reject (`note`) |
+| `POST /api/v1/exceptions/{exception_id}/revoke` | `exceptions:revoke` | Revoke an active exception (`reason`) |
+| `POST /api/v1/exceptions/{exception_id}/cancel` | requester or `exceptions:revoke` | Cancel a request |
+| `GET /api/v1/organizations/{organization_id}/rules` | `rules:read` | Organization rules, rules version, trust levels |
+| `PUT /api/v1/organizations/{organization_id}/rules` | `rules:manage` | Publish organization identity rules (`expected_version`, `rules`, `reason`) |
+| `GET /api/v1/organizations/{organization_id}/rules/history` | `rules:read` | Organization rule versions |
+| `GET /api/v1/organizations/{organization_id}/bulk-operations` | `repositories:read` | Bulk operations |
+| `POST /api/v1/organizations/{organization_id}/bulk-operations` | `repositories:manage` (`scans:trigger` for scans) | Queue a bulk operation (`type`, `repository_ids`, `parameters`, `idempotency_key`, `confirm`) (202) |
+| `GET /api/v1/bulk-operations/{operation_id}` | `repositories:read` | Progress and items |
+| `POST /api/v1/bulk-operations/{operation_id}/cancel` | `repositories:manage` | Cancel pending items |
+| `POST /api/v1/bulk-operations/{operation_id}/retry` | `repositories:manage` | Retry failed items |
+| `GET /api/v1/organizations/{organization_id}/scan-schedules` | `security:read` | Scan schedules with their latest run |
+| `POST /api/v1/organizations/{organization_id}/scan-schedules` | `security:manage` | Create a schedule (`name`, `target_type`, `target_id`, `cadence`, `hour`, `minute`, `weekday`, `timezone`) |
+| `GET /api/v1/scan-schedules/{schedule_id}` | `security:read` | Schedule and recent runs |
+| `PATCH /api/v1/scan-schedules/{schedule_id}` | `security:manage` | Change a schedule (`expected_revision`) |
+| `POST /api/v1/scan-schedules/{schedule_id}/disable` | `security:manage` | Disable a schedule |
 
 Resource models are defined in `commitguard.controlplane.views` and mirrored
 in `web/src/api/types.ts`. There is no OpenAPI document; this table and the
