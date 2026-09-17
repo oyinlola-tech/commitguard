@@ -52,7 +52,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
           return (
             <li key={item.to}>
               {heading ? <p className="nav__group">{heading}</p> : null}
-              <NavLink to={item.to} className={({ isActive }) => (isActive ? "nav__link nav__link--active" : "nav__link")} onClick={onNavigate} end={item.to === routes.overview}>
+              <NavLink to={item.to} className={({ isActive }) => (isActive ? "nav__link nav__link--active" : "nav__link")} onClick={onNavigate} end={item.end}>
                 <Icon size={16} aria-hidden="true" />
                 <span>{item.label}</span>
                 {item.to === routes.violations && openViolations > 0 ? (
