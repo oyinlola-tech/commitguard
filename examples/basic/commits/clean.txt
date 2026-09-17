@@ -1,0 +1,6 @@
+feat: add session rotation
+
+Rotate session identifiers after a privilege change.
+
+Co-authored-by: Ada Lovelace <ada@example.com>
+Signed-off-by: Ada Lovelace <ada@example.com>

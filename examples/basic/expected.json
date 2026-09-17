@@ -1,0 +1,30 @@
+{
+  "config": ".commitguard.yaml",
+  "commits": [
+    {
+      "file": "commits/clean.txt",
+      "expected": "allow",
+      "description": "A commit by a human, with a human co-author."
+    },
+    {
+      "file": "commits/ai-coauthor.txt",
+      "expected": "block",
+      "description": "The canonical violation: an AI agent recorded as co-author."
+    },
+    {
+      "file": "commits/ai-tool-footer.txt",
+      "expected": "block",
+      "description": "A tool footer left by an agent."
+    },
+    {
+      "file": "commits/disguised-coauthor.txt",
+      "expected": "block",
+      "description": "The same attribution with a symbol before the key and mixed case."
+    },
+    {
+      "file": "commits/malformed-trailer.txt",
+      "expected": "warn",
+      "description": "A trailer written without a colon: a warning, not a block."
+    }
+  ]
+}
