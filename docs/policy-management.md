@@ -41,7 +41,10 @@ draft ──submit──► pending_approval ──approve──► approved ─
   `draft`.
 * **Publish** (`policies:publish`) writes an immutable version against the
   draft's base version: if someone published in between, publication conflicts
-  (`409`) instead of overwriting. Weakening a floor needs `confirm_weakening`, a
+  (`409`) instead of overwriting. The draft shows `rebase_required`; editing it
+  with `rebase: true` bases it on the current version (and, like any edit,
+  discards an approval), so the change is reviewed against what is actually
+  published. A published draft keeps the diff of what it changed. Weakening a floor needs `confirm_weakening`, a
   reason and a recent sign-in, as in Phase 7. A publication may start a
   [staged rollout](policy-rollouts.md).
 * **Emergency publish** (`policies:emergency`, owners) skips approval for

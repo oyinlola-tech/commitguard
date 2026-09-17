@@ -502,7 +502,7 @@ All endpoints are under `/api/v1`, return JSON and require a session except
 | 403 | `FORBIDDEN`, `CSRF_FAILED`, `CORS_REJECTED` | role lacks the permission; missing CSRF token or foreign Origin |
 | 404 | `NOT_FOUND` | missing **or outside your access** |
 | 405 | `METHOD_NOT_ALLOWED` | with an `Allow` header |
-| 409 | `CONFLICT`, `CONFIRMATION_REQUIRED` | optimistic concurrency, invalid state change, unconfirmed weakening or rollback |
+| 409 | `CONFLICT`, `CONFIRMATION_REQUIRED`, `APPROVAL_REQUIRED` | optimistic concurrency, invalid state change, unconfirmed weakening or rollback (organization settings list each relaxed control in `details.changes`), publication without the required approval |
 | 422 | `POLICY_VERSION_INVALID` | a stored policy version failed its integrity check and cannot be restored |
 | 411 / 413 / 415 | `LENGTH_REQUIRED`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE` | bodies are JSON, at most 64 KB |
 | 429 | `RATE_LIMITED` | with `Retry-After: 60` |
@@ -593,7 +593,7 @@ resource is 404, a missing permission 403.
 | `GET /api/v1/organizations/{organization_id}/security/policies` | `policies:read` | Policy targets, drafts, rollouts and propagation in one response |
 | `GET /api/v1/organizations/{organization_id}/security/exceptions` | `exceptions:read` | Exceptions with counts by status |
 | `GET /api/v1/organizations/{organization_id}/security/trends` | `security:read` | Violations, scans and snapshot metrics over `days` |
-| `GET /api/v1/organizations/{organization_id}/security/events` | `security:read` | Recent critical and high security events with acknowledgement |
+| `GET /api/v1/organizations/{organization_id}/security/events` | `security:read` | Recent critical and high security events with acknowledgement and the resource they concern (`repository_id`, `resource_type`, `resource_id`) |
 | `POST /api/v1/organizations/{organization_id}/security/events/{event_id}/acknowledge` | `violations:manage` | Record that an event was seen (resolves nothing) |
 | `GET /api/v1/organizations/{organization_id}/reports/{kind}` | `security:read` | Point-in-time report (`compliance`, `coverage`, `violations`, `exceptions`, `policy_changes`, `installations`) as `format`=`json`\|`csv` |
 | `GET /api/v1/organizations/{organization_id}/search` | `organization:read` | Search repositories, groups, policy drafts, rules, exceptions and findings (`q`) |
@@ -613,12 +613,12 @@ resource is 404, a missing permission 403.
 | `GET /api/v1/organizations/{organization_id}/policy-drafts` | `policies:read` | Policy drafts (`state`) |
 | `POST /api/v1/organizations/{organization_id}/policy-drafts` | `policies:write` | Create a draft (`target_type`, `target_id`, `floors`, `defaults`, `title`, `reason`) |
 | `GET /api/v1/policy-drafts/{draft_id}` | `policies:read` | Draft with diff, approvals and what the caller may do |
-| `PATCH /api/v1/policy-drafts/{draft_id}` | `policies:write` | Edit a draft (`expected_revision`); cancels an approval |
+| `PATCH /api/v1/policy-drafts/{draft_id}` | `policies:write` | Edit a draft (`expected_revision`, `floors`, `defaults`, `title`, `reason`, `rebase=true` to base it on the current version); cancels an approval |
 | `POST /api/v1/policy-drafts/{draft_id}/submit` | `policies:write` | Request approval |
 | `POST /api/v1/policy-drafts/{draft_id}/approve` | `policies:approve` | Approve (not the author when separation of duties is on) |
 | `POST /api/v1/policy-drafts/{draft_id}/reject` | `policies:approve` | Reject (`reason`) |
 | `POST /api/v1/policy-drafts/{draft_id}/cancel` | `policies:write` | Cancel a draft |
-| `POST /api/v1/policy-drafts/{draft_id}/publish` | `policies:publish` | Publish as an immutable version (`confirm_weakening`, optional `rollout`) |
+| `POST /api/v1/policy-drafts/{draft_id}/publish` | `policies:publish` | Publish as an immutable version (`confirm_weakening`, optional `reason` and `rollout`) |
 | `POST /api/v1/policy-drafts/{draft_id}/emergency-publish` | `policies:emergency` | Publish without approval (`reason`; critical audit event and notification) |
 | `POST /api/v1/policy-drafts/{draft_id}/simulations` | `policies:write` | Queue a read-only simulation (`period_days`, `repository_ids`) (202) |
 | `GET /api/v1/organizations/{organization_id}/simulations` | `policies:read` | Simulations (`draft`) |
@@ -630,7 +630,7 @@ resource is 404, a missing permission 403.
 | `POST /api/v1/rollouts/{rollout_id}/resume` | `policies:publish` | Resume |
 | `POST /api/v1/rollouts/{rollout_id}/rollback` | `policies:rollback` | Roll back to the previous version (`reason`, `confirm`) |
 | `GET /api/v1/organizations/{organization_id}/policy-propagation` | `policies:read` | Effective policy propagation counts and failing repositories |
-| `GET /api/v1/organizations/{organization_id}/exceptions` | `exceptions:read` | Exceptions (`status`, `rule`, `repository`, cursor) |
+| `GET /api/v1/organizations/{organization_id}/exceptions` | `exceptions:read` | Exceptions (`status`, `rule`, `repository` for repository-scoped, `group` for group-scoped, cursor) |
 | `POST /api/v1/organizations/{organization_id}/exceptions` | `exceptions:create` | Request an exception (`rule_id`, `scope_type`, `scope_id`, `action`, `reason`, `expires_at` or `permanent`) |
 | `GET /api/v1/exceptions/{exception_id}` | `exceptions:read` | One exception |
 | `POST /api/v1/exceptions/{exception_id}/approve` | `exceptions:approve` | Approve (not the requester) |

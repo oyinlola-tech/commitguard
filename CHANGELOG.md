@@ -76,6 +76,10 @@ All notable changes to this project are documented here. The format follows
 - Removing a member's last membership ends their sessions immediately.
 - With `require_policy_approval`, the direct organization policy save returns
   `APPROVAL_REQUIRED`.
+- Policy drafts can be rebased on the current version, accept a publication
+  reason, link the rollout they started, keep the diff they published, and
+  expose `can_cancel`/`can_emergency_publish`; relaxed settings are listed in
+  `error.details.changes`; security events reference their resource.
 - `policy_source` lists the governance layers applied (for example
   `+ group Backend policy v2 + 1 exception(s)`).
 
