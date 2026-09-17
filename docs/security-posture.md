@@ -166,12 +166,15 @@ with budgets):
 
 | Operation | Time |
 |---|---|
-| security overview | ~200 ms |
-| repository matrix page | ~170 ms |
-| propagate 1,000 effective policies | ~0.5 s |
-| bulk operation, 1,000 items | ~0.3 s |
-| policy simulation | ~1 s |
-| compliance report (CSV) | ~0.35 s |
+| security overview | 200-280 ms |
+| repository matrix page | 170-330 ms |
+| propagate 1,000 effective policies | 0.3-0.5 s |
+| bulk operation, 1,000 items (queue + process) | under 0.1 s |
+| policy simulation | about 1 s |
+| compliance report (CSV) | 0.35-0.45 s |
+
+The same test pages through all 1,000 repositories of the matrix (10 pages of
+100) and checks that each appears exactly once.
 
 `scripts/benchmark_governance.py` (10,000 repositories, 100,000 scans,
 1,000,000 findings):

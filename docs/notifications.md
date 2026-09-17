@@ -184,11 +184,15 @@ Verify every request:
 ```python
 import hashlib, hmac, time
 
+
 def verify(secret: str, headers, body: bytes, tolerance: int = 300) -> bool:
     timestamp = headers["X-CommitGuard-Timestamp"]
     if not timestamp.isdigit() or abs(time.time() - int(timestamp)) > tolerance:
         return False  # stale: possible replay
-    expected = "v1=" + hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()
+    expected = (
+        "v1="
+        + hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()
+    )
     return hmac.compare_digest(expected, headers["X-CommitGuard-Signature"])
 ```
 
