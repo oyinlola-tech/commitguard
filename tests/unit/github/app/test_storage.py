@@ -221,6 +221,38 @@ def test_retention_purges_old_data_but_keeps_active_jobs(store: SqliteStateStore
     assert store.record_delivery("old", "push", "x", NOW) is DeliveryStatus.NEW
 
 
+def test_retention_purges_finished_governance_work_but_keeps_history(
+    store: SqliteStateStore,
+) -> None:
+    old, cutoff = (NOW - timedelta(days=40)).timestamp(), NOW - timedelta(days=30)
+    with store.transaction() as db:
+        for simulation, state in (("s-old", "completed"), ("s-run", "running")):
+            db.execute(
+                "INSERT INTO policy_simulations (simulation_id, account_id, target_type, "
+                "target_id, current_version, document, parameters, state, requested_at, "
+                "completed_at) VALUES (?, 1, 'organization', '1', 1, '{}', '{}', ?, ?, ?)",
+                (simulation, state, old, old),
+            )
+        for operation, status in (("b-old", "completed"), ("b-open", "running")):
+            db.execute(
+                "INSERT INTO bulk_operations (operation_id, account_id, type, parameters, "
+                "idempotency_key, created_at, status, total, updated_at) "
+                "VALUES (?, 1, 'onboard', '{}', ?, ?, ?, 1, ?)",
+                (operation, operation, old, status, old),
+            )
+            db.execute(
+                "INSERT INTO bulk_operation_items (operation_id, repository_id, status, "
+                "updated_at) VALUES (?, 5001, 'completed', ?)",
+                (operation, old),
+            )
+    counts = store.purge_expired(cutoff)
+    assert (counts["simulations"], counts["bulk_operations"]) == (1, 1)
+    remaining = store.query("SELECT simulation_id FROM policy_simulations")
+    assert [r["simulation_id"] for r in remaining] == ["s-run"]
+    items = store.query("SELECT operation_id FROM bulk_operation_items")
+    assert [r["operation_id"] for r in items] == ["b-open"]
+
+
 def test_store_never_holds_commit_messages_or_identities(
     store: SqliteStateStore, tmp_path: Path
 ) -> None:

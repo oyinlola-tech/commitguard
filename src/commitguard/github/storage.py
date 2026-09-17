@@ -2268,6 +2268,29 @@ class SqliteStateStore(AuditStorage):
                     (cutoff,),
                 ).rowcount,
             }
+            # Organization governance: finished background work. Policy versions, drafts,
+            # approvals, exceptions, rollouts and rule versions are history and are kept.
+            counts["simulations"] = db.execute(
+                "DELETE FROM policy_simulations WHERE state IN ('completed', 'failed') "
+                "AND completed_at < ?",
+                (cutoff,),
+            ).rowcount
+            db.execute(
+                "DELETE FROM bulk_operation_items WHERE operation_id IN (SELECT operation_id "
+                "FROM bulk_operations WHERE status IN ('completed', 'partial', 'failed', "
+                "'cancelled') AND updated_at < ?)",
+                (cutoff,),
+            )
+            counts["bulk_operations"] = db.execute(
+                "DELETE FROM bulk_operations WHERE status IN ('completed', 'partial', 'failed', "
+                "'cancelled') AND updated_at < ?",
+                (cutoff,),
+            ).rowcount
+            # A slot is never due again once its schedule moved on, so old runs can go.
+            counts["schedule_runs"] = db.execute(
+                "DELETE FROM scan_schedule_runs WHERE state != 'running' AND started_at < ?",
+                (cutoff,),
+            ).rowcount
             # Data whose installation record is gone can no longer be attributed to a
             # tenant: remove it rather than keep it unreachable.
             for statement in _ORPHAN_DELETES:

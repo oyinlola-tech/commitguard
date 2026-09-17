@@ -357,7 +357,7 @@ DEFINITIONS: dict[NotificationType, TypeDefinition] = {
             "A repository that was protected is no longer protected by GitHub.",
             NotificationCategory.GITHUB,
             Permission.REPOSITORIES_MANAGE,
-            repository_scoped=False,
+            repository_scoped=True,
             mandatory_in_app=True,
             default_email=True,
             default_webhook=True,

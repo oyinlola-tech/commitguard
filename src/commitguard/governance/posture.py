@@ -69,7 +69,15 @@ from commitguard.controlplane.rules import CATALOG
 from commitguard.controlplane.views import AppConnection, ProtectionStatus, RepositorySummary
 from commitguard.core.result import Severity
 from commitguard.github.storage import SqliteStateStore
-from commitguard.governance.common import dt, is_hex_id, req_dt, require, text, ts
+from commitguard.governance.common import (
+    dt,
+    is_hex_id,
+    req_dt,
+    require,
+    text,
+    ts,
+    visible_repository_ids,
+)
 from commitguard.governance.exceptions import rule_severity
 from commitguard.governance.inventory import governance_states
 from commitguard.governance.settings import load_settings
@@ -572,7 +580,7 @@ class SecurityPostureService:
             by_protection=by_protection,
             monitor_mode=sum(1 for p in postures if p.mode is RepositoryMode.MONITOR),
             critical_open=sum(p.critical_open for p in postures),
-            high_open=self._high_open(account_id),
+            high_open=self._high_open(account_id, [p.repository_id for p in postures]),
             active_exceptions=int(exception_counts["active"] or 0),
             expiring_exceptions=int(exception_counts["expiring"] or 0),
             expired_exceptions_30d=int(exception_counts["expired"] or 0),
@@ -586,13 +594,15 @@ class SecurityPostureService:
             computed_at=now,
         )
 
-    def _high_open(self, account_id: int) -> int:
+    def _high_open(self, account_id: int, repository_ids: Sequence[int]) -> int:
+        """Open high violations of the repositories the caller can see."""
         return int(
             self._store.query(
                 "SELECT COUNT(*) AS n FROM violations v JOIN installations i ON "
                 "i.installation_id = v.installation_id WHERE i.account_id = ? "
-                "AND v.status = 'open' AND v.severity = 'high'",
-                (account_id,),
+                "AND v.status = 'open' AND v.severity = 'high' "
+                "AND v.repository_id IN (SELECT value FROM json_each(?))",
+                (account_id, json.dumps(sorted(set(repository_ids)))),
             )[0]["n"]
         )
 
@@ -1041,8 +1051,6 @@ class SecurityPostureService:
         return rows, {"installations": len(rows)}
 
     def _visible(self, principal: Principal, account_id: int) -> set[int]:
-        from commitguard.governance.common import visible_repository_ids
-
         return visible_repository_ids(self._store, principal, account_id)
 
     # -- search ----------------------------------------------------------- #

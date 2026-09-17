@@ -3,7 +3,6 @@
 import csv
 import io
 import json
-from datetime import timedelta
 
 from commitguard.github.identifiers import RepositoryRef
 
@@ -299,4 +298,10 @@ def test_organization_overview_counts_and_trends(dash, ops, hub, clock) -> None:
     assert alice.get(f"/api/v1/organizations/{ORG}/security/trends", days=0).status == 400
     policies = alice.get(f"/api/v1/organizations/{ORG}/security/policies").data
     assert policies["propagation"]["repositories"] == 1
-    assert timedelta
+
+    # Repository counts cover only what the viewer can see on GitHub.
+    overview = alice.get(f"/api/v1/organizations/{ORG}/security/overview").data
+    assert overview["high_open"] + overview["critical_open"] == 1
+    blind = dash.sign_in(ADA, {INSTALLATION: set()})
+    hidden = blind.get(f"/api/v1/organizations/{ORG}/security/overview").data
+    assert (hidden["repositories"], hidden["high_open"], hidden["critical_open"]) == (0, 0, 0)
