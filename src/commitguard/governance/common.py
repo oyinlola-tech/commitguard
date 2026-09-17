@@ -163,7 +163,8 @@ def account_repositories(
 def account_repository(
     store_or_db: SqliteStateStore | sqlite3.Connection, account_id: int, repository_id: int
 ) -> AccountRepository | None:
-    sql = f"SELECT * FROM ({_ACCOUNT_REPOSITORIES}) WHERE repository_id = ?"  # noqa: S608 - constant
+    # _ACCOUNT_REPOSITORIES is a module constant; nothing from the caller enters the SQL.
+    sql = f"SELECT * FROM ({_ACCOUNT_REPOSITORIES}) WHERE repository_id = ?"  # noqa: S608  # nosec B608
     params = (int(account_id), int(repository_id))
     if isinstance(store_or_db, sqlite3.Connection):
         row = store_or_db.execute(sql, params).fetchone()

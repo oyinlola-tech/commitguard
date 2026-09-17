@@ -155,3 +155,28 @@ def test_pathological_input_is_fast() -> None:
         parse_trailers(text)
     # Generous budget: linear parsing takes ~2s on a loaded machine; quadratic takes minutes.
     assert time.perf_counter() - start < 20
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    ["�", "?", ">", "> ", "•", "* ", "- ", "#", "~~", "»", "!!!!"],
+)
+def test_leading_symbols_cannot_hide_a_trailer(prefix: str) -> None:
+    """Regression: found by the detection benchmark (dataset 1.0.0, adversarial class).
+
+    A replacement character from malformed UTF-8 before ``Co-authored-by`` made the
+    parser ignore the line, so the AI co-author was allowed.
+    """
+    parsed = parse_trailers(f"feat: x\n\n{prefix}Co-authored-by: Claude <noreply@anthropic.com>\n")
+    [trailer] = parsed.trailers
+    assert trailer.normalized_key == "co-authored-by"
+    assert trailer.email == "noreply@anthropic.com"
+    assert TrailerIssue.LEADING_CHARACTERS in trailer.issues
+
+
+def test_leading_character_skipping_is_bounded_and_ignores_prose() -> None:
+    assert (
+        parse_trailers("feat: x\n\n" + "!" * 17 + "Co-authored-by: Claude <a@b.c>\n").trailers == ()
+    )
+    assert parse_trailers("feat: x\n\n* see http://example.com: details\n").trailers == ()
+    assert parse_trailers("feat: x\n\n-- \n").trailers == ()

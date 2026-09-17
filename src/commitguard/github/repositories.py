@@ -26,9 +26,10 @@ repository gets a *bare, partial* mirror under the App's data directory::
 import base64
 import os
 import shutil
+import stat
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import quote, urlsplit
@@ -50,6 +51,14 @@ MINIMUM_MIRROR_GIT_VERSION = (2, 45)
 DEFAULT_FETCH_TIMEOUT_SECONDS = 600.0
 LAST_USED_MARKER = "commitguard-last-used"
 _REF_NAME_MAX = 255
+
+
+def _clear_read_only_and_retry(
+    function: Callable[[str], object], path: str, _error: BaseException
+) -> None:
+    """Git writes pack files read-only; on Windows they cannot be deleted until writable."""
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
 
 
 class FetchTimeoutError(InfrastructureError):
@@ -269,7 +278,7 @@ class MirrorManager:
         if resolved == root or not resolved.is_relative_to(root) or target.is_symlink():
             raise InfrastructureError("refusing to remove a path outside the mirror directory")
         if resolved.exists():
-            shutil.rmtree(resolved)
+            shutil.rmtree(resolved, onexc=_clear_read_only_and_retry)
 
     def remove_repository(self, installation_id: int, repository_id: int) -> None:
         with self._lock(installation_id, repository_id):

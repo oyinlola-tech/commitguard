@@ -16,7 +16,11 @@ mangled deliberately, the parser also records:
   spaces/underscores/invisible characters in the key;
 * indented lines that are themselves trailers, instead of folding them into
   the previous value as a continuation (which would hide them);
-* every Unicode line separator (``\\u2028``, ``\\r``...), not only ``\\n``.
+* every Unicode line separator (``\\u2028``, ``\\r``...), not only ``\\n``;
+* keys preceded by symbols or punctuation (``\\ufffdCo-authored-by:``,
+  ``> Co-authored-by:``, ``• Co-authored-by:``): the prefix is ignored and the
+  trailer is recorded with ``LEADING_CHARACTERS`` (found by the detection
+  benchmark: a replacement character from malformed UTF-8 hid attribution).
 
 Work is linear in the message size and bounded to :data:`MAX_TRAILERS`
 trailers; anything beyond sets ``truncated`` so callers can fail closed.
@@ -35,6 +39,8 @@ from commitguard.provenance.normalization import normalize_trailer_key
 COAUTHOR_TRAILER_KEY = "co-authored-by"
 MAX_TRAILERS = 1000
 MAX_KEY_LENGTH = 64
+#: At most this many leading symbol/punctuation characters are skipped before a key.
+MAX_LEADING_CHARACTERS = 16
 
 
 class TrailerIssue(StrEnum):
@@ -43,6 +49,7 @@ class TrailerIssue(StrEnum):
     MISSING_SEPARATOR = "missing_separator"
     NONSTANDARD_KEY = "nonstandard_key"
     EMPTY_VALUE = "empty_value"
+    LEADING_CHARACTERS = "leading_characters"
 
 
 class Trailer(BaseModel):
@@ -118,6 +125,24 @@ def _parse_line(line: str) -> tuple[str, str, list[TrailerIssue]] | None:
     text = unicodedata.normalize("NFKC", line).strip()
     if not text:
         return None
+    parsed = _parse_text(text)
+    if parsed is not None or text[0].isalnum():
+        return parsed
+    # Symbols or punctuation before the key must not hide a trailer.
+    start = 0
+    while start < len(text) and start < MAX_LEADING_CHARACTERS and not text[start].isalnum():
+        start += 1
+    rest = text[start:].strip()
+    if not rest or not rest[0].isalnum():
+        return None
+    retried = _parse_text(rest)
+    if retried is None:
+        return None
+    key, value, issues = retried
+    return key, value, [*issues, TrailerIssue.LEADING_CHARACTERS]
+
+
+def _parse_text(text: str) -> tuple[str, str, list[TrailerIssue]] | None:
 
     colon = text.find(":")
     if 0 < colon <= MAX_KEY_LENGTH + 8:

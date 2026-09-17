@@ -65,6 +65,25 @@ def test_governance_at_1000_repositories(dash, organization, capsys) -> None:  #
     assert matrix.status == 200, matrix.raw
     assert len(matrix.data) == 100
     assert matrix.meta["total"] <= 1000
+    # Cursor pagination covers every repository exactly once, in a stable order.
+    seen: list[int] = []
+    cursor = None
+    pages = 0
+    while True:
+        page = alice.get(
+            f"/api/v1/organizations/{ORG}/security/repositories",
+            sort="name",
+            limit=100,
+            **({"cursor": cursor} if cursor else {}),
+        )
+        assert page.status == 200, page.raw
+        seen.extend(row["repository_id"] for row in page.data)
+        pages += 1
+        cursor = page.meta["next_cursor"]
+        if not cursor:
+            break
+    assert (pages, len(seen), len(set(seen))) == (10, 1000, 1000)
+    assert sorted(seen) == ids
     search = _timed(
         "repository matrix search",
         timings,

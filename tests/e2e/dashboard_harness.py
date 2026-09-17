@@ -502,6 +502,20 @@ class Stack:
         tests see the same versions as before.
         """
         governance = self.service.governance
+        if not self.demo_mode:
+            # The governance seed acts as ada and sam; they are members like in the demo.
+            members = MembershipService(self.service.store, self.service.audit)
+            for user, role in ((SECURITY, Role.SECURITY_MANAGER), (ADMIN, Role.ADMIN)):
+                members.grant(
+                    account_id=ORG,
+                    user_id=user[0],
+                    role=role,
+                    actor=Actor(type=ActorType.SYSTEM, login="e2e"),
+                    login=user[1],
+                )
+                self.github.add_user(
+                    user[0], user[1], {fake.INSTALLATION_ID: {PROJECT.id, WEB.id, DOCS.id}}
+                )
         alice = self.principal(OWNER)
         production = governance.groups.create(
             alice, ORG, name="Production", description="Customer-facing services"

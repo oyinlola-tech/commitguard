@@ -280,32 +280,31 @@ class PolicyExceptionService:
         offset: int = 0,
     ) -> tuple[list[PolicyExceptionView], bool]:
         require(principal, Permission.EXCEPTIONS_READ, account_id)
-        clauses = ["account_id = ?"]
-        params: list[object] = [account_id]
-        if status is not None:
-            if status not in STATUSES:
-                raise InputValidationError("unknown exception status", field="status")
-            clauses.append("status = ?")
-            params.append(status)
-        if rule_id is not None:
-            if rule_id not in DEFAULT_POLICIES:
-                raise InputValidationError("unknown rule", field="rule")
-            clauses.append("rule_id = ?")
-            params.append(rule_id)
-        if repository_id is not None:
-            clauses.append("scope_type = 'repository' AND scope_id = ?")
-            params.append(str(repository_id))
-        if group_id is not None:
-            if not is_hex_id(group_id):
-                raise InputValidationError("group must be a group ID", field="group")
-            clauses.append("scope_type = 'group' AND scope_id = ?")
-            params.append(group_id)
+        if status is not None and status not in STATUSES:
+            raise InputValidationError("unknown exception status", field="status")
+        if rule_id is not None and rule_id not in DEFAULT_POLICIES:
+            raise InputValidationError("unknown rule", field="rule")
+        if group_id is not None and not is_hex_id(group_id):
+            raise InputValidationError("group must be a group ID", field="group")
+        repository_scope = str(repository_id) if repository_id is not None else None
         rows = self._store.query(
-            "SELECT * FROM policy_exceptions WHERE "  # noqa: S608 - constant clauses
-            + " AND ".join(clauses)
-            + " ORDER BY CASE status WHEN 'requested' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, "
+            "SELECT * FROM policy_exceptions WHERE account_id = ? "
+            "AND (? IS NULL OR status = ?) AND (? IS NULL OR rule_id = ?) "
+            "AND (? IS NULL OR (scope_type = 'repository' AND scope_id = ?)) "
+            "AND (? IS NULL OR (scope_type = 'group' AND scope_id = ?)) "
+            "ORDER BY CASE status WHEN 'requested' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, "
             "requested_at DESC LIMIT 5000",
-            params,
+            (
+                account_id,
+                status,
+                status,
+                rule_id,
+                rule_id,
+                repository_scope,
+                repository_scope,
+                group_id,
+                group_id,
+            ),
         )
         visible = visible_repository_ids(self._store, principal, account_id)
         shown = [r for r in rows if self._visible(principal, r, visible)]

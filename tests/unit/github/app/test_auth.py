@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -242,7 +243,8 @@ def test_settings_from_environment(private_key_pem: Secret, tmp_path: Path) -> N
     assert "0123456789abcdef" not in repr(settings)
     assert not private_key_file_too_open(env)
     key_file.chmod(0o644)
-    assert private_key_file_too_open(env)
+    # Group/other permission bits exist only on POSIX; elsewhere the check cannot apply.
+    assert private_key_file_too_open(env) is (os.name == "posix")
 
 
 def test_escaped_newlines_in_private_key_variable(private_key_pem: Secret) -> None:

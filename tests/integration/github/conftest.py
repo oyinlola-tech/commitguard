@@ -212,8 +212,14 @@ def run_ci_process(
         errors="replace",
         check=False,
     )
-    parsed = dict(line.split("=", 1) for line in outputs.read_text().splitlines() if "=" in line)
-    return CIResult(result.returncode, result.stdout, result.stderr, summary.read_text(), parsed)
+    parsed = dict(
+        line.split("=", 1)
+        for line in outputs.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+    return CIResult(
+        result.returncode, result.stdout, result.stderr, summary.read_text(encoding="utf-8"), parsed
+    )
 
 
 @pytest.fixture

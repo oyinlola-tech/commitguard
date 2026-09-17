@@ -6,6 +6,7 @@ import typer
 
 from commitguard import __version__
 from commitguard.cli.commands import (
+    benchmark,
     check,
     ci,
     dashboard,
@@ -61,6 +62,7 @@ app.add_typer(hook.hook_app, name="hook")
 app.add_typer(ci.ci_app, name="ci")
 app.add_typer(github.github_app, name="github")
 app.add_typer(dashboard.dashboard_app, name="dashboard")
+app.add_typer(benchmark.benchmark_app, name="benchmark")
 
 
 def main() -> None:

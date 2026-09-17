@@ -1,5 +1,6 @@
 """Security properties of CI enforcement: untrusted metadata, forks, workflow commands."""
 
+import os
 import re
 from pathlib import Path
 
@@ -25,7 +26,8 @@ def test_malicious_metadata_is_never_executed_or_interpreted(hub, run_ci, gh) ->
     assert not PWNED.exists(), "remove /tmp/commitguard-pwned before running this test"
     dev = hub.dev
     base = dev.git("rev-parse", "main")
-    branch = "feat/$(touch${IFS}/tmp/commitguard-pwned);`id`|x"
+    # '|' is not allowed in file (ref) names on Windows; the shell payloads remain.
+    branch = "feat/$(touch${IFS}/tmp/commitguard-pwned);`id`" + ("|x" if os.name == "posix" else "")
     dev.git("checkout", "--quiet", "-B", branch, base)
     for payload in INJECTIONS:
         dev.commit(
