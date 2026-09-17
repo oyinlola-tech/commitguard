@@ -6,6 +6,78 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security (Phase 10 — three detection bypasses and two ReDoS defects, found by this project's own testing)
+
+- **Detection bypass**: a Unicode letter or number before a trailer key
+  (`\u32acCo-authored-by:`, `\u2460Co-authored-by:`) hid AI attribution. The
+  leading-character rule used Unicode-aware `isalnum()` and ran after NFKC, so
+  such characters joined the key. Trailer keys are ASCII, so the prefix is now
+  whatever precedes the first ASCII letter or digit, judged both before and after
+  NFKC, with the shortest reading winning; Latin look-alikes remain part of the
+  key. Found by property-based fuzzing; dataset 1.2.0; regression tests in
+  `tests/unit/provenance/test_trailers.py`.
+- **Detection bypass**: Unicode default-ignorable code points that are neither
+  control nor format characters (variation selectors, U+034F, Hangul fillers)
+  hid a trailer key or an agent alias — `Co-authored\ufe0f-by:` and
+  `Clau\u034fde Code` were allowed. `normalize_text` now removes every
+  default-ignorable code point (checked against the Unicode 18.0.0 data file).
+  Found by property-based fuzzing; dataset 1.3.0.
+- **ReDoS**: the JWT secret-redaction pattern was quadratic (4.6 s on 80 KB of
+  `eyJ-eyJ-…`), and redaction runs on untrusted text before truncation. Replaced
+  with a linear scan; equivalence checked over 300,000 random strings.
+- **ReDoS**: the workflow `secrets.` check was quadratic (2.7 s on 60 KB of
+  `${{${{…`), and the App inspects workflow files fetched from monitored
+  repositories. Replaced with two linear steps.
+- **Notification delivery**: `commitguard github serve` never loaded the
+  notification settings, so e-mail and webhook notifications were silently never
+  delivered. Both entry points now build the service through one factory.
+- **Documentation-driven dependency confusion**: several pages instructed
+  `pip install 'commitguard[app]'`, which resolves to an unrelated PyPI project.
+  Corrected everywhere; a test now fails if any documentation reintroduces it.
+
+### Added (Phase 10 — external adoption, reproducibility and open source readiness)
+
+- `commitguard reproduce all|security|benchmark|integration|github`: re-runs the
+  published evidence with PASS / FAIL / SKIPPED / NOT RUN statuses. A skipped step
+  is never reported as a pass.
+- `commitguard report security`: assembles `reports/security-report.{json,md}`
+  and `benchmark-report.md` from recorded results and test evidence, labelling
+  every statement Measured, Tested, Observed, Expected or Not tested.
+- Security test suite (`tests/security/`): property-based fuzzing of every parser
+  that handles untrusted input, a ReDoS suite covering all 33 regular expressions
+  in the source, and invariant tests (determinism, detector-order independence,
+  fail-closed behaviour, the mandatory-policy floor). 350 tests now carry the
+  `security` marker; `hypothesis` added to the development dependencies.
+- Dataset versions 1.2.0 (9,157 cases) and 1.3.0 (9,174 cases), written before the
+  runs that exposed the corresponding bypasses.
+- `examples/`: basic, github-actions, github-app, organization-policy, exceptions
+  and policy-rollout, each with expected results — verified by
+  `tests/integration/test_examples.py` against the real engine.
+- `commitguard doctor`: PASS / WARNING / FAIL / NOT CONFIGURED / INFO statuses,
+  runtime dependency and GitHub App configuration checks, and `--json`.
+- `commitguard init`: interactive setup when run by a person, `--install-hooks`,
+  and `--non-interactive` for scripts and CI.
+- Release engineering: `.github/workflows/release.yml` (validation gate, one
+  build, install and smoke test on three operating systems, `SHA256SUMS`, SBOM,
+  draft release) and CI jobs for the security suite, cross-platform validation and
+  package installation.
+- Documentation: `docs/getting-started/quickstart.md`, `docs/cli/`, `docs/api/`,
+  `docs/deployment/`, `docs/operations/runbook.md`, `docs/security/` (threat
+  model, boundaries, authorization matrix, review guide, vulnerability and
+  incident response, supply chain, CI pipeline review), `docs/research/` (18
+  documents), `docs/adr/` (8 records), `docs/maintainers/`, `docs/community/`,
+  `docs/support/`, `docs/evidence/`, `evidence/`, `award-evidence/`, `ROADMAP.md`,
+  `CITATION.cff`, issue forms, pull request template and `CODEOWNERS`.
+
+### Changed (Phase 10)
+
+- `SECURITY.md`: response targets, disclosure policy, safe harbour and the list of
+  fixes to date.
+- The workflow policy test now allows write permissions only in a job of a
+  workflow that no pull request can trigger, instead of banning them outright.
+- README: an installation section (with the PyPI name-collision warning), the
+  reproduction commands and the new documentation index.
+
 ### Added (Phase 8 — organization governance, central policy and enterprise security)
 
 - Organization governance package (`commitguard.governance`) with 65 `/api/v1`

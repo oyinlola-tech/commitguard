@@ -28,13 +28,17 @@
 <br>
 
 > [!NOTE]
-> **Pre-alpha, Phase 8: organization governance and central policy.**
+> **Pre-alpha, Phase 10: measured, reproducible and open to external evaluation.**
 > Local Git hooks stop violations during `git commit` / `git push`; a GitHub
 > Actions check and a webhook-driven GitHub App run the same engine on pull
 > requests, pushes and merge queues; a web dashboard explains what was scanned,
 > what is blocked and why, notifies the people who need to act, and lets an
 > organization govern policy across hundreds of repositories: groups,
 > approvals, scoped exceptions, staged rollouts and an explicit security posture.
+> Detection accuracy, performance and bypass resistance are **measured against a
+> versioned labelled dataset**, and every result - including the runs that failed
+> and exposed real bypasses - is published and reproducible with
+> [`commitguard reproduce`](docs/cli/reproduce.md).
 
 > [!IMPORTANT]
 > **A failing GitHub check blocks merges only when branch protection requires it.**
@@ -175,13 +179,33 @@ Precedence is deterministic: **block > warn > allow**, independent of detector
 order. A detector that crashes blocks (fail closed). See
 [docs/policy-engine.md](docs/policy-engine.md).
 
+## Install
+
+> [!WARNING]
+> **CommitGuard is not on PyPI.** The name `commitguard` there belongs to an
+> unrelated project, so `pip install commitguard` installs someone else's code.
+> Install from this repository, pinned to a commit:
+
+```bash
+pipx install "git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
+
+# or in a virtual environment
+python -m pip install "commitguard @ git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
+
+# or from a clone, for development
+git clone https://github.com/oyinlola-tech/commitguard && cd commitguard
+python -m pip install -e ".[dev]"
+```
+
+Requires Python 3.12+ and Git 2.31+. Full walkthrough:
+[5-minute quick start](docs/getting-started/quickstart.md).
+
 ## Quick start
 
 ```bash
 cd my-project
-commitguard init          # .commitguard.yaml with secure defaults
-commitguard install       # pre-commit, commit-msg and pre-push hooks
-commitguard doctor        # Status: HEALTHY
+commitguard init --install-hooks   # .commitguard.yaml + pre-commit, commit-msg, pre-push
+commitguard doctor                 # Status: HEALTHY
 
 git add .
 git commit -m "implement authentication"   # checked automatically
@@ -345,7 +369,8 @@ preserved and chained; failures block. See [docs/git-hooks.md](docs/git-hooks.md
 
 See [docs/github-enforcement.md](docs/github-enforcement.md).
 
-**GitHub App** (`commitguard github serve`, `pip install 'commitguard[app]'`):
+**GitHub App** (`commitguard github serve`; the App extra adds `cryptography`:
+`python -m pip install "commitguard[app] @ git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"`):
 
 - a centralised service you deploy: install it once on an account or
   organisation and it scans pull requests and pushes of the selected
@@ -567,12 +592,55 @@ npm run build && npm run e2e      # browser tests against the full stack
 - [Security posture](docs/security-posture.md)
 - [Compliance reporting](docs/compliance-reporting.md)
 - [Recovery and failure handling](docs/recovery.md)
-- [Deployment](docs/deployment.md)
-- [Threat model](docs/threat-model.md)
+- [Deployment](docs/deployment/) — local, GitHub Actions, GitHub App, organization, production
+
+**Getting started and reference**
+
+- [5-minute quick start](docs/getting-started/quickstart.md)
+- [Examples](examples/) — each one verified by a test against the real engine
+- [CLI reference](docs/cli/) — every command, option and exit code
+- [API reference](docs/api/)
+- [Troubleshooting](docs/deployment/troubleshooting.md) · [Operations runbook](docs/operations/runbook.md)
+- [Compatibility matrix](docs/support/compatibility.md)
+
+**Security**
+
+- [Security documentation](docs/security/) — threat model, boundaries, authorization matrix, review guide
+- [Vulnerability response](docs/security/vulnerability-response.md) · [Incident response](docs/security/incident-response.md)
+- [Supply chain](docs/security/supply-chain.md) — including the gaps
+
+**Research and evidence**
+
+- [Research index](docs/research/) — question, methodology, evaluations, limitations
+- [Detection evaluation](docs/research/detection-evaluation.md) — accuracy, and the bypasses these benchmarks found
+- [Performance evaluation](docs/research/performance-evaluation.md) · [Bypass resistance](docs/research/bypass-resistance.md)
+- [Reproducibility](docs/research/reproducibility.md) — re-run all of it yourself
+- [Limitations](docs/research/limitations.md) — read this one
+- [Decision records](docs/adr/) · [Evidence timeline](docs/evidence/timeline.md) · [Validation matrix](docs/evidence/validation-matrix.md)
+
+**Project**
+
+- [Roadmap](ROADMAP.md) · [Maintainer docs](docs/maintainers/) · [Community](docs/community/)
+
+## Evidence, in one command
+
+```bash
+commitguard reproduce all --evidence-dir evidence/security --results benchmarks/results
+commitguard report security --results benchmarks/results --evidence evidence/security
+```
+
+Rebuilds the labelled dataset, verifies its fingerprint against the published
+files, re-measures detection, runs 350 security tests, and regenerates the reports.
+A step that cannot run reports `SKIPPED` with a reason — never a pass.
+
+Measured 2026-09-17 on this machine: **0 false negatives and 0 false positives on
+9,174 labelled cases**, after three real bypasses that these benchmarks found were
+fixed. [All thirteen runs, including the failures](benchmarks/results/), are kept.
 
 ## Contributing, security, license
 
-- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md) · [good first issues](docs/community/good-first-issues.md)
 - [SECURITY.md](SECURITY.md) — please report vulnerabilities and detection bypasses privately
+- [External evaluation](docs/community/external-evaluation.md) — the most useful thing you can contribute
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- [MIT License](LICENSE)
+- [MIT License](LICENSE) · [CITATION.cff](CITATION.cff)

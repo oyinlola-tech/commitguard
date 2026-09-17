@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+title: "CommitGuard: Git commit provenance and contribution policy enforcement"
+message: "If you reference this project, please cite it as below."
+type: software
+authors:
+  - family-names: Oyinlola
+    given-names: Oluwayemi
+repository-code: "https://github.com/oyinlola-tech/commitguard"
+url: "https://github.com/oyinlola-tech/commitguard"
+abstract: >-
+  CommitGuard is a defence-in-depth security system for enforcing configurable Git
+  contribution policies across developer machines, GitHub repositories and
+  organizations, with centralised policy governance, auditable security decisions
+  and reproducible security validation. Its detection accuracy is measured against
+  a versioned labelled dataset, and its benchmark results, including failing runs,
+  are published immutably.
+keywords:
+  - git
+  - security
+  - provenance
+  - policy-enforcement
+  - ai-attribution
+  - software-supply-chain
+license: MIT
+version: 0.1.0.dev0
+date-released: "2026-09-17"
