@@ -60,10 +60,9 @@ def test_staged_rollout_pilot_expand_pause_and_rollback(dash, fleet, clock) -> N
         },
         rollout={"stages": [{"name": "Pilot", "repositories": pilot}, {"percent": 50}]},
     )
-    rollout_id = published["rollout_id"]
-    assert rollout_id is None or rollout_id  # the draft does not store it; list rollouts instead
     [rollout] = ada.get(f"/api/v1/organizations/{ORG}/rollouts", active="true").data
     rollout_id = rollout["id"]
+    assert published["rollout_id"] == rollout_id  # the draft links to the rollout it started
     assert (rollout["state"], rollout["from_version"], rollout["to_version"]) == ("pilot", 1, 2)
     assert rollout["enrolled"] == 10
     assert rollout["scope_repositories"] == 100

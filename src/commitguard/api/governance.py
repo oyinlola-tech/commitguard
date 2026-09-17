@@ -502,6 +502,7 @@ class GovernanceRoutes:
                 defaults=defaults,
                 title=body.get("title"),
                 reason=body.get("reason"),
+                rebase=_flag(body.get("rebase"), "rebase"),
             )
         )
 
@@ -572,6 +573,7 @@ class GovernanceRoutes:
             principal,
             request.params["draft_id"],
             confirm_weakening=_flag(body.get("confirm_weakening"), "confirm_weakening"),
+            reason=body.get("reason"),
             rollout=self._rollout_hook(principal, body.get("rollout")),
         )
         return ok(view)
@@ -681,6 +683,7 @@ class GovernanceRoutes:
             status=request.arg("status"),
             rule_id=request.arg("rule"),
             repository_id=int(repository) if repository else None,
+            group_id=request.arg("group"),
             limit=limit,
             offset=offset,
         )

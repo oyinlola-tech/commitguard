@@ -156,6 +156,34 @@ def test_weakening_draft_needs_confirmation_and_rebases_on_conflict(dash) -> Non
     conflict = ada.post(f"/api/v1/policy-drafts/{draft['id']}/publish", {"confirm_weakening": True})
     assert conflict.status == 409
     assert conflict.error["code"] == "CONFLICT"
+    assert (view["can_cancel"], view["can_emergency_publish"]) == (True, False)  # ada is admin
+
+    # Rebasing on the current version makes the draft publishable again, and its diff is
+    # computed against what is published now.
+    rebased = ada.request(
+        "PATCH",
+        f"/api/v1/policy-drafts/{draft['id']}",
+        body={"expected_revision": view["revision"], "rebase": True, "reason": ""},
+    )
+    assert rebased.status == 200, rebased.raw
+    assert (rebased.data["base_version"], rebased.data["rebase_required"]) == (2, False)
+    missing_reason = ada.post(
+        f"/api/v1/policy-drafts/{draft['id']}/publish", {"confirm_weakening": True}
+    )
+    assert missing_reason.status == 400  # weakening needs a reason; the draft has none now
+    published = ada.post(
+        f"/api/v1/policy-drafts/{draft['id']}/publish",
+        {"confirm_weakening": True, "reason": "migration window"},
+    )
+    assert published.status == 200, published.raw
+    assert (published.data["state"], published.data["published_version"]) == ("published", 3)
+    # A published draft keeps showing what it changed (v2 -> v3), not a diff against itself.
+    changed = {c["policy_id"] for c in published.data["changes"]}
+    assert "ai_coauthor" in changed
+    assert (published.data["diff"]["from_version"], published.data["diff"]["to_version"]) == (2, 3)
+    assert (published.data["can_cancel"], published.data["can_publish"]) == (False, False)
+    [event] = _audit(ada, "policy_draft_updated")
+    assert event["data"]["rebased"] is True
 
 
 def test_emergency_publication_is_owner_only_reasoned_and_loud(dash) -> None:  # type: ignore[no-untyped-def]
@@ -190,7 +218,10 @@ def test_settings_weakening_needs_confirmation_reason_and_recent_sign_in(dash, c
     _require_approval(alice)
     path = f"/api/v1/organizations/{ORG}/settings"
     relax = {"expected_version": 1, "settings": {"require_policy_approval": False}}
-    assert alice.put(path, relax).status == 409  # CONFIRMATION_REQUIRED
+    unconfirmed = alice.put(path, relax)
+    assert unconfirmed.status == 409
+    assert unconfirmed.error["code"] == "CONFIRMATION_REQUIRED"
+    assert unconfirmed.error["details"] == {"changes": ["policy approval no longer required"]}
     assert alice.put(path, {**relax, "confirm": True}).status == 400  # reason
     clock.advance(minutes=20)
     stale = alice.put(path, {**relax, "confirm": True, "reason": "pilot finished"})
@@ -361,6 +392,26 @@ def test_exception_revocation_and_scope_rules(dash, clock) -> None:  # type: ign
     listed = ada.get(path, status="revoked").data
     assert [e["id"] for e in listed] == [low.data["id"]]
     assert dash.sign_in(BOB).get(f"/api/v1/exceptions/{low.data['id']}").status == 404
+
+    # Group exceptions can be listed by group; the repository filter stays repository-scoped.
+    group = ada.post(f"/api/v1/organizations/{ORG}/repository-groups", {"name": "Legacy"}).data
+    grouped = sam.post(
+        path,
+        {
+            "rule_id": "bot_identity",
+            "scope_type": "group",
+            "scope_id": group["id"],
+            "action": "allow",
+            "reason": "release bots during migration",
+            "expires_at": expires,
+        },
+    )
+    assert grouped.status == 201, grouped.raw
+    by_group = ada.get(path, group=group["id"]).data
+    assert [e["id"] for e in by_group] == [grouped.data["id"]]
+    assert grouped.data["id"] not in {e["id"] for e in ada.get(path, repository=REPO).data}
+    invalid = ada.get(path, group="not-a-group")
+    assert (invalid.status, invalid.error["field"]) == (400, "group")
 
 
 def test_removed_member_loses_access_on_the_next_request(dash) -> None:  # type: ignore[no-untyped-def]

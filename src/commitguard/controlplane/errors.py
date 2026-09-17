@@ -59,6 +59,10 @@ class ConfirmationRequiredError(ControlPlaneError):
     code = "CONFIRMATION_REQUIRED"
     status = 409
 
+    def __init__(self, message: str, *, changes: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.changes = changes  # what the change relaxes, one entry per control
+
 
 class ApprovalRequiredError(ControlPlaneError):
     """The organization requires policy changes to be approved before publication."""

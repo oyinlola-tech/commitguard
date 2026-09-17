@@ -294,7 +294,8 @@ class OrganizationSettingsService:
             if not confirm:
                 raise ConfirmationRequiredError(
                     "This change relaxes security controls and must be confirmed: "
-                    + "; ".join(weakening)
+                    + "; ".join(weakening),
+                    changes=tuple(weakening),
                 )
             if now - principal.authenticated_at > REAUTHENTICATION_WINDOW:
                 raise ReauthenticationRequiredError()

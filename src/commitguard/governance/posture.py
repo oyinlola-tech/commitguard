@@ -407,8 +407,22 @@ class SecurityPostureService:
         ):
             if int(row["repository_id"]) in extras:
                 extras[int(row["repository_id"])]["archived"] = bool(row["archived"])
+        # The organization policy version of each repository's latest completed scan
+        # (also scans recorded before Phase 8, which carry no governance record).
         for row in self._store.query(
-            "SELECT j.repository_id, j.governance, j.organization_policy_version FROM scan_jobs j "
+            "SELECT j.repository_id, j.organization_policy_version FROM scan_jobs j JOIN "
+            "installations i ON i.installation_id = j.installation_id WHERE i.account_id = ? "
+            "AND j.completed_at IS NOT NULL AND j.sequence = (SELECT MAX(n.sequence) FROM "
+            "scan_jobs n WHERE n.installation_id = j.installation_id AND n.repository_id = "
+            "j.repository_id AND n.completed_at IS NOT NULL)",
+            (account_id,),
+        ):
+            if int(row["repository_id"]) in extras:
+                extras[int(row["repository_id"])]["organization_policy_version"] = row[
+                    "organization_policy_version"
+                ]
+        for row in self._store.query(
+            "SELECT j.repository_id, j.governance FROM scan_jobs j "
             "JOIN installations i ON i.installation_id = j.installation_id WHERE "
             "i.account_id = ? AND j.governance IS NOT NULL AND j.sequence = (SELECT "
             "MAX(n.sequence) "
@@ -419,9 +433,6 @@ class SecurityPostureService:
             repository_id = int(row["repository_id"])
             if repository_id not in extras:
                 continue
-            extras[repository_id]["organization_policy_version"] = row[
-                "organization_policy_version"
-            ]
             try:
                 record = json.loads(str(row["governance"]))
                 effective = record.get("effective")
@@ -723,7 +734,9 @@ class SecurityPostureService:
         elif exceptions == "none":
             items = [p for p in items if not p.active_exceptions]
         elif exceptions:
-            raise InputValidationError("exceptions must be active, expiring or none")
+            raise InputValidationError(
+                "exceptions must be active, expiring or none", field="exceptions"
+            )
         severity = filters.get("severity")
         if severity == "critical":
             items = [p for p in items if p.critical_open]
@@ -1219,7 +1232,8 @@ class SecurityPostureService:
         require(principal, Permission.SECURITY_READ, account_id)
         rows = self._store.query(
             "SELECT e.event_id, e.type, e.severity, e.title, e.body, e.repository_id, "
-            "e.last_occurred_at, e.occurrences, a.acknowledged_by_login, a.acknowledged_at FROM "
+            "e.resource_type, e.resource_id, e.last_occurred_at, e.occurrences, "
+            "a.acknowledged_by_login, a.acknowledged_at FROM "
             "notification_events e LEFT JOIN notification_acknowledgements a ON a.event_id = "
             "e.event_id WHERE e.account_id = ? AND e.severity IN ('critical', 'high') "
             "ORDER BY e.last_occurred_at DESC LIMIT 50",
@@ -1231,6 +1245,9 @@ class SecurityPostureService:
                 "id": str(r["event_id"]),
                 "type": str(r["type"]),
                 "severity": str(r["severity"]),
+                "repository_id": r["repository_id"],
+                "resource_type": str(r["resource_type"]),
+                "resource_id": str(r["resource_id"]),
                 "title": str(r["title"]),
                 "body": str(r["body"]),
                 "occurrences": int(r["occurrences"]),

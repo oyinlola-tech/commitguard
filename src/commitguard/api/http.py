@@ -62,6 +62,7 @@ class ApiError(Exception):
         *,
         field: str | None = None,
         headers: Iterable[tuple[str, str]] = (),
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -69,10 +70,18 @@ class ApiError(Exception):
         self.message = message
         self.field = field
         self.headers = tuple(headers)
+        self.details = details
 
     @classmethod
     def from_control_plane(cls, exc: ControlPlaneError) -> "ApiError":
-        return cls(exc.status, exc.code, str(exc), field=getattr(exc, "field", None))
+        changes = getattr(exc, "changes", ())
+        return cls(
+            exc.status,
+            exc.code,
+            str(exc),
+            field=getattr(exc, "field", None),
+            details={"changes": list(changes)} if changes else None,
+        )
 
 
 def bad_request(message: str, field: str | None = None) -> ApiError:
@@ -230,6 +239,8 @@ def error_response(exc: ApiError, request_id: str) -> Response:
     error: dict[str, Any] = {"code": exc.code, "message": exc.message, "request_id": request_id}
     if exc.field:
         error["field"] = exc.field
+    if exc.details:
+        error["details"] = exc.details
     return Response(
         exc.status,
         json_body({"error": error}),

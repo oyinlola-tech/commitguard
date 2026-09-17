@@ -136,6 +136,8 @@ class PolicyDraftView(BaseModel):
     can_submit: bool
     can_approve: bool
     can_publish: bool
+    can_cancel: bool
+    can_emergency_publish: bool
 
 
 def parse_target(target_type: object, target_id: object) -> PolicyTarget:
@@ -239,17 +241,24 @@ class PolicyWorkflowService:
         target = self._target_of(row)
         floors, defaults = parse_document(str(row["document"]))
         current = self._policies.current(account_id, target)
-        changes = policy_changes(current.floors, floors, current.defaults, defaults)
-        diff = policy_diff(
-            current.version,
-            current.floors,
-            current.version + 1,
-            floors,
-            current.defaults,
-            defaults,
-        )
-        settings = load_settings(self._store, account_id).settings
         state = str(row["state"])
+        published_version = row["published_version"]
+        if state == "published" and published_version is not None:
+            # What this draft changed when it was published, not against today's policy.
+            before = (
+                self._policies.version(account_id, int(published_version) - 1, target)
+                if int(published_version) > 1
+                else None
+            )
+            old_version, new_version = int(published_version) - 1, int(published_version)
+            old_floors = before.floors if before else {}
+            old_defaults = before.defaults if before else {}
+        else:
+            old_version, new_version = current.version, current.version + 1
+            old_floors, old_defaults = current.floors, current.defaults
+        changes = policy_changes(old_floors, floors, old_defaults, defaults)
+        diff = policy_diff(old_version, old_floors, new_version, floors, old_defaults, defaults)
+        settings = load_settings(self._store, account_id).settings
         approvals = tuple(
             PolicyApprovalView(
                 id=a["approval_id"],
@@ -312,6 +321,10 @@ class PolicyWorkflowService:
             can_publish=state in ("draft", "approved")
             and principal.can(Permission.POLICIES_PUBLISH, account_id)
             and (state == "approved" or not settings.require_policy_approval),
+            can_cancel=state in ("draft", "pending_approval", "approved", "rejected")
+            and principal.can(Permission.POLICIES_WRITE, account_id),
+            can_emergency_publish=state in ("draft", "pending_approval", "approved")
+            and principal.can(Permission.POLICIES_EMERGENCY, account_id),
         )
 
     # -- reads ------------------------------------------------------------ #
@@ -421,7 +434,9 @@ class PolicyWorkflowService:
         defaults: dict[str, Action] | None,
         title: object,
         reason: object,
+        rebase: bool = False,
     ) -> PolicyDraftView:
+        """Edit a draft. ``rebase`` bases it on the target's current version."""
         row = self._authorized_draft(principal, draft_id, Permission.POLICIES_WRITE)
         account_id = int(row["account_id"])
         state = str(row["state"])
@@ -442,17 +457,22 @@ class PolicyWorkflowService:
         clean_reason = (
             text(reason, "reason", limit=MAX_REASON_CHARS) if reason is not None else row["reason"]
         )
+        base_version = int(row["base_version"])
+        if rebase:
+            base_version = self._policies.current(account_id, self._target_of(row)).version
         now = self._now()
         with self._store.transaction() as db:
             changed = db.execute(
                 "UPDATE policy_drafts SET document = ?, fingerprint = ?, title = ?, reason = ?, "
-                "state = 'draft', revision = revision + 1, updated_at = ? WHERE draft_id = ? "
-                "AND revision = ? AND state IN ('draft', 'approved', 'rejected')",
+                "base_version = ?, state = 'draft', revision = revision + 1, updated_at = ? "
+                "WHERE draft_id = ? AND revision = ? AND state IN ('draft', 'approved', "
+                "'rejected')",
                 (
                     document,
                     sha256_hex(document.encode("utf-8")),
                     clean_title,
                     clean_reason,
+                    base_version,
                     ts(now),
                     draft_id,
                     expected_revision,
@@ -476,6 +496,8 @@ class PolicyWorkflowService:
                     account_id=account_id,
                     draft=draft_id,
                     revision=int(row["revision"]) + 1,
+                    base_version=base_version,
+                    rebased=base_version != int(row["base_version"]),
                 ),
             )
         self._audit.log_stored(stored)
@@ -662,7 +684,7 @@ class PolicyWorkflowService:
                 "This organization requires policy changes to be approved before they are "
                 "published. Submit the draft for approval, or use an emergency publication."
             )
-        emergency_reason = text(reason, "reason", limit=MAX_REASON_CHARS, required=emergency)
+        publish_reason = text(reason, "reason", limit=MAX_REASON_CHARS, required=emergency)
         target = self._target_of(row)
         floors, defaults = parse_document(str(row["document"]))
         now = self._now()
@@ -683,6 +705,12 @@ class PolicyWorkflowService:
             )
             if rollout is not None:
                 rollout(db, published)
+                db.execute(
+                    "UPDATE policy_drafts SET rollout_id = (SELECT rollout_id FROM "
+                    "policy_rollouts WHERE account_id = ? AND target_type = ? AND target_id = ? "
+                    "AND to_version = ?) WHERE draft_id = ?",
+                    (account_id, target.type.value, target.id, published.version, draft_id),
+                )
 
         self._policies.update(
             account_id=account_id,
@@ -691,7 +719,7 @@ class PolicyWorkflowService:
             expected_version=int(row["base_version"]),
             floors=floors,
             defaults=defaults,
-            reason=emergency_reason or row["reason"],
+            reason=publish_reason or row["reason"],
             confirm_weakening=confirm_weakening,
             target=target,
             draft_id=draft_id,

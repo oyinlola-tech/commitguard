@@ -275,6 +275,7 @@ class PolicyExceptionService:
         status: str | None = None,
         rule_id: str | None = None,
         repository_id: int | None = None,
+        group_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[PolicyExceptionView], bool]:
@@ -294,6 +295,11 @@ class PolicyExceptionService:
         if repository_id is not None:
             clauses.append("scope_type = 'repository' AND scope_id = ?")
             params.append(str(repository_id))
+        if group_id is not None:
+            if not is_hex_id(group_id):
+                raise InputValidationError("group must be a group ID", field="group")
+            clauses.append("scope_type = 'group' AND scope_id = ?")
+            params.append(group_id)
         rows = self._store.query(
             "SELECT * FROM policy_exceptions WHERE "  # noqa: S608 - constant clauses
             + " AND ".join(clauses)

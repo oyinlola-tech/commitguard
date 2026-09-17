@@ -118,6 +118,8 @@ def test_disconnected_installation_puts_the_organization_at_risk_and_recovers(
     events = alice.get(f"/api/v1/organizations/{ORG}/security/events").data
     critical = [e for e in events if e["type"] == "installation_disconnected"]
     assert critical
+    assert critical[0]["resource_type"] == "installation"
+    assert critical[0]["resource_id"] == str(INSTALLATION)
 
     # A security manager acknowledges it; acknowledging resolves nothing.
     sam = dash.sign_in(SAM)
@@ -298,6 +300,15 @@ def test_organization_overview_counts_and_trends(dash, ops, hub, clock) -> None:
     assert alice.get(f"/api/v1/organizations/{ORG}/security/trends", days=0).status == 400
     policies = alice.get(f"/api/v1/organizations/{ORG}/security/policies").data
     assert policies["propagation"]["repositories"] == 1
+
+    # The matrix shows the organization policy version of the latest scan, including scans
+    # recorded without a governance record (before Phase 8).
+    with dash.store.transaction() as db:
+        db.execute("UPDATE scan_jobs SET governance = NULL, organization_policy_version = 1")
+    matrix = alice.get(f"/api/v1/organizations/{ORG}/security/repositories").data
+    assert [(r["organization_policy_version"], r["drift"]) for r in matrix] == [(1, "unknown")]
+    bad_filter = alice.get(f"/api/v1/organizations/{ORG}/security/repositories", exceptions="x")
+    assert (bad_filter.status, bad_filter.error["field"]) == (400, "exceptions")
 
     # Repository counts cover only what the viewer can see on GitHub.
     overview = alice.get(f"/api/v1/organizations/{ORG}/security/overview").data
