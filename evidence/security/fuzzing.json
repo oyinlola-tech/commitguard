@@ -1,0 +1,32 @@
+{
+  "derandomized": true,
+  "examples_per_property_setting": 300,
+  "executed": {
+    "SecretRedactor.redact": 300,
+    "analyzer: AI co-author appended to arbitrary text": 300,
+    "analyzer: determinism": 150,
+    "analyzer: disguised AI co-author trailer": 300,
+    "analyzer: human trailers with list prefixes": 300,
+    "analyzer: mandatory floor decisions": 300,
+    "controlplane.pagination": 300,
+    "encode_cursor/decode_cursor": 300,
+    "engine: detector order independence": 300,
+    "engine: fail closed": 300,
+    "escape_markdown": 300,
+    "normalize_text": 300,
+    "normalize_webhook: mutated payloads": 300,
+    "parse_config: arbitrary text": 300,
+    "parse_config: structured documents": 300,
+    "parse_identity": 300,
+    "parse_json_object": 300,
+    "parse_trailers: arbitrary text": 300,
+    "policies: mandatory floor": 300,
+    "policies: unknown rule": 150,
+    "redact: GitHub token shapes": 576,
+    "sanitize_for_terminal": 300,
+    "security.validation": 300,
+    "split_full_name": 300,
+    "verify_signature": 300
+  },
+  "total_executed": 7476
+}

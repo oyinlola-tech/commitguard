@@ -1,0 +1,1333 @@
+{
+  "commitguard_version": "0.1.0.dev0",
+  "evidence_directory": "evidence/security",
+  "experiments": [
+    {
+      "area": "GitHub App webhooks",
+      "attack": "Deliver a pull_request webhook signed with a wrong secret, a correctly signed body altered after signing, and an unsigned body",
+      "consequence": "An attacker without the webhook secret cannot trigger or suppress scans",
+      "expected": "All rejected before parsing; no scan, no check",
+      "experiment": "webhook-forgery",
+      "limitation": "A leaked webhook secret defeats this control; rotate it",
+      "mitigation": "HMAC-SHA256 signature verified in constant time over the raw body",
+      "observed": "HTTP 401 (wrong secret), 401 (altered body), 401 (unsigned), reasons [\"{'error': 'invalid webhook signature'}\", \"{'error': 'invalid webhook signature'}\", \"{'error': 'missing webhook signature'}\"]; scans processed 0; check runs before the control 0; correctly signed control: {'status': 'queued'}",
+      "outcome": "prevented",
+      "test": "tests/integration/github/app/security/test_server_enforcement_experiments.py::test_forged_and_tampered_webhooks_are_rejected"
+    },
+    {
+      "area": "GitHub App events",
+      "attack": "Redeliver an old webhook (same delivery ID), then deliver the old event again under a new delivery ID after a newer commit was scanned",
+      "consequence": "A PASS for an outdated commit cannot hide a violation added later",
+      "expected": "The replay is a duplicate; the late event cannot turn the pull request's newer BLOCK into a PASS",
+      "experiment": "replay-and-out-of-order",
+      "limitation": "Checks are per commit SHA: an old commit's own check can still show its old result, which is correct for that SHA",
+      "mitigation": "Delivery records with payload digests; check ownership per repository, SHA and check name; newest-scan-wins",
+      "observed": "replay response {'status': 'duplicate'}; late event response {'status': 'duplicate'}; newest commit check still failure; old commit job states ['passed']",
+      "outcome": "prevented",
+      "test": "tests/integration/github/app/security/test_server_enforcement_experiments.py::test_replayed_and_out_of_order_events_cannot_overwrite_newer_decisions"
+    },
+    {
+      "area": "reliability",
+      "attack": "GitHub's API is unreachable during a scan of a clean commit; separately, the installation's Checks permission is reduced to read",
+      "consequence": "A required check stays unsatisfied; merges wait instead of passing unverified code",
+      "expected": "Neither produces a successful check (fail closed)",
+      "experiment": "github-unavailable-and-permissions-revoked",
+      "limitation": "Availability: while GitHub or the service is down, required checks block merging",
+      "mitigation": "Bounded retries, then ERROR; never a success conclusion without a completed evaluation",
+      "observed": "outage: job error (infrastructure), check conclusions []; revoked: job error (authorization), check runs 0",
+      "outcome": "prevented",
+      "test": "tests/integration/github/app/security/test_server_enforcement_experiments.py::test_github_unavailable_and_revoked_permissions_never_pass"
+    },
+    {
+      "area": "GitHub checks",
+      "attack": "Re-run the passing check of an outdated commit after a violating commit was pushed; queue a pull request whose own head passed while an AI-attributed change is queued ahead of it",
+      "consequence": "Neither a stale re-run nor a queue candidate can inherit an earlier PASS",
+      "expected": "The stale re-run is refused; the merge group commit is scanned itself and blocked",
+      "experiment": "stale-rerun-and-merge-queue",
+      "limitation": "Requires the repository's merge queue to require the CommitGuard check",
+      "mitigation": "Re-runs only for the newest commit of a pull request or branch; merge_group events scan base..merge-group SHA",
+      "observed": "stale re-run response {'status': 'ignored'}; newest pull request check failure; pull request head check success; merge group 268db8c11243 check failure",
+      "outcome": "prevented",
+      "test": "tests/integration/github/app/security/test_server_enforcement_experiments.py::test_stale_rerun_and_merge_queue_candidate"
+    },
+    {
+      "area": "central policy",
+      "attack": "The repository's merged (trusted) .commitguard.yaml disables ai_coauthor",
+      "consequence": "Repository administrators cannot opt out of organization requirements",
+      "expected": "Without a central floor the repository decides; with a mandatory policy the rule still blocks",
+      "experiment": "mandatory-policy-floor",
+      "limitation": "Only repositories scanned by the GitHub App with the floor configured are covered; GitHub Actions uses repository configuration",
+      "mitigation": "Mandatory policy floors (service policy, Phase 8 organization/group mandatory entries)",
+      "observed": "without mandatory policy: success; with mandatory policy: failure",
+      "outcome": "prevented",
+      "test": "tests/integration/github/app/security/test_server_enforcement_experiments.py::test_mandatory_policy_floor_beats_repository_configuration"
+    },
+    {
+      "area": "reliability",
+      "attack": "The service database fails while a webhook is received",
+      "consequence": "No false PASS; the event is not lost if GitHub redelivers it",
+      "expected": "The webhook is answered with an error (so GitHub can redeliver); no check is reported as passing; a redelivery after recovery is processed",
+      "experiment": "database-unavailable",
+      "limitation": "GitHub does not redeliver automatically: an operator must redeliver from the App's delivery log",
+      "mitigation": "Event recorded before processing; errors surface as 5xx; redelivery processed",
+      "observed": "HTTP 500 {\"error\": \"internal error\"}; scans processed 0; checks while down []; redelivery response {'status': 'queued'}; check after recovery success",
+      "outcome": "prevented",
+      "test": "tests/integration/github/app/security/test_server_enforcement_experiments.py::test_database_unavailable_fails_closed"
+    },
+    {
+      "area": "GitHub integration",
+      "attack": "The GitHub App installation is suspended, then a pull request is opened",
+      "consequence": "Enforcement stops while suspended and the dashboard shows repositories at risk instead of protected",
+      "expected": "State recorded, audit event and notification created, no passing check",
+      "experiment": "installation-disconnect",
+      "limitation": "While suspended GitHub sends no events and no check is created; only a required check keeps merges blocked",
+      "mitigation": "Installation lifecycle events, critical notification, AT RISK posture",
+      "observed": "installation state suspended; scans processed 0; checks []; audit contains installation_suspended: True; notification installation_disconnected: True",
+      "outcome": "detected",
+      "test": "tests/integration/github/app/security/test_server_enforcement_experiments.py::test_installation_disconnect_is_visible_and_never_passes"
+    },
+    {
+      "area": "local hooks",
+      "attack": "git commit --no-verify and git push --no-verify with an AI co-author trailer",
+      "consequence": "The violating commit reaches the remote branch but cannot be merged while the check is required",
+      "expected": "Local hooks are skipped; the pull request check blocks the commit",
+      "experiment": "no-verify",
+      "limitation": "Without a required check, a --no-verify push can be merged; CommitGuard cannot configure branch protection",
+      "mitigation": "Server-side check (GitHub Actions or GitHub App) required by branch protection or a ruleset",
+      "observed": "normal commit exit 1; --no-verify commit exit 0; --no-verify push exit 0; pull request check exit 1 (BLOCK); modelled required-check gate allows merge: False",
+      "outcome": "detected",
+      "test": "tests/integration/github/security/test_bypass_resistance.py::test_no_verify_commit_and_push_are_caught_server_side"
+    },
+    {
+      "area": "local hooks",
+      "attack": "Delete the pre-commit, commit-msg and pre-push hook files, then commit and push",
+      "consequence": "Local prevention is lost silently until doctor is run",
+      "expected": "Local enforcement is gone; doctor reports it; the pull request check blocks",
+      "experiment": "deleted-hooks",
+      "limitation": "Git gives hooks no integrity protection; a developer controls their own .git/hooks",
+      "mitigation": "commitguard doctor; server-side required check",
+      "observed": "commit exit 0 (allowed); doctor exit 2, reports missing hooks: True; pull request check exit 1 (BLOCK)",
+      "outcome": "detected",
+      "test": "tests/integration/github/security/test_bypass_resistance.py::test_deleted_hooks_are_reported_by_doctor_and_caught_server_side"
+    },
+    {
+      "area": "local hooks",
+      "attack": "Edit the managed hook block so it exits 0 before running CommitGuard",
+      "consequence": "Local prevention silently disabled for this clone",
+      "expected": "The edited hook allows the commit; doctor flags the checksum mismatch; the pull request check blocks",
+      "experiment": "modified-hooks",
+      "limitation": "A checksum detects edits only when doctor runs; it does not prevent them",
+      "mitigation": "Managed-block checksum reported by commitguard doctor; server-side required check",
+      "observed": "commit exit 0; doctor reports modified hooks: True; pull request check exit 1 (BLOCK)",
+      "outcome": "detected",
+      "test": "tests/integration/github/security/test_bypass_resistance.py::test_modified_hook_is_detected_by_checksum_and_caught_server_side"
+    },
+    {
+      "area": "local hooks",
+      "attack": "Point core.hooksPath at an empty directory; separately, commit from a fresh clone without installing hooks",
+      "consequence": "Any clone without CommitGuard hooks has no local enforcement",
+      "expected": "Both commits are allowed locally; both pull request checks block",
+      "experiment": "hooks-path-and-clone",
+      "limitation": "Hooks are per clone and opt-in by design of Git",
+      "mitigation": "Server-side required check; commitguard install --global for developer machines",
+      "observed": "core.hooksPath commit exit 0; fresh clone commit exit 0; pull request checks exit 1 and 1",
+      "outcome": "detected",
+      "test": "tests/integration/github/security/test_bypass_resistance.py::test_redirected_hooks_path_and_fresh_clone_are_caught_server_side"
+    },
+    {
+      "area": "repository configuration",
+      "attack": "In the pull request itself, disable ai_coauthor, set it to allow, or delete .commitguard.yaml",
+      "consequence": "A pull request cannot relax the policy that evaluates it",
+      "expected": "Policy is read from the pull request base; every variant is blocked",
+      "experiment": "policy-tampering-in-pull-request",
+      "limitation": "Once a relaxing change is merged into the base branch it applies to later pull requests, unless an organization mandatory policy (GitHub App) sets a floor",
+      "mitigation": "Trusted policy source: the base commit (Phase 4)",
+      "observed": "pull request check exit codes: disable=1, allow=1, delete=1",
+      "outcome": "prevented",
+      "test": "tests/integration/github/security/test_bypass_resistance.py::test_pull_request_cannot_weaken_its_own_policy"
+    },
+    {
+      "area": "GitHub Actions",
+      "attack": "A pull request removes or neuters the CommitGuard workflow so no check runs",
+      "consequence": "Only branch protection that requires the check stops the merge; the GitHub App check does not depend on the repository's workflow files",
+      "expected": "No successful required check exists, so a required-check gate refuses the merge",
+      "experiment": "ci-workflow-removal",
+      "limitation": "Modelled gate, not GitHub: verifying the real branch protection needs a GitHub repository (see docs/research/github-enforcement-validation.md)",
+      "mitigation": "Require the check in branch protection or a ruleset; prefer the GitHub App, which runs outside the repository",
+      "observed": "no check conclusion for c61279998f75; modelled gate allows merge: False",
+      "outcome": "prevented",
+      "test": "tests/integration/github/security/test_bypass_resistance.py::test_ci_bypass_by_removing_the_workflow_leaves_no_successful_check"
+    }
+  ],
+  "fuzzing": {
+    "derandomized": true,
+    "examples_per_property_setting": 300,
+    "executed": {
+      "SecretRedactor.redact": 300,
+      "analyzer: AI co-author appended to arbitrary text": 300,
+      "analyzer: determinism": 150,
+      "analyzer: disguised AI co-author trailer": 300,
+      "analyzer: human trailers with list prefixes": 300,
+      "analyzer: mandatory floor decisions": 300,
+      "controlplane.pagination": 300,
+      "encode_cursor/decode_cursor": 300,
+      "engine: detector order independence": 300,
+      "engine: fail closed": 300,
+      "escape_markdown": 300,
+      "normalize_text": 300,
+      "normalize_webhook: mutated payloads": 300,
+      "parse_config: arbitrary text": 300,
+      "parse_config: structured documents": 300,
+      "parse_identity": 300,
+      "parse_json_object": 300,
+      "parse_trailers: arbitrary text": 300,
+      "policies: mandatory floor": 300,
+      "policies: unknown rule": 150,
+      "redact: GitHub token shapes": 576,
+      "sanitize_for_terminal": 300,
+      "security.validation": 300,
+      "split_full_name": 300,
+      "verify_signature": 300
+    },
+    "total_executed": 7476
+  },
+  "generated_at": "2026-09-17T20:24:22.154855+00:00",
+  "history": [
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "file:benchmarks/datasets",
+      "file": "raw/detection/20260917T132425205605Z_0.1.0.dev0.json",
+      "source_revision": null,
+      "timestamp": "2026-09-17T13:24:25.205605Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.1.0 (file)",
+      "file": "raw/detection/20260917T141632018507Z_0.1.0.dev0.json",
+      "source_revision": null,
+      "timestamp": "2026-09-17T14:16:32.018507Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.0.0 (file)",
+      "file": "raw/detection/20260917T141716920049Z_0.1.0.dev0.json",
+      "source_revision": null,
+      "timestamp": "2026-09-17T14:17:16.920049Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.1.0 (file)",
+      "file": "raw/detection/20260917T141724176911Z_0.1.0.dev0.json",
+      "source_revision": null,
+      "timestamp": "2026-09-17T14:17:24.176911Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.2.0",
+      "file": "raw/detection/20260917T145810914658Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T14:58:10.914658Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.0.0",
+      "file": "raw/detection/20260917T150303547613Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T15:03:03.547613Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.1.0",
+      "file": "raw/detection/20260917T150307990181Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T15:03:07.990181Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.2.0",
+      "file": "raw/detection/20260917T150312391547Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T15:03:12.391547Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.3.0",
+      "file": "raw/detection/20260917T151244795780Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T15:12:44.795780Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.0.0",
+      "file": "raw/detection/20260917T151509804399Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T15:15:09.804399Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.1.0",
+      "file": "raw/detection/20260917T151514805948Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T15:15:14.805948Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.2.0",
+      "file": "raw/detection/20260917T151519179504Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T15:15:19.179504Z"
+    },
+    {
+      "benchmark": "detection",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": "1.3.0",
+      "file": "raw/detection/20260917T151523091829Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T15:15:23.091829Z"
+    },
+    {
+      "benchmark": "hooks",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": null,
+      "file": "raw/hooks/20260917T145304718446Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T14:53:04.718446Z"
+    },
+    {
+      "benchmark": "performance",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": null,
+      "file": "raw/performance/20260917T143557837470Z_0.1.0.dev0.json",
+      "source_revision": "6afb581a2761d14f9082ca17775163dba8b460f3",
+      "timestamp": "2026-09-17T14:35:57.837470Z"
+    },
+    {
+      "benchmark": "performance",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": null,
+      "file": "raw/performance/20260917T143628687959Z_0.1.0.dev0.json",
+      "source_revision": "6afb581a2761d14f9082ca17775163dba8b460f3",
+      "timestamp": "2026-09-17T14:36:28.687959Z"
+    },
+    {
+      "benchmark": "platform",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": null,
+      "file": "raw/platform/20260917T145416702972Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T14:54:16.702972Z"
+    },
+    {
+      "benchmark": "repository",
+      "commitguard_version": "0.1.0.dev0",
+      "dataset_version": null,
+      "file": "raw/repository/20260917T145404117094Z_0.1.0.dev0.json",
+      "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+      "timestamp": "2026-09-17T14:54:04.117094Z"
+    }
+  ],
+  "latest": {
+    "detection": {
+      "benchmark": "detection",
+      "file": "raw/detection/20260917T151523091829Z_0.1.0.dev0.json",
+      "manifest": {
+        "command": "commitguard benchmark detection --dataset-version 1.3.0 --record benchmarks/results",
+        "commitguard_version": "0.1.0.dev0",
+        "configuration_version": "built-in defaults",
+        "cpu_count": 8,
+        "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+        "dataset_fingerprint": "e0592f4287b13619bce823b1b8c3b02bb266bcc793986cf205550a54a35b38a2",
+        "dataset_version": "1.3.0",
+        "git_version": "2.53.0",
+        "machine": "x86_64",
+        "memory_bytes": 16608079872,
+        "operating_system": "Linux",
+        "os_release": "7.1.5+kali-amd64",
+        "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+        "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+        "python_implementation": "CPython",
+        "python_version": "3.13.15",
+        "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+        "schema_version": 1,
+        "source_dirty": true,
+        "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+        "timestamp": "2026-09-17T15:15:23.091829Z"
+      },
+      "result": {
+        "benchmark": "detection",
+        "benchmark_version": "1.0.0",
+        "by_class": {
+          "adversarial": {
+            "cases": 74,
+            "exact_decision": 74,
+            "true_positive": 74
+          },
+          "clean": {
+            "cases": 43,
+            "exact_decision": 43,
+            "true_negative": 43
+          },
+          "generated": {
+            "cases": 9000,
+            "exact_decision": 9000,
+            "true_negative": 5422,
+            "true_positive": 3578
+          },
+          "malformed": {
+            "cases": 9,
+            "exact_decision": 9,
+            "true_positive": 9
+          },
+          "variations": {
+            "cases": 21,
+            "exact_decision": 21,
+            "true_positive": 21
+          },
+          "violations": {
+            "cases": 27,
+            "exact_decision": 27,
+            "true_positive": 27
+          }
+        },
+        "by_decision": {
+          "allow": {
+            "allow": 5465
+          },
+          "block": {
+            "block": 3249
+          },
+          "warn": {
+            "warn": 460
+          }
+        },
+        "cases": 9174,
+        "decision": {
+          "false_negative": 0,
+          "false_positive": 0,
+          "true_negative": 5465,
+          "true_positive": 3709
+        },
+        "decision_rates": {
+          "accuracy": 1.0,
+          "f1": 1.0,
+          "false_negative_rate": 0.0,
+          "false_positive_rate": 0.0,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "duration_ms": 3013.007,
+        "exact_decision_accuracy": 1.0,
+        "exact_decision_matches": 9174,
+        "latency": {
+          "max_ms": 3.1532,
+          "mean_ms": 0.2428,
+          "min_ms": 0.0716,
+          "p50_ms": 0.2215,
+          "p95_ms": 0.4383,
+          "p99_ms": 0.6728,
+          "samples": 9174
+        },
+        "mismatches": [],
+        "negatives": 5465,
+        "positives": 3709,
+        "rule_rates": {
+          "ai_coauthor": {
+            "accuracy": 1.0,
+            "f1": 1.0,
+            "false_negative_rate": 0.0,
+            "false_positive_rate": 0.0,
+            "precision": 1.0,
+            "recall": 1.0
+          },
+          "ai_identity": {
+            "accuracy": 1.0,
+            "f1": 1.0,
+            "false_negative_rate": 0.0,
+            "false_positive_rate": 0.0,
+            "precision": 1.0,
+            "recall": 1.0
+          },
+          "ai_trailer": {
+            "accuracy": 1.0,
+            "f1": 1.0,
+            "false_negative_rate": 0.0,
+            "false_positive_rate": 0.0,
+            "precision": 1.0,
+            "recall": 1.0
+          },
+          "bot_identity": {
+            "accuracy": 1.0,
+            "f1": 1.0,
+            "false_negative_rate": 0.0,
+            "false_positive_rate": 0.0,
+            "precision": 1.0,
+            "recall": 1.0
+          },
+          "malformed_trailer": {
+            "accuracy": 1.0,
+            "f1": 1.0,
+            "false_negative_rate": 0.0,
+            "false_positive_rate": 0.0,
+            "precision": 1.0,
+            "recall": 1.0
+          }
+        },
+        "rules": {
+          "ai_coauthor": {
+            "false_negative": 0,
+            "false_positive": 0,
+            "true_negative": 5937,
+            "true_positive": 3236
+          },
+          "ai_identity": {
+            "false_negative": 0,
+            "false_positive": 0,
+            "true_negative": 9168,
+            "true_positive": 5
+          },
+          "ai_trailer": {
+            "false_negative": 0,
+            "false_positive": 0,
+            "true_negative": 9166,
+            "true_positive": 7
+          },
+          "bot_identity": {
+            "false_negative": 0,
+            "false_positive": 0,
+            "true_negative": 8720,
+            "true_positive": 453
+          },
+          "malformed_trailer": {
+            "false_negative": 0,
+            "false_positive": 0,
+            "true_negative": 9094,
+            "true_positive": 7
+          }
+        }
+      },
+      "schema_version": 1
+    },
+    "hooks": {
+      "benchmark": "hooks",
+      "file": "raw/hooks/20260917T145304718446Z_0.1.0.dev0.json",
+      "manifest": {
+        "command": "commitguard benchmark hooks --repetitions 20 --record benchmarks/results",
+        "commitguard_version": "0.1.0.dev0",
+        "configuration_version": "built-in defaults",
+        "cpu_count": 8,
+        "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+        "dataset_fingerprint": null,
+        "dataset_version": null,
+        "git_version": "2.53.0",
+        "machine": "x86_64",
+        "memory_bytes": 16608079872,
+        "operating_system": "Linux",
+        "os_release": "7.1.5+kali-amd64",
+        "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+        "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+        "python_implementation": "CPython",
+        "python_version": "3.13.15",
+        "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+        "schema_version": 1,
+        "source_dirty": false,
+        "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+        "timestamp": "2026-09-17T14:53:04.718446Z"
+      },
+      "result": {
+        "benchmark": "hooks",
+        "benchmark_version": "1.0.0",
+        "notes": [
+          "Each hook starts a Python interpreter; interpreter start-up is part of the measured overhead.",
+          "Pushes go to a local bare repository, so network latency is excluded.",
+          "--no-verify results demonstrate that local hooks are advisory; server-side enforcement is measured separately."
+        ],
+        "observations": [
+          {
+            "check": "clean commit allowed without hooks",
+            "expected": "exit 0 every time",
+            "matches": true,
+            "observed": "exit 0 x20"
+          },
+          {
+            "check": "clean commit allowed with hooks",
+            "expected": "exit 0 every time",
+            "matches": true,
+            "observed": "exit 0 x20"
+          },
+          {
+            "check": "AI co-authored commit blocked by commit hooks",
+            "expected": "exit non-zero every time",
+            "matches": true,
+            "observed": "exit 1 x20"
+          },
+          {
+            "check": "--no-verify bypasses local commit hooks",
+            "expected": "exit 0 every time",
+            "matches": true,
+            "observed": "exit 0 x20"
+          },
+          {
+            "check": "clean push allowed by pre-push",
+            "expected": "exit 0 every time",
+            "matches": true,
+            "observed": "exit 0 x20"
+          },
+          {
+            "check": "AI co-authored push blocked by pre-push",
+            "expected": "exit non-zero every time",
+            "matches": true,
+            "observed": "exit 1 x20"
+          },
+          {
+            "check": "--no-verify bypasses the local pre-push hook",
+            "expected": "exit 0 every time",
+            "matches": true,
+            "observed": "exit 0 x20"
+          }
+        ],
+        "overhead": [
+          {
+            "operation": "git commit (clean)",
+            "overhead_p50_ms": 946.861,
+            "overhead_ratio": 154.75,
+            "with_hooks_p50_ms": 953.0192,
+            "without_hooks_p50_ms": 6.1583
+          },
+          {
+            "operation": "git push (clean, one commit)",
+            "overhead_p50_ms": 454.861,
+            "overhead_ratio": 27.65,
+            "with_hooks_p50_ms": 471.9269,
+            "without_hooks_p50_ms": 17.0655
+          }
+        ],
+        "python": "/home/oyinlola/Desktop/commitguard/.venv/bin/python3.13",
+        "repetitions": 20,
+        "scenarios": [
+          {
+            "description": "git commit, clean message, no hooks",
+            "exit_codes": {
+              "0": 20
+            },
+            "hooks_installed": false,
+            "latency": {
+              "max_ms": 7.4059,
+              "mean_ms": 6.2759,
+              "min_ms": 5.6522,
+              "p50_ms": 6.1583,
+              "p95_ms": 7.2513,
+              "p99_ms": 7.4059,
+              "samples": 20
+            },
+            "name": "commit-clean-plain"
+          },
+          {
+            "description": "git commit, clean message, CommitGuard hooks",
+            "exit_codes": {
+              "0": 20
+            },
+            "hooks_installed": true,
+            "latency": {
+              "max_ms": 1120.464,
+              "mean_ms": 977.9643,
+              "min_ms": 858.472,
+              "p50_ms": 953.0192,
+              "p95_ms": 1075.1149,
+              "p99_ms": 1120.464,
+              "samples": 20
+            },
+            "name": "commit-clean-hooked"
+          },
+          {
+            "description": "git commit, AI co-author, CommitGuard hooks",
+            "exit_codes": {
+              "1": 20
+            },
+            "hooks_installed": true,
+            "latency": {
+              "max_ms": 1125.3037,
+              "mean_ms": 924.447,
+              "min_ms": 836.2032,
+              "p50_ms": 903.0785,
+              "p95_ms": 1062.5718,
+              "p99_ms": 1125.3037,
+              "samples": 20
+            },
+            "name": "commit-ai-hooked"
+          },
+          {
+            "description": "git commit --no-verify, AI co-author, hooks installed",
+            "exit_codes": {
+              "0": 20
+            },
+            "hooks_installed": true,
+            "latency": {
+              "max_ms": 6.5427,
+              "mean_ms": 5.4503,
+              "min_ms": 5.1548,
+              "p50_ms": 5.2936,
+              "p95_ms": 6.3742,
+              "p99_ms": 6.5427,
+              "samples": 20
+            },
+            "name": "commit-ai-no-verify"
+          },
+          {
+            "description": "git push of one new clean commit, no hooks",
+            "exit_codes": {
+              "0": 20
+            },
+            "hooks_installed": false,
+            "latency": {
+              "max_ms": 23.6482,
+              "mean_ms": 17.8064,
+              "min_ms": 16.2599,
+              "p50_ms": 17.0655,
+              "p95_ms": 21.4827,
+              "p99_ms": 23.6482,
+              "samples": 20
+            },
+            "name": "push-clean-plain"
+          },
+          {
+            "description": "git push of one new clean commit, CommitGuard pre-push",
+            "exit_codes": {
+              "0": 20
+            },
+            "hooks_installed": true,
+            "latency": {
+              "max_ms": 610.7907,
+              "mean_ms": 494.0016,
+              "min_ms": 442.8243,
+              "p50_ms": 471.9269,
+              "p95_ms": 583.5862,
+              "p99_ms": 610.7907,
+              "samples": 20
+            },
+            "name": "push-clean-hooked"
+          },
+          {
+            "description": "git push of one new AI co-authored commit, pre-push",
+            "exit_codes": {
+              "1": 20
+            },
+            "hooks_installed": true,
+            "latency": {
+              "max_ms": 517.383,
+              "mean_ms": 455.328,
+              "min_ms": 422.2375,
+              "p50_ms": 451.0616,
+              "p95_ms": 483.3906,
+              "p99_ms": 517.383,
+              "samples": 20
+            },
+            "name": "push-ai-hooked"
+          },
+          {
+            "description": "git push --no-verify of an AI co-authored commit",
+            "exit_codes": {
+              "0": 20
+            },
+            "hooks_installed": true,
+            "latency": {
+              "max_ms": 23.1282,
+              "mean_ms": 20.4122,
+              "min_ms": 18.8924,
+              "p50_ms": 20.1815,
+              "p95_ms": 21.7896,
+              "p99_ms": 23.1282,
+              "samples": 20
+            },
+            "name": "push-ai-no-verify"
+          }
+        ]
+      },
+      "schema_version": 1
+    },
+    "performance": {
+      "benchmark": "performance",
+      "file": "raw/performance/20260917T143628687959Z_0.1.0.dev0.json",
+      "manifest": {
+        "command": "commitguard benchmark performance --record benchmarks/results",
+        "commitguard_version": "0.1.0.dev0",
+        "configuration_version": "built-in defaults",
+        "cpu_count": 8,
+        "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+        "dataset_fingerprint": null,
+        "dataset_version": null,
+        "git_version": "2.53.0",
+        "machine": "x86_64",
+        "memory_bytes": 16608079872,
+        "operating_system": "Linux",
+        "os_release": "7.1.5+kali-amd64",
+        "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+        "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+        "python_implementation": "CPython",
+        "python_version": "3.13.15",
+        "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+        "schema_version": 1,
+        "source_dirty": true,
+        "source_revision": "6afb581a2761d14f9082ca17775163dba8b460f3",
+        "timestamp": "2026-09-17T14:36:28.687959Z"
+      },
+      "result": {
+        "batches": [
+          {
+            "commits": 1,
+            "commits_per_second": 4316.5,
+            "cpu_ms": 0.237,
+            "latency": {
+              "max_ms": 0.2291,
+              "mean_ms": 0.2291,
+              "min_ms": 0.2291,
+              "p50_ms": 0.2291,
+              "p95_ms": 0.2291,
+              "p99_ms": 0.2291,
+              "samples": 1
+            },
+            "python_peak_allocated_bytes": 5563,
+            "wall_ms": 0.232
+          },
+          {
+            "commits": 10,
+            "commits_per_second": 5959.2,
+            "cpu_ms": 1.549,
+            "latency": {
+              "max_ms": 0.2629,
+              "mean_ms": 0.1672,
+              "min_ms": 0.1298,
+              "p50_ms": 0.1348,
+              "p95_ms": 0.2629,
+              "p99_ms": 0.2629,
+              "samples": 10
+            },
+            "python_peak_allocated_bytes": 8227,
+            "wall_ms": 1.678
+          },
+          {
+            "commits": 100,
+            "commits_per_second": 5710.7,
+            "cpu_ms": 17.162,
+            "latency": {
+              "max_ms": 0.3284,
+              "mean_ms": 0.1747,
+              "min_ms": 0.1228,
+              "p50_ms": 0.1419,
+              "p95_ms": 0.2506,
+              "p99_ms": 0.3222,
+              "samples": 100
+            },
+            "python_peak_allocated_bytes": 25881,
+            "wall_ms": 17.511
+          },
+          {
+            "commits": 1000,
+            "commits_per_second": 7970.3,
+            "cpu_ms": 125.463,
+            "latency": {
+              "max_ms": 0.2958,
+              "mean_ms": 0.1252,
+              "min_ms": 0.0866,
+              "p50_ms": 0.1081,
+              "p95_ms": 0.1797,
+              "p99_ms": 0.2129,
+              "samples": 1000
+            },
+            "python_peak_allocated_bytes": 94737,
+            "wall_ms": 125.466
+          },
+          {
+            "commits": 10000,
+            "commits_per_second": 6900.8,
+            "cpu_ms": 1443.25,
+            "latency": {
+              "max_ms": 2.7082,
+              "mean_ms": 0.1446,
+              "min_ms": 0.0853,
+              "p50_ms": 0.1162,
+              "p95_ms": 0.2361,
+              "p99_ms": 0.4385,
+              "samples": 10000
+            },
+            "python_peak_allocated_bytes": 191865,
+            "wall_ms": 1449.103
+          }
+        ],
+        "benchmark": "performance",
+        "benchmark_version": "1.0.0",
+        "message_sizes": [
+          {
+            "cpu_ms_per_commit": 0.2577,
+            "decision": "block",
+            "latency": {
+              "max_ms": 0.4893,
+              "mean_ms": 0.2567,
+              "min_ms": 0.2195,
+              "p50_ms": 0.2483,
+              "p95_ms": 0.3273,
+              "p99_ms": 0.4155,
+              "samples": 200
+            },
+            "message_bytes": 1000,
+            "python_peak_allocated_bytes": 11019,
+            "repetitions": 200
+          },
+          {
+            "cpu_ms_per_commit": 0.8401,
+            "decision": "block",
+            "latency": {
+              "max_ms": 1.1031,
+              "mean_ms": 0.839,
+              "min_ms": 0.7086,
+              "p50_ms": 0.8415,
+              "p95_ms": 0.9461,
+              "p99_ms": 1.0598,
+              "samples": 200
+            },
+            "message_bytes": 10216,
+            "python_peak_allocated_bytes": 25265,
+            "repetitions": 200
+          },
+          {
+            "cpu_ms_per_commit": 7.3887,
+            "decision": "block",
+            "latency": {
+              "max_ms": 16.9272,
+              "mean_ms": 7.3874,
+              "min_ms": 5.1497,
+              "p50_ms": 6.9994,
+              "p95_ms": 10.8443,
+              "p99_ms": 15.7651,
+              "samples": 200
+            },
+            "message_bytes": 102376,
+            "python_peak_allocated_bytes": 181389,
+            "repetitions": 200
+          },
+          {
+            "cpu_ms_per_commit": 76.5858,
+            "decision": "block",
+            "latency": {
+              "max_ms": 106.6484,
+              "mean_ms": 76.5896,
+              "min_ms": 66.1083,
+              "p50_ms": 74.8506,
+              "p95_ms": 94.0,
+              "p99_ms": 106.6484,
+              "samples": 47
+            },
+            "message_bytes": 1048552,
+            "python_peak_allocated_bytes": 1776949,
+            "repetitions": 47
+          },
+          {
+            "cpu_ms_per_commit": 743.216,
+            "decision": "block",
+            "latency": {
+              "max_ms": 803.5026,
+              "mean_ms": 743.3224,
+              "min_ms": 685.1034,
+              "p50_ms": 751.8045,
+              "p95_ms": 803.5026,
+              "p99_ms": 803.5026,
+              "samples": 5
+            },
+            "message_bytes": 10485736,
+            "python_peak_allocated_bytes": 17768541,
+            "repetitions": 5
+          }
+        ],
+        "notes": [
+          "Commits are built in memory: this isolates detection and policy evaluation from Git I/O (see the hooks and repository benchmarks for end-to-end Git timings).",
+          "startup_ms includes loading and compiling the built-in rules (cached per process).",
+          "Allocation peaks come from a separate tracemalloc pass; timings are measured without it."
+        ],
+        "peak_rss_bytes": 86032384,
+        "startup_ms": 28.608
+      },
+      "schema_version": 1
+    },
+    "platform": {
+      "benchmark": "platform",
+      "file": "raw/platform/20260917T145416702972Z_0.1.0.dev0.json",
+      "manifest": {
+        "command": "commitguard benchmark platform --record benchmarks/results",
+        "commitguard_version": "0.1.0.dev0",
+        "configuration_version": "built-in defaults",
+        "cpu_count": 8,
+        "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+        "dataset_fingerprint": null,
+        "dataset_version": null,
+        "git_version": "2.53.0",
+        "machine": "x86_64",
+        "memory_bytes": 16608079872,
+        "operating_system": "Linux",
+        "os_release": "7.1.5+kali-amd64",
+        "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+        "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+        "python_implementation": "CPython",
+        "python_version": "3.13.15",
+        "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+        "schema_version": 1,
+        "source_dirty": true,
+        "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+        "timestamp": "2026-09-17T14:54:16.702972Z"
+      },
+      "result": {
+        "benchmark": "platform",
+        "benchmark_version": "1.0.0",
+        "checks": [
+          {
+            "area": "environment",
+            "expected": "git --version succeeds",
+            "name": "git is available",
+            "observed": "git version 2.53.0",
+            "status": "PASS"
+          },
+          {
+            "area": "hooks",
+            "expected": "pre-commit, commit-msg and pre-push installed",
+            "name": "install hooks (path with spaces and non-ASCII characters)",
+            "observed": "pre-commit=installed, commit-msg=installed, pre-push=installed",
+            "status": "PASS"
+          },
+          {
+            "area": "hooks",
+            "expected": "every hook reports installed",
+            "name": "hook integrity",
+            "observed": "pre-commit=installed, commit-msg=installed, pre-push=installed",
+            "status": "PASS"
+          },
+          {
+            "area": "pre-commit / commit-msg",
+            "expected": "exit 0, commit created",
+            "name": "clean commit allowed",
+            "observed": "exit 0, commit created",
+            "status": "PASS"
+          },
+          {
+            "area": "pre-commit / commit-msg",
+            "expected": "non-zero exit, no commit",
+            "name": "AI co-authored commit blocked",
+            "observed": "exit 1, commit not created",
+            "status": "PASS"
+          },
+          {
+            "area": "bypass",
+            "expected": "exit 0, commit created (documented limitation)",
+            "name": "git commit --no-verify skips local hooks",
+            "observed": "exit 0, commit created",
+            "status": "PASS"
+          },
+          {
+            "area": "pre-push",
+            "expected": "exit 0",
+            "name": "clean push allowed",
+            "observed": "exit 0",
+            "status": "PASS"
+          },
+          {
+            "area": "pre-push",
+            "expected": "non-zero exit",
+            "name": "AI co-authored push blocked",
+            "observed": "exit 1",
+            "status": "PASS"
+          },
+          {
+            "area": "bypass",
+            "expected": "exit 0 (documented limitation)",
+            "name": "git push --no-verify skips pre-push",
+            "observed": "exit 0",
+            "status": "PASS"
+          },
+          {
+            "area": "cli",
+            "expected": "exit 0",
+            "name": "commitguard scan on a clean commit",
+            "observed": "exit 0",
+            "status": "PASS"
+          },
+          {
+            "area": "cli",
+            "expected": "exit 1 (blocked)",
+            "name": "commitguard scan on an AI co-authored commit",
+            "observed": "exit 1",
+            "status": "PASS"
+          },
+          {
+            "area": "configuration",
+            "expected": "exit 1 (valid configuration, AI commit still blocked)",
+            "name": "configuration with CRLF line endings",
+            "observed": "exit 1",
+            "status": "PASS"
+          },
+          {
+            "area": "configuration",
+            "expected": "exit 2 (error), never exit 0",
+            "name": "invalid configuration fails closed",
+            "observed": "exit 2",
+            "status": "PASS"
+          },
+          {
+            "area": "cli",
+            "expected": "exit 1 for an AI co-authored message",
+            "name": "commitguard check --message-file",
+            "observed": "exit 1",
+            "status": "PASS"
+          },
+          {
+            "area": "hooks",
+            "expected": "hooks absent; an AI commit is no longer blocked locally",
+            "name": "uninstall removes the hooks",
+            "observed": "hooks {'pre-commit': 'missing', 'commit-msg': 'missing', 'pre-push': 'missing'}; AI commit exit 0, created",
+            "status": "PASS"
+          }
+        ],
+        "failed": 0,
+        "passed": 15,
+        "shell_for_hooks": "/bin/sh",
+        "skipped": 0,
+        "system": "Linux 7.1.5+kali-amd64 (x86_64)"
+      },
+      "schema_version": 1
+    },
+    "repository": {
+      "benchmark": "repository",
+      "file": "raw/repository/20260917T145404117094Z_0.1.0.dev0.json",
+      "manifest": {
+        "command": "commitguard benchmark repository --record benchmarks/results",
+        "commitguard_version": "0.1.0.dev0",
+        "configuration_version": "built-in defaults",
+        "cpu_count": 8,
+        "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+        "dataset_fingerprint": null,
+        "dataset_version": null,
+        "git_version": "2.53.0",
+        "machine": "x86_64",
+        "memory_bytes": 16608079872,
+        "operating_system": "Linux",
+        "os_release": "7.1.5+kali-amd64",
+        "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+        "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+        "python_implementation": "CPython",
+        "python_version": "3.13.15",
+        "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+        "schema_version": 1,
+        "source_dirty": true,
+        "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+        "timestamp": "2026-09-17T14:54:04.117094Z"
+      },
+      "result": {
+        "benchmark": "repository",
+        "benchmark_version": "1.0.0",
+        "histories": [
+          {
+            "all_seeded_violations_found": true,
+            "analyze_ms": 14.3,
+            "blocked": 5,
+            "commits": 100,
+            "commits_per_second": 3470.1,
+            "create_ms": 12.1,
+            "list_ms": 3.0,
+            "read_ms": 11.5,
+            "scan_total_ms": 28.8,
+            "seeded_violations": 5
+          },
+          {
+            "all_seeded_violations_found": true,
+            "analyze_ms": 142.6,
+            "blocked": 50,
+            "commits": 1000,
+            "commits_per_second": 3520.2,
+            "create_ms": 60.4,
+            "list_ms": 11.2,
+            "read_ms": 130.3,
+            "scan_total_ms": 284.1,
+            "seeded_violations": 50
+          },
+          {
+            "all_seeded_violations_found": true,
+            "analyze_ms": 2181.2,
+            "blocked": 500,
+            "commits": 10000,
+            "commits_per_second": 2834.1,
+            "create_ms": 763.3,
+            "list_ms": 78.7,
+            "read_ms": 1268.6,
+            "scan_total_ms": 3528.5,
+            "seeded_violations": 500
+          },
+          {
+            "all_seeded_violations_found": true,
+            "analyze_ms": 28875.3,
+            "blocked": 5000,
+            "commits": 100000,
+            "commits_per_second": 2278.6,
+            "create_ms": 8591.3,
+            "list_ms": 1175.0,
+            "read_ms": 13836.2,
+            "scan_total_ms": 43886.4,
+            "seeded_violations": 5000
+          }
+        ],
+        "notes": [
+          "The commitguard scan command limits a range to 1,000 commits by default (a safety bound); this benchmark calls the same library functions without that bound to measure scaling.",
+          "Repositories are local; fetch time from a remote is not included."
+        ]
+      },
+      "schema_version": 1
+    }
+  },
+  "redos": {
+    "adversarial_inputs_per_pattern": 70,
+    "budget_seconds": 0.5,
+    "input_characters": 50000,
+    "patterns": {
+      "api.app route parameter hex": {
+        "pattern": "\\A(?P<value>[0-9a-f]{32})\\Z",
+        "worst_seconds": 1.9e-05
+      },
+      "api.app route parameter ident": {
+        "pattern": "\\A(?P<value>[a-z][a-z0-9_]{0,63})\\Z",
+        "worst_seconds": 1.6e-05
+      },
+      "api.app route parameter int": {
+        "pattern": "\\A(?P<value>[1-9][0-9]{0,15})\\Z",
+        "worst_seconds": 1.6e-05
+      },
+      "api.app route parameter session": {
+        "pattern": "\\A(?P<value>[0-9a-f]{16})\\Z",
+        "worst_seconds": 3.6e-05
+      },
+      "api.app route parameter version": {
+        "pattern": "\\A(?P<value>[1-9][0-9]{0,8})\\Z",
+        "worst_seconds": 1.2e-05
+      },
+      "api.app._compile (template parameters)": {
+        "pattern": "\\{([a-z_]+):([a-z]+)\\}",
+        "worst_seconds": 0.003457
+      },
+      "commitguard.audit.models._KEY_RE": {
+        "pattern": "\\A[a-z][a-z0-9_]{0,63}\\Z",
+        "worst_seconds": 1.5e-05
+      },
+      "commitguard.controlplane.pagination._HEX_RE": {
+        "pattern": "\\A[0-9a-f]{4,64}\\Z",
+        "worst_seconds": 1.3e-05
+      },
+      "commitguard.git.commands._VERSION_RE": {
+        "pattern": "b'git version (\\\\d+)\\\\.(\\\\d+)(?:\\\\.(\\\\d+))?'",
+        "worst_seconds": 0.000384
+      },
+      "commitguard.github.events._HEX_ID_RE": {
+        "pattern": "\\A[0-9a-f]{32}\\Z",
+        "worst_seconds": 3.1e-05
+      },
+      "commitguard.github.events._MERGE_QUEUE_PR_RE": {
+        "pattern": "/pr-([1-9][0-9]{0,9})-[0-9a-f]{40,64}\\Z",
+        "worst_seconds": 0.001372
+      },
+      "commitguard.github.identifiers._LOGIN_RE": {
+        "pattern": "\\A[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\\Z",
+        "worst_seconds": 4.6e-05
+      },
+      "commitguard.github.identifiers._REPO_NAME_RE": {
+        "pattern": "\\A[A-Za-z0-9._-]{1,100}\\Z",
+        "worst_seconds": 2.1e-05
+      },
+      "commitguard.github.webhooks._DELIVERY_RE": {
+        "pattern": "\\A[0-9A-Za-z-]{8,72}\\Z",
+        "worst_seconds": 1.4e-05
+      },
+      "commitguard.github.webhooks._EVENT_RE": {
+        "pattern": "\\A[a-z_]{1,64}\\Z",
+        "worst_seconds": 1.3e-05
+      },
+      "commitguard.github.webhooks._SIGNATURE_RE": {
+        "pattern": "\\Asha256=([0-9a-f]{64})\\Z",
+        "worst_seconds": 9e-06
+      },
+      "commitguard.github.workflow._EXPRESSION_RE": {
+        "pattern": "\\$\\{\\{[^}]*",
+        "worst_seconds": 0.00051
+      },
+      "commitguard.github.workflow._REPOSITORY_RE": {
+        "pattern": "\\A[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}\\Z",
+        "worst_seconds": 2.8e-05
+      },
+      "commitguard.github.workflow._SECRETS_RE": {
+        "pattern": "\\bsecrets\\.",
+        "worst_seconds": 0.004451
+      },
+      "commitguard.github.workflow._SHA_RE": {
+        "pattern": "\\A[0-9a-f]{40}\\Z",
+        "worst_seconds": 2e-05
+      },
+      "commitguard.github.workflow._USES_PINNED_RE": {
+        "pattern": "\\A[^@\\s]+@[0-9a-f]{40}\\Z",
+        "worst_seconds": 0.002488
+      },
+      "commitguard.notifications.preferences._EMAIL_RE": {
+        "pattern": "\\A[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9-]{1,63}(\\.[A-Za-z0-9-]{1,63})+\\Z",
+        "worst_seconds": 0.010257
+      },
+      "commitguard.research.results._SAFE": {
+        "pattern": "[^A-Za-z0-9._-]+",
+        "worst_seconds": 0.133931
+      },
+      "commitguard.security.secrets._DOTTED_RUN": {
+        "pattern": "(?<![A-Za-z0-9_-])[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+){2,}",
+        "worst_seconds": 0.012552
+      },
+      "commitguard.security.secrets._PATTERNS[0]": {
+        "pattern": "-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\\Z)",
+        "worst_seconds": 0.006186
+      },
+      "commitguard.security.secrets._PATTERNS[1]": {
+        "pattern": "\\b(?:gh[posur]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})",
+        "worst_seconds": 0.006123
+      },
+      "commitguard.security.secrets._PATTERNS[2]": {
+        "pattern": "(?i)(authorization\\s*[:=]\\s*)\\S+(?:\\s+\\S+)?",
+        "worst_seconds": 0.006906
+      },
+      "commitguard.security.secrets._PATTERNS[3]": {
+        "pattern": "(?i)\\b((?:bearer|basic)\\s+)[A-Za-z0-9._~+/=-]{8,}",
+        "worst_seconds": 0.007331
+      },
+      "commitguard.security.secrets._PATTERNS[4]": {
+        "pattern": "sha256=[0-9a-fA-F]{64}",
+        "worst_seconds": 0.000569
+      },
+      "commitguard.security.validation._GIT_CONFIG_KEY_RE": {
+        "pattern": "\\A[A-Za-z][A-Za-z0-9-]*(?:\\.[A-Za-z0-9_./-]+)?\\.[A-Za-z][A-Za-z0-9-]*\\Z",
+        "worst_seconds": 0.016485
+      },
+      "commitguard.security.validation._SHA_RE": {
+        "pattern": "\\A(?:[0-9a-f]{40}|[0-9a-f]{64})\\Z",
+        "worst_seconds": 1.6e-05
+      },
+      "controlplane.pagination.decode_cursor": {
+        "pattern": "[A-Za-z0-9_-]+",
+        "worst_seconds": 0.015678
+      },
+      "github.storage._split_statements": {
+        "pattern": ";[ \\t]*(?:\\n|\\Z)",
+        "worst_seconds": 0.005777
+      }
+    }
+  },
+  "results_directory": "benchmarks/results"
+}

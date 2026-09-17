@@ -1,0 +1,139 @@
+{
+  "adversarial_inputs_per_pattern": 70,
+  "budget_seconds": 0.5,
+  "input_characters": 50000,
+  "patterns": {
+    "api.app route parameter hex": {
+      "pattern": "\\A(?P<value>[0-9a-f]{32})\\Z",
+      "worst_seconds": 1.9e-05
+    },
+    "api.app route parameter ident": {
+      "pattern": "\\A(?P<value>[a-z][a-z0-9_]{0,63})\\Z",
+      "worst_seconds": 1.6e-05
+    },
+    "api.app route parameter int": {
+      "pattern": "\\A(?P<value>[1-9][0-9]{0,15})\\Z",
+      "worst_seconds": 1.6e-05
+    },
+    "api.app route parameter session": {
+      "pattern": "\\A(?P<value>[0-9a-f]{16})\\Z",
+      "worst_seconds": 3.6e-05
+    },
+    "api.app route parameter version": {
+      "pattern": "\\A(?P<value>[1-9][0-9]{0,8})\\Z",
+      "worst_seconds": 1.2e-05
+    },
+    "api.app._compile (template parameters)": {
+      "pattern": "\\{([a-z_]+):([a-z]+)\\}",
+      "worst_seconds": 0.003457
+    },
+    "commitguard.audit.models._KEY_RE": {
+      "pattern": "\\A[a-z][a-z0-9_]{0,63}\\Z",
+      "worst_seconds": 1.5e-05
+    },
+    "commitguard.controlplane.pagination._HEX_RE": {
+      "pattern": "\\A[0-9a-f]{4,64}\\Z",
+      "worst_seconds": 1.3e-05
+    },
+    "commitguard.git.commands._VERSION_RE": {
+      "pattern": "b'git version (\\\\d+)\\\\.(\\\\d+)(?:\\\\.(\\\\d+))?'",
+      "worst_seconds": 0.000384
+    },
+    "commitguard.github.events._HEX_ID_RE": {
+      "pattern": "\\A[0-9a-f]{32}\\Z",
+      "worst_seconds": 3.1e-05
+    },
+    "commitguard.github.events._MERGE_QUEUE_PR_RE": {
+      "pattern": "/pr-([1-9][0-9]{0,9})-[0-9a-f]{40,64}\\Z",
+      "worst_seconds": 0.001372
+    },
+    "commitguard.github.identifiers._LOGIN_RE": {
+      "pattern": "\\A[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\\Z",
+      "worst_seconds": 4.6e-05
+    },
+    "commitguard.github.identifiers._REPO_NAME_RE": {
+      "pattern": "\\A[A-Za-z0-9._-]{1,100}\\Z",
+      "worst_seconds": 2.1e-05
+    },
+    "commitguard.github.webhooks._DELIVERY_RE": {
+      "pattern": "\\A[0-9A-Za-z-]{8,72}\\Z",
+      "worst_seconds": 1.4e-05
+    },
+    "commitguard.github.webhooks._EVENT_RE": {
+      "pattern": "\\A[a-z_]{1,64}\\Z",
+      "worst_seconds": 1.3e-05
+    },
+    "commitguard.github.webhooks._SIGNATURE_RE": {
+      "pattern": "\\Asha256=([0-9a-f]{64})\\Z",
+      "worst_seconds": 9e-06
+    },
+    "commitguard.github.workflow._EXPRESSION_RE": {
+      "pattern": "\\$\\{\\{[^}]*",
+      "worst_seconds": 0.00051
+    },
+    "commitguard.github.workflow._REPOSITORY_RE": {
+      "pattern": "\\A[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}\\Z",
+      "worst_seconds": 2.8e-05
+    },
+    "commitguard.github.workflow._SECRETS_RE": {
+      "pattern": "\\bsecrets\\.",
+      "worst_seconds": 0.004451
+    },
+    "commitguard.github.workflow._SHA_RE": {
+      "pattern": "\\A[0-9a-f]{40}\\Z",
+      "worst_seconds": 2e-05
+    },
+    "commitguard.github.workflow._USES_PINNED_RE": {
+      "pattern": "\\A[^@\\s]+@[0-9a-f]{40}\\Z",
+      "worst_seconds": 0.002488
+    },
+    "commitguard.notifications.preferences._EMAIL_RE": {
+      "pattern": "\\A[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9-]{1,63}(\\.[A-Za-z0-9-]{1,63})+\\Z",
+      "worst_seconds": 0.010257
+    },
+    "commitguard.research.results._SAFE": {
+      "pattern": "[^A-Za-z0-9._-]+",
+      "worst_seconds": 0.133931
+    },
+    "commitguard.security.secrets._DOTTED_RUN": {
+      "pattern": "(?<![A-Za-z0-9_-])[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+){2,}",
+      "worst_seconds": 0.012552
+    },
+    "commitguard.security.secrets._PATTERNS[0]": {
+      "pattern": "-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\\Z)",
+      "worst_seconds": 0.006186
+    },
+    "commitguard.security.secrets._PATTERNS[1]": {
+      "pattern": "\\b(?:gh[posur]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})",
+      "worst_seconds": 0.006123
+    },
+    "commitguard.security.secrets._PATTERNS[2]": {
+      "pattern": "(?i)(authorization\\s*[:=]\\s*)\\S+(?:\\s+\\S+)?",
+      "worst_seconds": 0.006906
+    },
+    "commitguard.security.secrets._PATTERNS[3]": {
+      "pattern": "(?i)\\b((?:bearer|basic)\\s+)[A-Za-z0-9._~+/=-]{8,}",
+      "worst_seconds": 0.007331
+    },
+    "commitguard.security.secrets._PATTERNS[4]": {
+      "pattern": "sha256=[0-9a-fA-F]{64}",
+      "worst_seconds": 0.000569
+    },
+    "commitguard.security.validation._GIT_CONFIG_KEY_RE": {
+      "pattern": "\\A[A-Za-z][A-Za-z0-9-]*(?:\\.[A-Za-z0-9_./-]+)?\\.[A-Za-z][A-Za-z0-9-]*\\Z",
+      "worst_seconds": 0.016485
+    },
+    "commitguard.security.validation._SHA_RE": {
+      "pattern": "\\A(?:[0-9a-f]{40}|[0-9a-f]{64})\\Z",
+      "worst_seconds": 1.6e-05
+    },
+    "controlplane.pagination.decode_cursor": {
+      "pattern": "[A-Za-z0-9_-]+",
+      "worst_seconds": 0.015678
+    },
+    "github.storage._split_statements": {
+      "pattern": ";[ \\t]*(?:\\n|\\Z)",
+      "worst_seconds": 0.005777
+    }
+  }
+}

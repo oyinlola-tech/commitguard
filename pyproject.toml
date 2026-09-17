@@ -41,6 +41,9 @@ app = [
 ]
 dev = [
     "pytest>=8.2",
+    # Property-based testing and fuzzing (tests/security). Found two detection
+    # bypasses and two ReDoS regressions in Phase 10.
+    "hypothesis>=6.100",
     "ruff>=0.6",
     "mypy>=1.11",
     "types-PyYAML>=6.0",

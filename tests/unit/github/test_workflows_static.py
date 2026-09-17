@@ -70,11 +70,35 @@ def test_enforcement_workflows_are_least_privilege(document: Any) -> None:
 
 
 @pytest.mark.parametrize("path", [*WORKFLOWS, ACTION], ids=lambda p: p.name)
-def test_no_secrets_and_no_write_permissions(path: Path) -> None:
+def test_no_secrets_and_no_blanket_write_permissions(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     assert not re.search(r"\$\{\{[^}]*\bsecrets\.", text)
     assert "write-all" not in text
-    assert ": write" not in text
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+def test_write_permissions_are_never_available_to_pull_request_code(path: Path) -> None:
+    """A workflow that can run a contributor's code must not hold write access.
+
+    Write access is allowed only in a job of a workflow that no pull request can
+    trigger (the release workflow, which runs on tags), and only when the
+    workflow default is still read-only.
+    """
+    document = _load(path)
+    triggers = set(document.get("on", document.get(True)) or {})
+    workflow_permissions = document.get("permissions", {})
+    assert "write" not in str(workflow_permissions), f"{path.name} grants write access to every job"
+    writable = [
+        name for name, job in document["jobs"].items() if "write" in str(job.get("permissions", {}))
+    ]
+    if not writable:
+        return
+    assert not triggers & {"pull_request", "pull_request_target"}, (
+        f"{path.name} can be triggered by a pull request and has write jobs: {writable}"
+    )
+    assert workflow_permissions == {"contents": "read"}, (
+        f"{path.name} must default to read-only; jobs {writable} opt in"
+    )
 
 
 MARKETPLACE_COLORS = {
