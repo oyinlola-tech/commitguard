@@ -35,9 +35,12 @@ Planning (:func:`plan_ci`) and execution (:func:`execute_ci_plan`) are separate
 so a service can report the commit count before analysis starts.
 """
 
+from collections.abc import Sequence
+
 from pydantic import BaseModel, ConfigDict
 
 from commitguard.ci.context import CIContext, CIEventKind
+from commitguard.config.schema import CommitGuardConfig
 from commitguard.config.sources import (
     MandatoryPolicy,
     PolicySource,
@@ -80,9 +83,22 @@ class CIRun(BaseModel):
     report: ScanReport
     policy_fingerprint: str  # effective policies (trusted config + mandatory floor)
     policies: tuple[Policy, ...] = ()  # the effective policies that evaluated the commits
-    #: The repository's own policies before governance (kept for policy simulation).
-    repository_policies: tuple[Policy, ...] = ()
+    #: The repository configuration's own overrides (rule -> fields it set), kept so a
+    #: policy simulation can re-resolve historical scans under a draft policy.
+    repository_overrides: dict[str, dict[str, str | bool]] = {}
     effective: EffectivePolicy | None = None  # provenance, when governance applied
+
+
+def repository_overrides(
+    configs: Sequence[CommitGuardConfig],
+) -> dict[str, dict[str, str | bool]]:
+    """The merged per-rule fields the configuration layers set (later layers win)."""
+    merged: dict[str, dict[str, str | bool]] = {}
+    for config in configs:
+        for rule, override in config.policies.items():
+            for key, value in override.model_dump(mode="json", exclude_unset=True).items():
+                merged.setdefault(rule, {})[key] = value
+    return dict(sorted(merged.items()))
 
 
 def policy_set_fingerprint(policies: PolicySet) -> str:
@@ -349,7 +365,7 @@ def execute_ci_plan(
         report=report,
         policy_fingerprint=policy_set_fingerprint(policies),
         policies=tuple(policies.values()),
-        repository_policies=tuple(repository_policies.values()),
+        repository_overrides=repository_overrides(loaded.configs),
         effective=effective,
     )
 

@@ -136,12 +136,14 @@ class NotificationDispatcher:
             )
             channel = organization.types[event.type]
             deliveries: list[tuple[str, str, str]] = []  # channel, destination, provider
-            if channel.email and self._settings.email_available:
+            # An aggregated event is delivered externally through its organization digest.
+            external = event.metadata.get("aggregated") is not True
+            if external and channel.email and self._settings.email_available:
                 deliveries += [
                     (NotificationChannel.EMAIL.value, address, "email")
                     for address in organization.email_recipients
                 ]
-            if channel.webhook and self._settings.webhook_available:
+            if external and channel.webhook and self._settings.webhook_available:
                 deliveries += [
                     (NotificationChannel.WEBHOOK.value, str(endpoint["endpoint_id"]), "webhook")
                     for endpoint in db.execute(

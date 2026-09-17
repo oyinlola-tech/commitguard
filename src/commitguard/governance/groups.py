@@ -12,12 +12,13 @@ the caller can see, are audited, and invalidate the effective policy of exactly
 the repositories added or removed.
 """
 
+import sqlite3
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from commitguard.audit.models import Actor, AuditEventType
+from commitguard.audit.models import Actor, AuditEvent, AuditEventType
 from commitguard.controlplane.access import Permission, Principal
 from commitguard.controlplane.errors import (
     ConfirmationRequiredError,
@@ -107,20 +108,19 @@ class RepositoryGroupService:
         self._now = now
 
     @staticmethod
-    def _view(row: object) -> RepositoryGroupView:
-        r = row  # sqlite3.Row
+    def _view(r: sqlite3.Row) -> RepositoryGroupView:
         return RepositoryGroupView(
-            id=r["group_id"],  # type: ignore[index]
-            organization_id=int(r["account_id"]),  # type: ignore[index]
-            name=r["name"],  # type: ignore[index]
-            description=r["description"],  # type: ignore[index]
-            repository_count=int(r["repository_count"]),  # type: ignore[index]
-            policy_version=int(r["policy_version"]),  # type: ignore[index]
-            active_exceptions=int(r["active_exceptions"]),  # type: ignore[index]
-            created_at=req_dt(r["created_at"]),  # type: ignore[index]
-            created_by=r["created_by"],  # type: ignore[index]
-            updated_at=req_dt(r["updated_at"]),  # type: ignore[index]
-            archived_at=dt(r["archived_at"]),  # type: ignore[index]
+            id=r["group_id"],
+            organization_id=int(r["account_id"]),
+            name=r["name"],
+            description=r["description"],
+            repository_count=int(r["repository_count"]),
+            policy_version=int(r["policy_version"]),
+            active_exceptions=int(r["active_exceptions"]),
+            created_at=req_dt(r["created_at"]),
+            created_by=r["created_by"],
+            updated_at=req_dt(r["updated_at"]),
+            archived_at=dt(r["archived_at"]),
         )
 
     def list_groups(
@@ -133,7 +133,7 @@ class RepositoryGroupService:
         rows = self._store.query(sql + " ORDER BY g.name_key LIMIT 1000", (account_id,))
         return [self._view(row) for row in rows]
 
-    def _group_row(self, group_id: str):  # type: ignore[no-untyped-def]
+    def _group_row(self, group_id: str) -> sqlite3.Row:
         if not is_hex_id(group_id):
             raise NotFoundError()
         rows = self._store.query(f"{_GROUP_SELECT} WHERE g.group_id = ?", (group_id,))
@@ -336,9 +336,15 @@ class RepositoryGroupService:
             self._audit.log_stored(added)
         return self.get(principal, group_id)
 
-    def add_members_in(  # type: ignore[no-untyped-def]
-        self, db, account_id: int, group_id: str, repository_ids: Sequence[int], *, actor: Actor
-    ):
+    def add_members_in(
+        self,
+        db: sqlite3.Connection,
+        account_id: int,
+        group_id: str,
+        repository_ids: Sequence[int],
+        *,
+        actor: Actor,
+    ) -> AuditEvent | None:
         """Add members inside a caller's transaction (also used by bulk operations).
 
         Returns the stored audit event, or None when every repository was already a member.
@@ -397,9 +403,15 @@ class RepositoryGroupService:
             self._audit.log_stored(stored)
         return self.get(principal, group_id)
 
-    def remove_members_in(  # type: ignore[no-untyped-def]
-        self, db, account_id: int, group_id: str, repository_ids: Sequence[int], *, actor: Actor
-    ):
+    def remove_members_in(
+        self,
+        db: sqlite3.Connection,
+        account_id: int,
+        group_id: str,
+        repository_ids: Sequence[int],
+        *,
+        actor: Actor,
+    ) -> AuditEvent | None:
         now = self._now()
         removed = []
         for repository_id in repository_ids:

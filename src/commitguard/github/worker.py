@@ -92,6 +92,7 @@ from commitguard.observability.metrics import (
     SCANS_STARTED,
     Metrics,
 )
+from commitguard.policies.governance import EffectivePolicy, GovernanceInputs
 from commitguard.services.audit import AuditService
 from commitguard.services.ci import DEFAULT_CI_MAX_COMMITS
 from commitguard.services.enforcement import FailureKind
@@ -110,6 +111,20 @@ _SUPERSEDED = frozenset({SUPERSEDED_NEWER_EVENT, SUPERSEDED_CHECK_OWNER, MERGE_G
 
 
 type PolicyResolver = Callable[[int], tuple[MandatoryPolicy | None, int | None]]
+
+
+@dataclass(frozen=True, slots=True)
+class ScanGovernance:
+    """Organization governance for one scan (see commitguard.governance.resolver)."""
+
+    inputs: GovernanceInputs
+    organization_policy_version: int | None
+    fingerprint: str
+    #: Builds the immutable record stored with the scan from the resolved effective policy.
+    record: Callable[[EffectivePolicy | None], str]
+
+
+type GovernanceResolverFn = Callable[[int, int], ScanGovernance | None]
 
 
 @dataclass
@@ -131,6 +146,7 @@ class ScanWorker:
         scan_service: ScanService | None = None,
         mandatory_policy: MandatoryPolicy | None = None,
         policy_resolver: PolicyResolver | None = None,
+        governance_resolver: GovernanceResolverFn | None = None,
         recorder: ScanResultRecorder | None = None,
         max_commits: int = DEFAULT_CI_MAX_COMMITS,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -146,6 +162,8 @@ class ScanWorker:
         self._policy_resolver: PolicyResolver = policy_resolver or (
             lambda _installation_id: (mandatory_policy, None)
         )
+        # Organization governance per repository (GitHub App); replaces the floor above.
+        self._governance_resolver = governance_resolver
         self._recorder = recorder or ScanResultRecorder(store, audit, now=now)
         self._max_commits = max_commits
         self._now = now
@@ -285,12 +303,22 @@ class ScanWorker:
             branches=branches,
         )
 
-        mandatory, organization_policy_version = self._policy_resolver(job.installation_id)
+        governance = (
+            self._governance_resolver(job.installation_id, repository.id)
+            if self._governance_resolver is not None
+            else None
+        )
+        if governance is not None:
+            # Resolution failures raise and fail the scan closed: never scan without policy.
+            mandatory, organization_policy_version = None, governance.organization_policy_version
+        else:
+            mandatory, organization_policy_version = self._policy_resolver(job.installation_id)
         request = ScanRequest(
             repository=mirror,
             context=context,
             max_commits=self._max_commits,
             mandatory_policy=mandatory,
+            governance=governance.inputs if governance is not None else None,
         )
         plan = self._scans.plan(request)
         if plan.range.head is not None and plan.range.head != job.head_sha:
@@ -305,7 +333,9 @@ class ScanWorker:
         with correlation(scan_id=result.metadata.scan_id):
             conclusion, output = completed_output(result)
             self._publish(job, progress, CheckRunStatus.COMPLETED, output, conclusion)
-            return self._record_result(job, result, conclusion, mirror, organization_policy_version)
+            return self._record_result(
+                job, result, conclusion, mirror, organization_policy_version, governance
+            )
 
     def _describe(self, job: ScanJob) -> str:
         if job.event == "merge_group":
@@ -342,6 +372,7 @@ class ScanWorker:
         conclusion: CheckRunConclusion,
         repository: Repository,
         organization_policy_version: int | None,
+        governance: ScanGovernance | None = None,
     ) -> JobState:
         stats = result.statistics
         state = JobState.PASSED if result.enforcement.allowed else JobState.FAILED
@@ -353,6 +384,8 @@ class ScanWorker:
             conclusion=conclusion.value,
             repository=repository,
             organization_policy_version=organization_policy_version,
+            governance_record=governance.record(result.effective) if governance else None,
+            governance_fingerprint=governance.fingerprint if governance else None,
         )
         self._audit_job(
             AuditEventType.REPOSITORY_SCANNED,

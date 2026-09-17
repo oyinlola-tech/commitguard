@@ -60,6 +60,13 @@ class ConfirmationRequiredError(ControlPlaneError):
     status = 409
 
 
+class ApprovalRequiredError(ControlPlaneError):
+    """The organization requires policy changes to be approved before publication."""
+
+    code = "APPROVAL_REQUIRED"
+    status = 409
+
+
 class ReauthenticationRequiredError(ControlPlaneError):
     code = "REAUTHENTICATION_REQUIRED"
     status = 401

@@ -30,7 +30,7 @@ The service itself never serves plain HTTP to the internet.
 import json
 import threading
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -58,6 +58,7 @@ from commitguard.github.events import (
     PushEvent,
     normalize_webhook,
 )
+from commitguard.github.identifiers import RepositoryRef
 from commitguard.github.installations import InstallationService
 from commitguard.github.pull_requests import (
     PullRequestDisposition,
@@ -82,6 +83,7 @@ from commitguard.github.storage import (
 )
 from commitguard.github.webhooks import MAX_WEBHOOK_BYTES, WebhookDelivery, parse_delivery
 from commitguard.github.worker import ScanWorker
+from commitguard.governance.service import GovernanceServices
 from commitguard.notifications.service import RUN_INTERVAL_SECONDS, NotificationService
 from commitguard.notifications.settings import NotificationSettings
 from commitguard.observability.logging import configure_json_logging, correlation, get_logger
@@ -158,6 +160,9 @@ class GitHubAppService:
             now=now,
         )
         self.recorder = ScanResultRecorder(store, self.audit, now=now)
+        # Organization governance: groups, onboarding, exceptions, effective policy per repository.
+        self.governance = GovernanceServices(store, self.audit, self.policies, now=now)
+        self.installations.add_discovery_listener(self._repositories_discovered)
         self.worker = ScanWorker(
             store=store,
             installations=self.installations,
@@ -166,6 +171,7 @@ class GitHubAppService:
             audit=self.audit,
             metrics=self.metrics,
             policy_resolver=self.policies.mandatory_for_installation,
+            governance_resolver=self.governance.scan_governance,
             recorder=self.recorder,
             max_commits=max_commits,
             now=now,
@@ -182,6 +188,11 @@ class GitHubAppService:
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._maintenance_tasks: list[Callable[[], object]] = []
+
+    def _repositories_discovered(
+        self, account_id: int, installation_id: int, repositories: Sequence[RepositoryRef]
+    ) -> None:
+        self.governance.inventory.discovered(account_id, installation_id, repositories)
 
     # ------------------------------------------------------------------ #
     # Construction
@@ -723,6 +734,7 @@ class GitHubAppService:
             try:
                 self.recover(queued_before=self._now() - RECOVER_QUEUED_AFTER)
                 self.recovery.run_once()
+                self.governance.run_maintenance()
                 if time.monotonic() - last_purge > RETENTION_INTERVAL_SECONDS:
                     self.purge_expired()
                     last_purge = time.monotonic()

@@ -88,7 +88,8 @@ class ScanResult(BaseModel):
     metadata: ScanMetadata
     enforcement: EnforcementDecision
     policies: tuple[Policy, ...] = ()  # effective policies, for reproducible history
-    repository_policies: tuple[Policy, ...] = ()  # before organization governance
+    #: Fields the repository configuration set per rule (before organization governance).
+    repository_overrides: dict[str, dict[str, str | bool]] = {}
     effective: EffectivePolicy | None = None
 
     @property
@@ -163,7 +164,7 @@ class ScanService:
             metadata=metadata,
             enforcement=EnforcementService(request.fail_on).decide(run.report),
             policies=run.policies,
-            repository_policies=run.repository_policies,
+            repository_overrides=run.repository_overrides,
             effective=run.effective,
         )
 

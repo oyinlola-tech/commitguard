@@ -172,6 +172,8 @@ class ScanResultRecorder:
         conclusion: str,
         repository: Repository | None,
         organization_policy_version: int | None,
+        governance_record: str | None = None,
+        governance_fingerprint: str | None = None,
     ) -> None:
         """Store the result, its findings and the violation lifecycle in one transaction."""
         now = self._now()
@@ -186,6 +188,12 @@ class ScanResultRecorder:
         stats = result.statistics
         metadata = result.metadata
         notices = [*result.plan.notices]
+        # Monitor mode reports block as warn; alerts still go out for what would have blocked.
+        monitored = (
+            {r.policy_id for r in result.effective.rules if r.monitor_mode}
+            if result.effective is not None
+            else set()
+        )
         events: list[AuditEvent] = []
         with self._store.transaction() as db:
             db.execute(
@@ -194,6 +202,7 @@ class ScanResultRecorder:
                 "base_sha = ?, completed_at = ?, tool_version = ?, rules_version = ?, "
                 "policy_version = ?, policy_source = ?, organization_policy_version = ?, "
                 "effective_policies = ?, findings_count = ?, detector_failures = ?, notices = ?, "
+                "governance = ?, governance_fingerprint = ?, repository_policies = ?, "
                 "updated_at = ? WHERE job_id = ?",
                 (
                     state.value,
@@ -219,6 +228,11 @@ class ScanResultRecorder:
                     stats.findings,
                     stats.detector_failures,
                     json.dumps([clean_text(n, 1000) for n in notices[:20]]),
+                    governance_record,
+                    governance_fingerprint,
+                    json.dumps(result.repository_overrides, sort_keys=True)
+                    if result.effective is not None
+                    else None,
                     _ts(now),
                     job.job_id,
                 ),
@@ -236,11 +250,10 @@ class ScanResultRecorder:
                     if event is not None:
                         events.append(event)
                         notification_type = NOTIFY_SEVERITIES.get(item.finding.severity)
-                        if (
-                            not stale
-                            and item.action is Action.BLOCK
-                            and notification_type is not None
-                        ):
+                        would_block = item.action is Action.BLOCK or (
+                            item.action is Action.WARN and item.finding.rule_id in monitored
+                        )
+                        if not stale and would_block and notification_type is not None:
                             key = (notification_type, item.finding.rule_id)
                             new_blocked.setdefault(key, []).append(violation_id)
                     if not stale:
@@ -254,14 +267,21 @@ class ScanResultRecorder:
             events = [self._store.insert_audit_event(db, e) for e in events]
             account_id = account_for_installation(db, job.installation_id)
             if account_id is not None:
+                aggregate = bool(new_blocked) and _aggregates_violations(db, account_id)
                 for (notification_type, rule_id), ids in sorted(new_blocked.items()):
-                    emit(
-                        db,
-                        self._violation_notification(
-                            job, group, account_id, notification_type, rule_id, ids
-                        ),
-                        now,
+                    notification = self._violation_notification(
+                        job,
+                        group,
+                        account_id,
+                        notification_type,
+                        rule_id,
+                        ids,
+                        monitored=rule_id in monitored,
+                        aggregated=aggregate,
                     )
+                    emit(db, notification, now)
+                    if aggregate:
+                        emit(db, _violation_digest(db, notification, now), now)
                 if job.event == "merge_group" and state is JobState.FAILED and not stale:
                     emit(
                         db,
@@ -284,6 +304,9 @@ class ScanResultRecorder:
         notification_type: NotificationType,
         rule_id: str,
         violation_ids: list[str],
+        *,
+        monitored: bool = False,
+        aggregated: bool = False,
     ) -> NotificationEvent:
         severity = (
             Severity.CRITICAL
@@ -310,12 +333,25 @@ class ScanResultRecorder:
                 group.key,
                 rule_id,
             ),
-            title=f"Blocked: {rule_id} in {job.repository.full_name}",
+            title=(
+                f"Would block (monitor mode): {rule_id} in {job.repository.full_name}"
+                if monitored
+                else f"Blocked: {rule_id} in {job.repository.full_name}"
+            ),
             body=(
-                f"CommitGuard blocked {count} commit(s) in {where} of "
-                f"{job.repository.full_name} ({rule_id}, {severity.value}) at "
-                f"{job.head_sha[:12]}. The GitHub check failed; remediation is shown on the "
-                "violation page."
+                (
+                    f"CommitGuard found {count} commit(s) in {where} of "
+                    f"{job.repository.full_name} ({rule_id}, {severity.value}) at "
+                    f"{job.head_sha[:12]} that policy blocks. The repository is in monitor mode, "
+                    "so the GitHub check reports a warning instead of failing."
+                )
+                if monitored
+                else (
+                    f"CommitGuard blocked {count} commit(s) in {where} of "
+                    f"{job.repository.full_name} ({rule_id}, {severity.value}) at "
+                    f"{job.head_sha[:12]}. The GitHub check failed; remediation is shown on the "
+                    "violation page."
+                )
             ),
             metadata={
                 "rule": rule_id,
@@ -325,6 +361,9 @@ class ScanResultRecorder:
                 "head_sha": job.head_sha,
                 "source": group.kind,
                 "location": where,
+                "monitor_mode": monitored,
+                # Organization digest enabled: e-mail and webhooks go to the digest instead.
+                "aggregated": aggregated,
             },
         )
 
@@ -787,6 +826,49 @@ class ScanResultRecorder:
                 _ts(now),
             ),
         )
+
+
+def _aggregates_violations(db: sqlite3.Connection, account_id: int) -> bool:
+    row = db.execute(
+        "SELECT document FROM organization_settings WHERE account_id = ?", (account_id,)
+    ).fetchone()
+    if row is None:
+        return False
+    try:
+        return bool(json.loads(str(row["document"])).get("aggregate_violation_alerts", False))
+    except ValueError:
+        return False
+
+
+def _violation_digest(
+    db: sqlite3.Connection, event: NotificationEvent, now: datetime
+) -> NotificationEvent:
+    """One organization-level alert per rule and hour, however many repositories."""
+    rule = str(event.metadata.get("rule", ""))
+    window = NotificationType.VIOLATION_DIGEST
+    since = now.timestamp() - (now.timestamp() % 3600)
+    repositories = db.execute(
+        "SELECT COUNT(DISTINCT repository_id) AS n FROM notification_events WHERE account_id = ? "
+        "AND type IN ('critical_violation', 'high_violation') AND last_occurred_at >= ? "
+        "AND json_extract(metadata, '$.rule') = ?",
+        (event.account_id, since, rule),
+    ).fetchone()["n"]
+    count = max(int(repositories or 0), 1)
+    return NotificationEvent(
+        type=window,
+        account_id=event.account_id,
+        severity=event.severity,
+        resource_type="organization",
+        resource_id=str(event.account_id),
+        dedup_key=domain_key(window, event.account_id, rule),
+        title=f"CommitGuard detected blocked violations of {rule} in {count} repositories",
+        body=(
+            f"Violations of {rule} ({event.severity.value}) were detected in {count} "
+            "repository(ies) of your organization in the last hour. E-mail and webhooks are "
+            "aggregated; the dashboard lists every repository and violation."
+        ),
+        metadata={"rule": rule, "repositories": count},
+    )
 
 
 def merge_queue_failure(job: ScanJob, account_id: int, body: str) -> NotificationEvent:
