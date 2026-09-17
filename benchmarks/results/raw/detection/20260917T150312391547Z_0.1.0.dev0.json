@@ -1,0 +1,179 @@
+{
+  "benchmark": "detection",
+  "manifest": {
+    "command": "commitguard benchmark detection --dataset-version 1.2.0 --record benchmarks/results",
+    "commitguard_version": "0.1.0.dev0",
+    "configuration_version": "built-in defaults",
+    "cpu_count": 8,
+    "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+    "dataset_fingerprint": "f6ef4d6a8df83aa9e1157f1d905ec73f0fc77bb69a18ae1a34dda7e51ec98273",
+    "dataset_version": "1.2.0",
+    "git_version": "2.53.0",
+    "machine": "x86_64",
+    "memory_bytes": 16608079872,
+    "operating_system": "Linux",
+    "os_release": "7.1.5+kali-amd64",
+    "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+    "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+    "python_implementation": "CPython",
+    "python_version": "3.13.15",
+    "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+    "schema_version": 1,
+    "source_dirty": true,
+    "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+    "timestamp": "2026-09-17T15:03:12.391547Z"
+  },
+  "result": {
+    "benchmark": "detection",
+    "benchmark_version": "1.0.0",
+    "by_class": {
+      "adversarial": {
+        "cases": 59,
+        "exact_decision": 59,
+        "true_positive": 59
+      },
+      "clean": {
+        "cases": 41,
+        "exact_decision": 41,
+        "true_negative": 41
+      },
+      "generated": {
+        "cases": 9000,
+        "exact_decision": 9000,
+        "true_negative": 5422,
+        "true_positive": 3578
+      },
+      "malformed": {
+        "cases": 9,
+        "exact_decision": 9,
+        "true_positive": 9
+      },
+      "variations": {
+        "cases": 21,
+        "exact_decision": 21,
+        "true_positive": 21
+      },
+      "violations": {
+        "cases": 27,
+        "exact_decision": 27,
+        "true_positive": 27
+      }
+    },
+    "by_decision": {
+      "allow": {
+        "allow": 5463
+      },
+      "block": {
+        "block": 3234
+      },
+      "warn": {
+        "warn": 460
+      }
+    },
+    "cases": 9157,
+    "decision": {
+      "false_negative": 0,
+      "false_positive": 0,
+      "true_negative": 5463,
+      "true_positive": 3694
+    },
+    "decision_rates": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "false_negative_rate": 0.0,
+      "false_positive_rate": 0.0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "duration_ms": 3468.663,
+    "exact_decision_accuracy": 1.0,
+    "exact_decision_matches": 9157,
+    "latency": {
+      "max_ms": 3.602,
+      "mean_ms": 0.2772,
+      "min_ms": 0.0866,
+      "p50_ms": 0.2573,
+      "p95_ms": 0.5063,
+      "p99_ms": 0.7001,
+      "samples": 9157
+    },
+    "mismatches": [],
+    "negatives": 5463,
+    "positives": 3694,
+    "rule_rates": {
+      "ai_coauthor": {
+        "accuracy": 1.0,
+        "f1": 1.0,
+        "false_negative_rate": 0.0,
+        "false_positive_rate": 0.0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "ai_identity": {
+        "accuracy": 1.0,
+        "f1": 1.0,
+        "false_negative_rate": 0.0,
+        "false_positive_rate": 0.0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "ai_trailer": {
+        "accuracy": 1.0,
+        "f1": 1.0,
+        "false_negative_rate": 0.0,
+        "false_positive_rate": 0.0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "bot_identity": {
+        "accuracy": 1.0,
+        "f1": 1.0,
+        "false_negative_rate": 0.0,
+        "false_positive_rate": 0.0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "malformed_trailer": {
+        "accuracy": 1.0,
+        "f1": 1.0,
+        "false_negative_rate": 0.0,
+        "false_positive_rate": 0.0,
+        "precision": 1.0,
+        "recall": 1.0
+      }
+    },
+    "rules": {
+      "ai_coauthor": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 5934,
+        "true_positive": 3222
+      },
+      "ai_identity": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 9152,
+        "true_positive": 4
+      },
+      "ai_trailer": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 9149,
+        "true_positive": 7
+      },
+      "bot_identity": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 8703,
+        "true_positive": 453
+      },
+      "malformed_trailer": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 9091,
+        "true_positive": 7
+      }
+    }
+  },
+  "schema_version": 1
+}

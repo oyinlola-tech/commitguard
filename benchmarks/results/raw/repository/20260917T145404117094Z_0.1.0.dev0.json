@@ -1,0 +1,85 @@
+{
+  "benchmark": "repository",
+  "manifest": {
+    "command": "commitguard benchmark repository --record benchmarks/results",
+    "commitguard_version": "0.1.0.dev0",
+    "configuration_version": "built-in defaults",
+    "cpu_count": 8,
+    "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+    "dataset_fingerprint": null,
+    "dataset_version": null,
+    "git_version": "2.53.0",
+    "machine": "x86_64",
+    "memory_bytes": 16608079872,
+    "operating_system": "Linux",
+    "os_release": "7.1.5+kali-amd64",
+    "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+    "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+    "python_implementation": "CPython",
+    "python_version": "3.13.15",
+    "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+    "schema_version": 1,
+    "source_dirty": true,
+    "source_revision": "a89d5915fd34352bcc3568049ebc6826de2cfb2e",
+    "timestamp": "2026-09-17T14:54:04.117094Z"
+  },
+  "result": {
+    "benchmark": "repository",
+    "benchmark_version": "1.0.0",
+    "histories": [
+      {
+        "all_seeded_violations_found": true,
+        "analyze_ms": 14.3,
+        "blocked": 5,
+        "commits": 100,
+        "commits_per_second": 3470.1,
+        "create_ms": 12.1,
+        "list_ms": 3.0,
+        "read_ms": 11.5,
+        "scan_total_ms": 28.8,
+        "seeded_violations": 5
+      },
+      {
+        "all_seeded_violations_found": true,
+        "analyze_ms": 142.6,
+        "blocked": 50,
+        "commits": 1000,
+        "commits_per_second": 3520.2,
+        "create_ms": 60.4,
+        "list_ms": 11.2,
+        "read_ms": 130.3,
+        "scan_total_ms": 284.1,
+        "seeded_violations": 50
+      },
+      {
+        "all_seeded_violations_found": true,
+        "analyze_ms": 2181.2,
+        "blocked": 500,
+        "commits": 10000,
+        "commits_per_second": 2834.1,
+        "create_ms": 763.3,
+        "list_ms": 78.7,
+        "read_ms": 1268.6,
+        "scan_total_ms": 3528.5,
+        "seeded_violations": 500
+      },
+      {
+        "all_seeded_violations_found": true,
+        "analyze_ms": 28875.3,
+        "blocked": 5000,
+        "commits": 100000,
+        "commits_per_second": 2278.6,
+        "create_ms": 8591.3,
+        "list_ms": 1175.0,
+        "read_ms": 13836.2,
+        "scan_total_ms": 43886.4,
+        "seeded_violations": 5000
+      }
+    ],
+    "notes": [
+      "The commitguard scan command limits a range to 1,000 commits by default (a safety bound); this benchmark calls the same library functions without that bound to measure scaling.",
+      "Repositories are local; fetch time from a remote is not included."
+    ]
+  },
+  "schema_version": 1
+}
