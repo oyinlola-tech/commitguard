@@ -29,6 +29,8 @@ dependencies = [
     "typer>=0.12",
     "pydantic>=2.7,<3",
     "PyYAML>=6.0.1",
+    # Windows has no system IANA time zone database; zoneinfo needs this package there.
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
