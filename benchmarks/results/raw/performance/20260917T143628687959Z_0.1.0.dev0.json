@@ -1,0 +1,202 @@
+{
+  "benchmark": "performance",
+  "manifest": {
+    "command": "commitguard benchmark performance --record benchmarks/results",
+    "commitguard_version": "0.1.0.dev0",
+    "configuration_version": "built-in defaults",
+    "cpu_count": 8,
+    "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+    "dataset_fingerprint": null,
+    "dataset_version": null,
+    "git_version": "2.53.0",
+    "machine": "x86_64",
+    "memory_bytes": 16608079872,
+    "operating_system": "Linux",
+    "os_release": "7.1.5+kali-amd64",
+    "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+    "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+    "python_implementation": "CPython",
+    "python_version": "3.13.15",
+    "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+    "schema_version": 1,
+    "source_dirty": true,
+    "source_revision": "6afb581a2761d14f9082ca17775163dba8b460f3",
+    "timestamp": "2026-09-17T14:36:28.687959Z"
+  },
+  "result": {
+    "batches": [
+      {
+        "commits": 1,
+        "commits_per_second": 4316.5,
+        "cpu_ms": 0.237,
+        "latency": {
+          "max_ms": 0.2291,
+          "mean_ms": 0.2291,
+          "min_ms": 0.2291,
+          "p50_ms": 0.2291,
+          "p95_ms": 0.2291,
+          "p99_ms": 0.2291,
+          "samples": 1
+        },
+        "python_peak_allocated_bytes": 5563,
+        "wall_ms": 0.232
+      },
+      {
+        "commits": 10,
+        "commits_per_second": 5959.2,
+        "cpu_ms": 1.549,
+        "latency": {
+          "max_ms": 0.2629,
+          "mean_ms": 0.1672,
+          "min_ms": 0.1298,
+          "p50_ms": 0.1348,
+          "p95_ms": 0.2629,
+          "p99_ms": 0.2629,
+          "samples": 10
+        },
+        "python_peak_allocated_bytes": 8227,
+        "wall_ms": 1.678
+      },
+      {
+        "commits": 100,
+        "commits_per_second": 5710.7,
+        "cpu_ms": 17.162,
+        "latency": {
+          "max_ms": 0.3284,
+          "mean_ms": 0.1747,
+          "min_ms": 0.1228,
+          "p50_ms": 0.1419,
+          "p95_ms": 0.2506,
+          "p99_ms": 0.3222,
+          "samples": 100
+        },
+        "python_peak_allocated_bytes": 25881,
+        "wall_ms": 17.511
+      },
+      {
+        "commits": 1000,
+        "commits_per_second": 7970.3,
+        "cpu_ms": 125.463,
+        "latency": {
+          "max_ms": 0.2958,
+          "mean_ms": 0.1252,
+          "min_ms": 0.0866,
+          "p50_ms": 0.1081,
+          "p95_ms": 0.1797,
+          "p99_ms": 0.2129,
+          "samples": 1000
+        },
+        "python_peak_allocated_bytes": 94737,
+        "wall_ms": 125.466
+      },
+      {
+        "commits": 10000,
+        "commits_per_second": 6900.8,
+        "cpu_ms": 1443.25,
+        "latency": {
+          "max_ms": 2.7082,
+          "mean_ms": 0.1446,
+          "min_ms": 0.0853,
+          "p50_ms": 0.1162,
+          "p95_ms": 0.2361,
+          "p99_ms": 0.4385,
+          "samples": 10000
+        },
+        "python_peak_allocated_bytes": 191865,
+        "wall_ms": 1449.103
+      }
+    ],
+    "benchmark": "performance",
+    "benchmark_version": "1.0.0",
+    "message_sizes": [
+      {
+        "cpu_ms_per_commit": 0.2577,
+        "decision": "block",
+        "latency": {
+          "max_ms": 0.4893,
+          "mean_ms": 0.2567,
+          "min_ms": 0.2195,
+          "p50_ms": 0.2483,
+          "p95_ms": 0.3273,
+          "p99_ms": 0.4155,
+          "samples": 200
+        },
+        "message_bytes": 1000,
+        "python_peak_allocated_bytes": 11019,
+        "repetitions": 200
+      },
+      {
+        "cpu_ms_per_commit": 0.8401,
+        "decision": "block",
+        "latency": {
+          "max_ms": 1.1031,
+          "mean_ms": 0.839,
+          "min_ms": 0.7086,
+          "p50_ms": 0.8415,
+          "p95_ms": 0.9461,
+          "p99_ms": 1.0598,
+          "samples": 200
+        },
+        "message_bytes": 10216,
+        "python_peak_allocated_bytes": 25265,
+        "repetitions": 200
+      },
+      {
+        "cpu_ms_per_commit": 7.3887,
+        "decision": "block",
+        "latency": {
+          "max_ms": 16.9272,
+          "mean_ms": 7.3874,
+          "min_ms": 5.1497,
+          "p50_ms": 6.9994,
+          "p95_ms": 10.8443,
+          "p99_ms": 15.7651,
+          "samples": 200
+        },
+        "message_bytes": 102376,
+        "python_peak_allocated_bytes": 181389,
+        "repetitions": 200
+      },
+      {
+        "cpu_ms_per_commit": 76.5858,
+        "decision": "block",
+        "latency": {
+          "max_ms": 106.6484,
+          "mean_ms": 76.5896,
+          "min_ms": 66.1083,
+          "p50_ms": 74.8506,
+          "p95_ms": 94.0,
+          "p99_ms": 106.6484,
+          "samples": 47
+        },
+        "message_bytes": 1048552,
+        "python_peak_allocated_bytes": 1776949,
+        "repetitions": 47
+      },
+      {
+        "cpu_ms_per_commit": 743.216,
+        "decision": "block",
+        "latency": {
+          "max_ms": 803.5026,
+          "mean_ms": 743.3224,
+          "min_ms": 685.1034,
+          "p50_ms": 751.8045,
+          "p95_ms": 803.5026,
+          "p99_ms": 803.5026,
+          "samples": 5
+        },
+        "message_bytes": 10485736,
+        "python_peak_allocated_bytes": 17768541,
+        "repetitions": 5
+      }
+    ],
+    "notes": [
+      "Commits are built in memory: this isolates detection and policy evaluation from Git I/O (see the hooks and repository benchmarks for end-to-end Git timings).",
+      "startup_ms includes loading and compiling the built-in rules (cached per process).",
+      "Allocation peaks come from a separate tracemalloc pass; timings are measured without it."
+    ],
+    "peak_rss_bytes": 86032384,
+    "startup_ms": 28.608
+  },
+  "schema_version": 1
+}

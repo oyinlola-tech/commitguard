@@ -117,4 +117,5 @@ markers = [
     "phase2: behavioural specification for Phase 2 (AI attribution detection)",
     "phase3: behavioural specification for Phase 3 (Git hook enforcement)",
     "phase5: behavioural specification for Phase 5 (GitHub App)",
+    "security: security regression suite (commitguard test security); see tests/conftest.py",
 ]

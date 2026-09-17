@@ -17,6 +17,42 @@
       "operating_system": "Linux",
       "dataset_version": "1.1.0 (file)",
       "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
+    },
+    {
+      "benchmark": "detection",
+      "file": "raw/detection/20260917T141716920049Z_0.1.0.dev0.json",
+      "timestamp": "2026-09-17T14:17:16.920049Z",
+      "commitguard_version": "0.1.0.dev0",
+      "operating_system": "Linux",
+      "dataset_version": "1.0.0 (file)",
+      "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
+    },
+    {
+      "benchmark": "detection",
+      "file": "raw/detection/20260917T141724176911Z_0.1.0.dev0.json",
+      "timestamp": "2026-09-17T14:17:24.176911Z",
+      "commitguard_version": "0.1.0.dev0",
+      "operating_system": "Linux",
+      "dataset_version": "1.1.0 (file)",
+      "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
+    },
+    {
+      "benchmark": "performance",
+      "file": "raw/performance/20260917T143557837470Z_0.1.0.dev0.json",
+      "timestamp": "2026-09-17T14:35:57.837470Z",
+      "commitguard_version": "0.1.0.dev0",
+      "operating_system": "Linux",
+      "dataset_version": null,
+      "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
+    },
+    {
+      "benchmark": "performance",
+      "file": "raw/performance/20260917T143628687959Z_0.1.0.dev0.json",
+      "timestamp": "2026-09-17T14:36:28.687959Z",
+      "commitguard_version": "0.1.0.dev0",
+      "operating_system": "Linux",
+      "dataset_version": null,
+      "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
     }
   ]
 }
