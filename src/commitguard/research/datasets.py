@@ -41,6 +41,14 @@ Version history::
     1.1.0  cases written after 1.0.0 exposed a parser bypass, before running them:
            more leading-character and Unicode evasions, quoted and bulleted
            human trailers, squash-merge messages (false-positive probes)
+    1.2.0  cases written after the Phase 10 property-based fuzzer found that a Unicode
+           letter or number before a key (\u32acCo-authored-by:) hid attribution, before
+           running them: alphanumeric-symbol prefixes, numbered human trailers and
+           non-ASCII prose (false-positive probes)
+    1.3.0  cases written after the same fuzzer found that default-ignorable characters
+           which are not control or format characters (variation selectors, U+034F,
+           Hangul fillers) hid a trailer key or an agent alias, before running them;
+           emoji variation selectors and Hangul names (false-positive probes)
 """
 
 import json
@@ -53,8 +61,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from commitguard.security.hashing import sha256_hex
 
-DATASET_VERSION = "1.1.0"
-DATASET_VERSIONS = ("1.0.0", "1.1.0")
+DATASET_VERSION = "1.3.0"
+DATASET_VERSIONS = ("1.0.0", "1.1.0", "1.2.0", "1.3.0")
 DATASET_SEED = 20260917
 GENERATED_CASES = 9_000
 
@@ -1226,6 +1234,175 @@ def _generated(count: int, seed: int) -> Iterator[DatasetCase]:
             )
 
 
+def _adversarial_1_2() -> Iterator[DatasetCase]:
+    c: CaseClass = "adversarial"
+    claude = "Claude <noreply@anthropic.com>"
+    # Characters that are letters or numbers to Unicode (str.isalnum) or become ASCII under
+    # NFKC, written directly before the key. Found by the Phase 10 property-based fuzzer.
+    prefixes = {
+        "circled-ideograph": "\u32ac",
+        "circled-latin-letter": "\u24de",
+        "circled-digit": "\u2460",
+        "roman-numeral": "\u216b",
+        "superscript-two": "\u00b2",
+        "arabic-indic-digit": "\u0663",
+        "cjk-ideograph": "\u91d1",
+        "fullwidth-letter": "\uff58",
+        "mixed-fuzzer-prefix": "\u24de\u0830\u02e5\u00b6\u0fc1\u0839\u07f8\u0375\u02d4",
+    }
+    for key_id, prefix in prefixes.items():
+        yield _case(
+            f"adversarial-alnum-prefix-{key_id}",
+            c,
+            "leading-characters",
+            f"Unicode letter or number before the key: {prefix!r}",
+            _msg(SUBJECTS[0], prefix + "Co-authored-by: " + claude),
+            "block",
+            ["ai_coauthor"],
+            ["malformed_trailer"],
+        )
+    yield _case(
+        "adversarial-alnum-prefix-random-case",
+        c,
+        "leading-characters",
+        "Unicode number before a randomly cased key without a space after the colon",
+        _msg(SUBJECTS[0], "\u32acCo-AUThorEd-By:" + claude),
+        "block",
+        ["ai_coauthor"],
+        ["malformed_trailer"],
+    )
+    yield _case(
+        "adversarial-alnum-prefix-among-human-trailers",
+        c,
+        "leading-characters",
+        "Prefixed AI trailer between human trailers",
+        _msg(
+            SUBJECTS[0],
+            "Signed-off-by: Ada Lovelace <ada@example.com>",
+            "\u2460Co-authored-by: " + claude,
+            "Reviewed-by: Grace Hopper <grace.hopper@example.org>",
+        ),
+        "block",
+        ["ai_coauthor"],
+        ["malformed_trailer"],
+    )
+
+
+def _clean_1_2() -> Iterator[DatasetCase]:
+    c: CaseClass = "clean"
+    yield _case(
+        "clean-numbered-human-coauthor",
+        c,
+        "bulleted",
+        "Circled-number list of human co-authors",
+        _msg(
+            SUBJECTS[3],
+            body="Pairing:\n\u2460 Co-authored-by: Alan Turing <alan@turing.example>\n\u2461 Co-authored-by: Grace Hopper <grace.hopper@example.org>",
+        ),
+        "allow",
+    )
+    yield _case(
+        "clean-roman-numeral-reviewer",
+        c,
+        "bulleted",
+        "Roman-numeral list item naming a human reviewer",
+        _msg(SUBJECTS[3], body="\u216b. Reviewed-by: Grace Hopper <grace.hopper@example.org>"),
+        "allow",
+    )
+    yield _case(
+        "clean-non-ascii-prose-with-colon",
+        c,
+        "prose",
+        "Non-ASCII prose lines that contain colons",
+        _msg(
+            SUBJECTS[3],
+            body="Gr\u00f6\u00dfe: 5 MB\n\u65e5\u672c\u8a9e: \u30c6\u30b9\u30c8\nCaf\u00e9: open until 5",
+        ),
+        "allow",
+    )
+    yield _case(
+        "clean-non-ascii-human-trailers",
+        c,
+        "identity",
+        "Human trailers with non-ASCII names",
+        _msg(
+            SUBJECTS[3],
+            "Co-authored-by: Jos\u00e9 N\u00fa\u00f1ez <jose@example.com>",
+            "Signed-off-by: \u5c71\u7530\u592a\u90ce <yamada@example.jp>",
+        ),
+        "allow",
+    )
+
+
+def _adversarial_1_3() -> Iterator[DatasetCase]:
+    c: CaseClass = "adversarial"
+    # Default-ignorable code points that are not control or format characters: they render
+    # as nothing but survived normalisation. Found by the Phase 10 property-based fuzzer.
+    ignorable = {
+        "combining-grapheme-joiner": "͏",
+        "variation-selector-16": "️",
+        "variation-selector-17": "\U000e0100",
+        "mongolian-variation-selector": "᠋",
+        "hangul-filler": "ㅤ",
+        "halfwidth-hangul-filler": "ﾠ",
+        "khmer-inherent-vowel": "឴",
+    }
+    for key_id, char in ignorable.items():
+        yield _case(
+            f"adversarial-ignorable-key-{key_id}",
+            c,
+            "invisible-characters",
+            f"Default-ignorable {char!r} inside the trailer key",
+            _msg(SUBJECTS[0], f"Co-authored{char}-by: Claude <noreply@anthropic.com>"),
+            "block",
+            ["ai_coauthor"],
+            ["malformed_trailer"],
+        )
+        yield _case(
+            f"adversarial-ignorable-name-{key_id}",
+            c,
+            "invisible-characters",
+            f"Default-ignorable {char!r} inside an agent alias with a personal email",
+            _msg(SUBJECTS[0], f"Co-authored-by: Clau{char}de Code <dev@example.com>"),
+            "block",
+            ["ai_coauthor"],
+            ["malformed_trailer"],
+        )
+    yield _case(
+        "adversarial-ignorable-author-alias",
+        c,
+        "invisible-characters",
+        "Author name is an agent alias containing a variation selector",
+        _msg(SUBJECTS[1]),
+        "block",
+        ["ai_identity"],
+        author=Person(name="Clau️de Code", email="dev@example.com"),
+    )
+
+
+def _clean_1_3() -> Iterator[DatasetCase]:
+    c: CaseClass = "clean"
+    yield _case(
+        "clean-emoji-variation-selector",
+        c,
+        "unicode",
+        "Human commit whose subject and co-author name contain emoji variation selectors",
+        _msg(
+            "docs: add ❤️ to the changelog",
+            "Co-authored-by: Grace Hopper ⭐️ <grace.hopper@example.org>",
+        ),
+        "allow",
+    )
+    yield _case(
+        "clean-hangul-name",
+        c,
+        "identity",
+        "Human Korean co-author",
+        _msg(SUBJECTS[3], "Co-authored-by: 김민준 <minjun@example.kr>"),
+        "allow",
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Dataset
 # --------------------------------------------------------------------------- #
@@ -1237,6 +1414,10 @@ def build_dataset(
     cases = [*_clean(), *_violations(), *_variations(), *_malformed(), *_adversarial()]
     if version >= "1.1.0":
         cases += [*_clean_1_1(), *_adversarial_1_1()]
+    if version >= "1.2.0":
+        cases += [*_clean_1_2(), *_adversarial_1_2()]
+    if version >= "1.3.0":
+        cases += [*_clean_1_3(), *_adversarial_1_3()]
     cases += list(_generated(generated, seed))
     ids = [case.id for case in cases]
     duplicates = sorted({i for i in ids if ids.count(i) > 1}) if len(set(ids)) != len(ids) else []

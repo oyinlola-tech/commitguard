@@ -1,8 +1,14 @@
-"""``commitguard init``: create repository configuration and, optionally, a GitHub workflow.
+"""``commitguard init``: set a repository up for enforcement.
 
-Existing files are never overwritten.
+Writes ``.commitguard.yaml``, and can install the Git hooks and write a GitHub
+workflow. Existing files are never overwritten.
+
+Interactive by default when the terminal can answer (a TTY), and fully
+non-interactive otherwise, so scripts and CI behave the same as ``--non-interactive``:
+nothing is prompted, and only what the options ask for is done.
 """
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -26,10 +32,27 @@ def _write_new(path: Path, content: str) -> None:
         fail(f"could not write {path}: {exc.strerror}")
 
 
+def _ask(question: str, *, default: bool) -> bool:
+    return bool(typer.confirm(question, default=default))
+
+
 def init_command(
     github: Annotated[
         bool,
         typer.Option("--github", help=f"Also create {WORKFLOW_FILE.as_posix()}."),
+    ] = False,
+    install: Annotated[
+        bool,
+        typer.Option(
+            "--install-hooks", help="Also install the Git hooks (as `commitguard install`)."
+        ),
+    ] = False,
+    non_interactive: Annotated[
+        bool,
+        typer.Option(
+            "--non-interactive",
+            help="Never prompt; do exactly what the options say (the default when not a terminal).",
+        ),
     ] = False,
     action_repository: Annotated[
         str | None,
@@ -46,9 +69,26 @@ def init_command(
         ),
     ] = None,
 ) -> None:
-    """Create .commitguard.yaml (and with --github a workflow). Never overwrites files."""
+    """Create .commitguard.yaml, and optionally install hooks and a GitHub workflow."""
+    interactive = not non_interactive and sys.stdin.isatty() and sys.stdout.isatty()
     with handled_errors():
         repository = Repository.discover()
+        if interactive:
+            info(f"Setting up CommitGuard in {repository.root}")
+            if not github and not (action_repository or action_ref):
+                github = _ask(
+                    "Add a GitHub Actions check (recommended: it cannot be bypassed)?",
+                    default=False,
+                )
+                if github:
+                    action_repository = action_repository or typer.prompt(
+                        "Repository hosting the CommitGuard Action (OWNER/REPO)"
+                    )
+                    action_ref = action_ref or typer.prompt(
+                        "Commit SHA of the Action to pin (40 characters)"
+                    )
+            if not install:
+                install = _ask("Install the Git hooks in this repository now?", default=True)
         workflow_path = repository.root / WORKFLOW_FILE
         workflow_text = None
         if github:
@@ -78,6 +118,12 @@ def init_command(
 
     for path in created:
         info(f"Created {path}")
+    if install:
+        from commitguard.cli.commands.install import install_command
+
+        info("")
+        install_command()
+        info("")
     if existing is not None:
         info(f"Kept existing configuration: {existing}")
     info("Next: review and commit the files.")
@@ -87,4 +133,5 @@ def init_command(
             "(see `commitguard github setup`); the workflow alone does not block merges."
         )
     else:
-        info("Run `commitguard install` to enforce policies in local Git hooks.")
+        if not install:
+            info("Run `commitguard install` to enforce policies in local Git hooks.")

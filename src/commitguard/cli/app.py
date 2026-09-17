@@ -16,6 +16,8 @@ from commitguard.cli.commands import (
     init,
     install,
     policy,
+    report,
+    reproduce,
     scan,
 )
 
@@ -63,6 +65,8 @@ app.add_typer(ci.ci_app, name="ci")
 app.add_typer(github.github_app, name="github")
 app.add_typer(dashboard.dashboard_app, name="dashboard")
 app.add_typer(benchmark.benchmark_app, name="benchmark")
+app.add_typer(reproduce.reproduce_app, name="reproduce")
+app.add_typer(report.report_app, name="report")
 
 
 def main() -> None:

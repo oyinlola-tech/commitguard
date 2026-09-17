@@ -900,6 +900,20 @@ def create_wsgi_app(
     return application
 
 
+def service_from_environment() -> "GitHubAppService":
+    """Build the service from environment variables.
+
+    Both entry points (``commitguard github serve`` and the WSGI factory) use
+    this, so they cannot be configured differently: notification delivery was
+    once loaded only by the WSGI factory, so ``serve`` delivered nothing.
+    """
+    from commitguard.notifications.settings import load_notification_settings
+
+    return GitHubAppService.from_settings(
+        load_settings(), notification_settings=load_notification_settings()
+    )
+
+
 def wsgi_app_from_environment() -> Callable[[WSGIEnvironment, StartResponse], Iterable[bytes]]:
     """Entry point for WSGI servers: settings from the environment, workers started.
 
@@ -913,12 +927,9 @@ def wsgi_app_from_environment() -> Callable[[WSGIEnvironment, StartResponse], It
     """
     from commitguard.api.hosting import build_dashboard, create_server_app
     from commitguard.api.settings import dashboard_enabled, load_dashboard_settings
-    from commitguard.notifications.settings import load_notification_settings
 
     configure_json_logging()
-    service = GitHubAppService.from_settings(
-        load_settings(), notification_settings=load_notification_settings()
-    )
+    service = service_from_environment()
     dashboard = build_dashboard(service, load_dashboard_settings()) if dashboard_enabled() else None
     service.start()
     return create_server_app(service, dashboard)

@@ -8,6 +8,10 @@ What is normalised, and why:
 * Unicode NFKC - fullwidth / mathematical bold letters fold to ASCII;
 * control (Cc) and format (Cf) characters removed - zero-width spaces, bidi
   overrides and escape codes cannot split a name to evade matching;
+* every other Unicode default-ignorable code point removed - variation
+  selectors, U+034F COMBINING GRAPHEME JOINER and the Hangul fillers render as
+  nothing too (found by property-based fuzzing: ``Clau\u034fde`` and
+  ``Co-authored\ufe0f-by`` evaded detection);
 * case folding and whitespace collapsing;
 * a *small, explicit* map of Cyrillic/Greek letters that are visually
   identical to Latin letters (``Claude`` spelled with a Cyrillic ``a``, U+0430).
@@ -60,15 +64,39 @@ _HOMOGLYPHS: dict[int, str] = {
 _ASCII_INVISIBLE = {code: None for code in (*range(0x00, 0x20), 0x7F) if not chr(code).isspace()}
 
 
+# Unicode Default_Ignorable_Code_Point (DerivedCoreProperties.txt) that are not Cc or Cf:
+# they render as nothing in normal text, like zero-width spaces, but NFKC keeps them.
+_DEFAULT_IGNORABLE_RANGES = (
+    (0x034F, 0x034F),  # COMBINING GRAPHEME JOINER
+    (0x115F, 0x1160),  # HANGUL CHOSEONG / JUNGSEONG FILLER
+    (0x17B4, 0x17B5),  # KHMER VOWEL INHERENT AQ / AA
+    (0x180B, 0x180F),  # MONGOLIAN FREE VARIATION SELECTORS, VOWEL SEPARATOR
+    (0x2065, 0x2065),  # unassigned
+    (0x3164, 0x3164),  # HANGUL FILLER
+    (0xFE00, 0xFE0F),  # VARIATION SELECTOR-1..16
+    (0xFFA0, 0xFFA0),  # HALFWIDTH HANGUL FILLER
+    (0xFFF0, 0xFFF8),  # unassigned
+    (0xE0000, 0xE0FFF),  # tags, VARIATION SELECTOR-17..256, unassigned
+)
+_DEFAULT_IGNORABLE = frozenset(
+    code for first, last in _DEFAULT_IGNORABLE_RANGES for code in range(first, last + 1)
+)
+
+
+def _visible(ch: str) -> bool:
+    if ch.isspace():
+        return True
+    return unicodedata.category(ch) not in ("Cc", "Cf") and ord(ch) not in _DEFAULT_IGNORABLE
+
+
 def _strip_invisible(text: str) -> str:
     # Whitespace controls (tab, newline, ...) are kept so they still separate words.
     if text.isascii():
-        # Fast path, same result: ASCII has no format (Cf) characters. Measured by the
-        # performance benchmark: per-character categorisation dominated large messages.
+        # Fast path, same result: ASCII has no format (Cf) or default-ignorable characters.
+        # Measured by the performance benchmark: per-character categorisation dominated
+        # large messages.
         return text if text.isprintable() else text.translate(_ASCII_INVISIBLE)
-    return "".join(
-        ch for ch in text if ch.isspace() or unicodedata.category(ch) not in ("Cc", "Cf")
-    )
+    return "".join(ch for ch in text if _visible(ch))
 
 
 def normalize_text(text: str) -> str:
@@ -79,6 +107,12 @@ def normalize_text(text: str) -> str:
         text = _strip_invisible(unicodedata.normalize("NFKC", _strip_invisible(text)))
     text = text.casefold().translate(_HOMOGLYPHS)
     return " ".join(text.split())
+
+
+def is_latin_lookalike(char: str) -> bool:
+    """True if ``char`` is a non-ASCII look-alike that :func:`normalize_text` folds to Latin."""
+    folded = char.casefold()
+    return not char.isascii() and folded.translate(_HOMOGLYPHS) != folded
 
 
 def normalize_name(name: str) -> str:
@@ -119,6 +153,6 @@ def uses_disguising_characters(text: str) -> bool:
     """True if matching ``text`` relied on folding look-alike or invisible characters.
 
     Plain case and whitespace differences do not count; NFKC compatibility
-    forms, control/format characters and homoglyphs do.
+    forms, control/format and other default-ignorable characters and homoglyphs do.
     """
     return normalize_text(text) != " ".join(text.casefold().split())

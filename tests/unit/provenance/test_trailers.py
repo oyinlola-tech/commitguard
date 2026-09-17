@@ -181,3 +181,68 @@ def test_leading_character_skipping_is_bounded_and_ignores_prose() -> None:
     )
     assert parse_trailers("feat: x\n\n* see http://example.com: details\n").trailers == ()
     assert parse_trailers("feat: x\n\n-- \n").trailers == ()
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        chr(0x32AC),  # CIRCLED IDEOGRAPH METAL: NFKC gives a CJK ideograph (isalnum)
+        chr(0x24DE),  # CIRCLED LATIN SMALL LETTER O: NFKC gives an ASCII "o"
+        chr(0x2460),  # CIRCLED DIGIT ONE: NFKC gives an ASCII "1"
+        chr(0x216B),  # ROMAN NUMERAL TWELVE: NFKC gives "XII"
+        chr(0x00B2),  # SUPERSCRIPT TWO
+        chr(0x0663),  # ARABIC-INDIC DIGIT THREE
+        chr(0xFF58),  # FULLWIDTH LATIN SMALL LETTER X
+        chr(0x0703) + chr(0x1F134),  # SYRIAC SUPRALINEAR COLON + SQUARED LATIN CAPITAL E
+    ],
+)
+def test_non_ascii_letters_and_numbers_cannot_hide_a_trailer(prefix: str) -> None:
+    """Regression: found by property-based fuzzing (Phase 10), measured on dataset 1.2.0.
+
+    The leading-character fix only skipped characters that are not alphanumeric to
+    Unicode, and judged that after NFKC. A letter or number such as U+32AC, or one
+    that NFKC turns into ASCII (U+24DE -> "o"), became part of the key, so
+    ``\\u32acCo-authored-by: Claude <noreply@anthropic.com>`` was allowed.
+    """
+    message = f"feat: x\n\n{prefix}Co-AUThorEd-By:Claude <noreply@anthropic.com>\n"
+    [trailer] = parse_trailers(message).trailers
+    assert trailer.normalized_key == "co-authored-by"
+    assert trailer.email == "noreply@anthropic.com"
+    assert TrailerIssue.LEADING_CHARACTERS in trailer.issues
+
+
+def test_look_alike_letters_stay_part_of_the_key() -> None:
+    # U+0421 and U+043E are Cyrillic look-alikes of "C" and "o": a disguised key, not a prefix.
+    key = chr(0x0421) + chr(0x043E) + "-authored-by"
+    [trailer] = parse_trailers(f"feat: x\n\n{key}: Claude <noreply@anthropic.com>\n").trailers
+    assert trailer.normalized_key == "co-authored-by"
+    assert TrailerIssue.LEADING_CHARACTERS not in trailer.issues
+
+
+def test_non_ascii_prose_is_not_read_as_trailers() -> None:
+    body = "Größe: 5 MB\n日本語: テスト"
+    assert parse_trailers(f"feat: x\n\n{body}\n").trailers == ()
+
+
+@pytest.mark.parametrize(
+    "invisible",
+    [
+        chr(0x034F),  # COMBINING GRAPHEME JOINER (Mn)
+        chr(0xFE0F),  # VARIATION SELECTOR-16 (Mn)
+        chr(0xE0100),  # VARIATION SELECTOR-17 (Mn)
+        chr(0x180B),  # MONGOLIAN FREE VARIATION SELECTOR ONE (Mn)
+        chr(0x3164),  # HANGUL FILLER (Lo)
+        chr(0xFFA0),  # HALFWIDTH HANGUL FILLER (Lo)
+        chr(0x17B4),  # KHMER VOWEL INHERENT AQ (Mn)
+    ],
+)
+def test_default_ignorable_characters_cannot_hide_a_trailer_key(invisible: str) -> None:
+    """Regression: found by property-based fuzzing (Phase 10), dataset 1.3.0.
+
+    Normalisation removed only control (Cc) and format (Cf) characters, but Unicode
+    marks more code points as default-ignorable: they render as nothing as well.
+    ``Co-authored{VS16}-by:`` and ``Clau{VS16}de`` therefore evaded detection.
+    """
+    message = f"feat: x\n\nCo-authored{invisible}-by: Claude <noreply@anthropic.com>\n"
+    [trailer] = parse_trailers(message).trailers
+    assert trailer.normalized_key == "co-authored-by"

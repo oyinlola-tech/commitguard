@@ -27,7 +27,11 @@ MAX_WORKFLOW_BYTES = 512 * 1024
 _REPOSITORY_RE = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
 _USES_PINNED_RE = re.compile(r"\A[^@\s]+@[0-9a-f]{40}\Z")
-_SECRETS_RE = re.compile(r"\$\{\{[^}]*\bsecrets\.")
+# "${{ ... secrets.X ... }}" in two steps: a single expression (\$\{\{[^}]*\bsecrets\.)
+# rescans the same text from every "${{" and is quadratic on "${{${{${{..." (60 KB took
+# 2.7 s; found by the ReDoS tests). Workflow text comes from monitored repositories.
+_EXPRESSION_RE = re.compile(r"\$\{\{[^}]*")
+_SECRETS_RE = re.compile(r"\bsecrets\.")
 
 # Actions used by the template, pinned to verified commits.
 CHECKOUT_ACTION = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"  # v4.2.2
@@ -247,7 +251,7 @@ def inspect_workflow_text(path: Path, text: str) -> WorkflowInspection | None:
             )
         )
     issues.extend(_permission_issues(document.get("permissions"), "workflow"))
-    if _SECRETS_RE.search(text):
+    if any(_SECRETS_RE.search(m.group(0)) for m in _EXPRESSION_RE.finditer(text)):
         issues.append(
             WorkflowIssue(
                 level=WorkflowIssueLevel.WARN,

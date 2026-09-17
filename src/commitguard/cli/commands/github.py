@@ -46,7 +46,6 @@ from commitguard.github.pull_requests import disposition
 from commitguard.github.settings import (
     ENV_DATA_DIR,
     ENV_MANDATORY_POLICY_FILE,
-    load_settings,
     private_key_file_too_open,
     read_app_id,
     read_private_key,
@@ -81,7 +80,10 @@ def _app_modules_available() -> None:
         import cryptography  # noqa: F401
     except ImportError:
         raise CommitGuardError(
-            "the GitHub App needs the optional dependencies: pip install 'commitguard[app]'"
+            "the GitHub App needs the optional dependencies. CommitGuard is not on PyPI "
+            "(that name belongs to an unrelated project); install from source, e.g. "
+            'python -m pip install "commitguard[app] @ '
+            'git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"'
         ) from None
 
 
@@ -428,11 +430,11 @@ def serve_command(
         _app_modules_available()
         from commitguard.api.hosting import build_dashboard, create_server_app
         from commitguard.api.settings import dashboard_enabled, load_dashboard_settings
-        from commitguard.github.app import GitHubAppService
+        from commitguard.github.app import service_from_environment
         from commitguard.github.server import serve
 
         configure_json_logging()
-        service = GitHubAppService.from_settings(load_settings())
+        service = service_from_environment()
         dashboard = (
             build_dashboard(service, load_dashboard_settings()) if dashboard_enabled() else None
         )

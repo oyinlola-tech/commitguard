@@ -8,8 +8,11 @@ overall status:
 * UNHEALTHY - a check failed; hooks will block operations (exit code 2).
 """
 
+import json
+import os
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Annotated
 
 import typer
 
@@ -38,12 +41,31 @@ from commitguard.services.analysis import Analyzer, pending_commit
 from commitguard.utils.platform import MINIMUM_PYTHON, python_version, python_version_supported
 from commitguard.utils.subprocess import run_command
 
+#: Environment variables that configure a GitHub App service on this machine.
+_APP_ENVIRONMENT = (
+    "COMMITGUARD_GITHUB_APP_ID",
+    "COMMITGUARD_GITHUB_WEBHOOK_SECRET",
+    "COMMITGUARD_APP_DATA_DIR",
+)
+
 
 class Status(StrEnum):
     OK = "ok"
     INFO = "info"  # neutral fact; never changes the overall status
+    NOT_CONFIGURED = "not_configured"  # a capability that is simply not set up here
     WARN = "warn"
     FAIL = "fail"
+
+
+#: What each status is called in the output. NOT CONFIGURED is deliberately not a
+#: pass: an unconfigured integration enforces nothing.
+LABELS = {
+    Status.OK: "PASS",
+    Status.INFO: "INFO",
+    Status.NOT_CONFIGURED: "NOT CONFIGURED",
+    Status.WARN: "WARNING",
+    Status.FAIL: "FAIL",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +196,7 @@ def _run_checks() -> list[Check]:
         )
     )
     checks.append(Check("CommitGuard", Status.OK, f"interpreter: {default_python()}"))
+    checks.extend(_dependency_checks())
 
     try:
         executable = git_executable()
@@ -212,7 +235,7 @@ def _run_checks() -> list[Check]:
             checks.append(
                 Check(
                     "Configuration",
-                    Status.WARN,
+                    Status.NOT_CONFIGURED,
                     "no configuration files; built-in defaults apply",
                     "commitguard init",
                 )
@@ -256,7 +279,80 @@ def _run_checks() -> list[Check]:
     checks.extend(_rule_checks(repository))
     checks.extend(_hook_checks(repository, loaded))
     checks.extend(_github_checks(repository))
+    checks.extend(_app_checks())
     return checks
+
+
+def _dependency_checks() -> list[Check]:
+    """Runtime dependencies: the ones missing at run time, not at install time."""
+    checks = []
+    for module, purpose in (("yaml", "configuration and rules"), ("pydantic", "data models")):
+        try:
+            __import__(module)
+        except ImportError:
+            checks.append(
+                Check(
+                    "Runtime dependencies",
+                    Status.FAIL,
+                    f"{module} is not importable ({purpose})",
+                    "reinstall CommitGuard",
+                )
+            )
+        else:
+            checks.append(
+                Check("Runtime dependencies", Status.OK, f"{module} available ({purpose})")
+            )
+    try:
+        import cryptography  # noqa: F401
+    except ImportError:
+        checks.append(
+            Check(
+                "Runtime dependencies",
+                Status.NOT_CONFIGURED,
+                "cryptography is not installed; only the GitHub App service needs it",
+            )
+        )
+    else:
+        checks.append(
+            Check("Runtime dependencies", Status.OK, "cryptography available (GitHub App service)")
+        )
+    return checks
+
+
+def _app_checks() -> list[Check]:
+    """Whether a GitHub App service is configured *on this machine*.
+
+    Configuration is not a connection: this only reports what is set here, never
+    that an installation is healthy on GitHub.
+    """
+    configured = [name for name in _APP_ENVIRONMENT if os.environ.get(name)]
+    if not configured:
+        return [
+            Check(
+                "GitHub App",
+                Status.NOT_CONFIGURED,
+                "no GitHub App service is configured on this machine",
+                "only needed if you host the App: see docs/deployment/github-app.md",
+            )
+        ]
+    missing = [name for name in _APP_ENVIRONMENT if not os.environ.get(name)]
+    if missing:
+        return [
+            Check(
+                "GitHub App",
+                Status.WARN,
+                f"GitHub App settings are incomplete: {', '.join(missing)} not set",
+                "commitguard github validate",
+            )
+        ]
+    return [
+        Check(
+            "GitHub App",
+            Status.INFO,
+            "GitHub App settings are present; this does not verify the installation",
+            "commitguard github validate   (checks authentication and permissions)",
+        )
+    ]
 
 
 def _rule_checks(repository: Repository) -> list[Check]:
@@ -297,7 +393,7 @@ def _github_checks(repository: Repository) -> list[Check]:
         return [
             Check(
                 section,
-                Status.INFO,
+                Status.NOT_CONFIGURED,
                 "no GitHub workflow runs CommitGuard (local enforcement only)",
                 "commitguard init --github --action-repository OWNER/REPO --action-ref <sha>",
             )
@@ -328,23 +424,7 @@ def _github_checks(repository: Repository) -> list[Check]:
     return checks
 
 
-def doctor_command() -> None:
-    """Check installation, configuration, detection engine and hook enforcement."""
-    ok, cross, bang = ("✓", "✗", "⚠") if supports_unicode() else ("OK", "X", "!")
-    symbol = {Status.OK: ok, Status.INFO: "i", Status.WARN: bang, Status.FAIL: cross}
-    checks = _run_checks()
-
-    info("CommitGuard Doctor")
-    section = None
-    for check in checks:
-        if check.section != section:
-            section = check.section
-            info("")
-            info(section)
-        info(f"{symbol[check.status]} {sanitize_for_terminal(check.detail, max_length=1000)}")
-        if check.remediation and check.status in (Status.WARN, Status.FAIL):
-            info(f"    Fix: {sanitize_for_terminal(check.remediation, max_length=300)}")
-
+def _enforcement_summary(checks: list[Check]) -> tuple[str, bool, bool]:
     hook_problem = any(
         c.section in ("Hooks", "Enforcement") and c.status in (Status.WARN, Status.FAIL)
         for c in checks
@@ -355,9 +435,6 @@ def doctor_command() -> None:
     ) and not any(
         c.section == "GitHub enforcement" and c.status in (Status.WARN, Status.FAIL) for c in checks
     )
-    info("")
-    if hook_problem:
-        info("Security enforcement is incomplete.")
     enforcement = {
         (True, True): "LOCAL + GITHUB ENFORCEMENT READY (branch protection not verified)",
         (True, False): "LOCAL ENFORCEMENT ONLY",
@@ -365,8 +442,81 @@ def doctor_command() -> None:
         "(branch protection not verified)",
         (False, False): "NO COMPLETE ENFORCEMENT LAYER",
     }[(local_ready, github_ready)]
+    return enforcement, hook_problem, local_ready
+
+
+def doctor_command(
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print the checks as a JSON document.")
+    ] = False,
+) -> None:
+    """Check installation, configuration, detection engine and hook enforcement.
+
+    Each check reports PASS, WARNING, FAIL, NOT CONFIGURED or INFO. NOT CONFIGURED
+    is never a pass: a capability that is not set up enforces nothing.
+    """
+    checks = _run_checks()
+    enforcement, hook_problem, _ = _enforcement_summary(checks)
+    failed = any(c.status is Status.FAIL for c in checks)
+    warned = any(c.status is Status.WARN for c in checks)
+    status = "UNHEALTHY" if failed else ("DEGRADED" if warned else "HEALTHY")
+
+    if as_json:
+        info(
+            json.dumps(
+                {
+                    "commitguard_version": __version__,
+                    "status": status,
+                    "enforcement": enforcement,
+                    "counts": {
+                        LABELS[value]: sum(1 for c in checks if c.status is value)
+                        for value in Status
+                    },
+                    "checks": [
+                        {
+                            "section": c.section,
+                            "status": LABELS[c.status],
+                            "detail": sanitize_for_terminal(c.detail, max_length=1000),
+                            "remediation": sanitize_for_terminal(c.remediation, max_length=300)
+                            or None,
+                        }
+                        for c in checks
+                    ],
+                },
+                indent=2,
+            )
+        )
+        if failed:
+            raise typer.Exit(code=int(ExitCode.ERROR))
+        return
+
+    ok, cross, bang = ("\u2713", "\u2717", "\u26a0") if supports_unicode() else ("OK", "X", "!")
+    symbol = {
+        Status.OK: ok,
+        Status.INFO: "i",
+        Status.NOT_CONFIGURED: "-",
+        Status.WARN: bang,
+        Status.FAIL: cross,
+    }
+    info("CommitGuard Doctor")
+    section = None
+    for check in checks:
+        if check.section != section:
+            section = check.section
+            info("")
+            info(section)
+        label = LABELS[check.status]
+        info(
+            f"{symbol[check.status]} {label:<14} "
+            f"{sanitize_for_terminal(check.detail, max_length=1000)}"
+        )
+        if check.remediation and check.status in (Status.WARN, Status.FAIL, Status.NOT_CONFIGURED):
+            info(f"    Fix: {sanitize_for_terminal(check.remediation, max_length=300)}")
+
+    info("")
+    if hook_problem:
+        info("Security enforcement is incomplete.")
     info(f"Enforcement: {enforcement}")
-    if any(c.status is Status.FAIL for c in checks):
-        info("Status: UNHEALTHY")
+    info(f"Status: {status}")
+    if failed:
         raise typer.Exit(code=int(ExitCode.ERROR))
-    info("Status: DEGRADED" if any(c.status is Status.WARN for c in checks) else "Status: HEALTHY")

@@ -27,14 +27,53 @@ _PATTERNS = (
     ),
     # GitHub token formats: ghs_ (installation), ghp_, gho_, ghu_, ghr_, github_pat_.
     re.compile(r"\b(?:gh[posur]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"),
-    # JWTs (header.payload.signature, base64url).
-    re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"),
     # Authorization header values and bearer/basic credentials.
     re.compile(r"(?i)(authorization\s*[:=]\s*)\S+(?:\s+\S+)?"),
     re.compile(r"(?i)\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]{8,}"),
     # Webhook signatures are not secrets, but they are credential-derived noise.
     re.compile(r"sha256=[0-9a-fA-F]{64}"),
 )
+
+# JWTs (header.payload.signature, base64url, the header starting "eyJ") are found in two
+# linear steps instead of one regular expression. The expression
+# ``\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}`` backtracks quadratically
+# on text such as "eyJ-eyJ-eyJ-..." (80 KB took 4.6 s; found by the ReDoS tests), and
+# redaction runs on untrusted text. First, maximal dotted runs of base64url characters are
+# matched (the look-behind means a run is only ever scanned from its first character);
+# then each run is split on dots and checked without backtracking.
+_DOTTED_RUN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
+_JWT_MIN_SEGMENT = 5
+
+
+def _jwt_start(segment: str) -> int:
+    """Index of the first "eyJ" at a word boundary with a long enough header, else -1."""
+    index = segment.find("eyJ")
+    while index != -1:
+        if index == 0 or segment[index - 1] == "-":
+            return index if len(segment) - index - 3 >= _JWT_MIN_SEGMENT else -1
+        index = segment.find("eyJ", index + 1)
+    return -1
+
+
+def _redact_dotted_run(match: re.Match[str]) -> str:
+    segments = match.group(0).split(".")
+    out: list[str] = []
+    i = 0
+    while i < len(segments):
+        start = -1
+        if (
+            i + 2 < len(segments)
+            and len(segments[i + 1]) >= _JWT_MIN_SEGMENT
+            and len(segments[i + 2]) >= _JWT_MIN_SEGMENT
+        ):
+            start = _jwt_start(segments[i])
+        if start < 0:
+            out.append(segments[i])
+            i += 1
+        else:
+            out.append(segments[i][:start] + REDACTED)
+            i += 3
+    return ".".join(out)
 
 
 class Secret:
@@ -105,6 +144,7 @@ class SecretRedactor:
         for value in values:
             if value in text:
                 text = text.replace(value, REDACTED)
+        text = _DOTTED_RUN.sub(_redact_dotted_run, text)
         for pattern in _PATTERNS:
             if pattern.groups:
                 text = pattern.sub(lambda m: f"{m.group(1)}{REDACTED}", text)

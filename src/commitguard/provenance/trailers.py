@@ -20,7 +20,9 @@ mangled deliberately, the parser also records:
 * keys preceded by symbols or punctuation (``\\ufffdCo-authored-by:``,
   ``> Co-authored-by:``, ``• Co-authored-by:``): the prefix is ignored and the
   trailer is recorded with ``LEADING_CHARACTERS`` (found by the detection
-  benchmark: a replacement character from malformed UTF-8 hid attribution).
+  benchmark: a replacement character from malformed UTF-8 hid attribution);
+  the same applies to non-ASCII letters and numbers (``\\u32acCo-authored-by:``,
+  found by property-based fuzzing), because keys are ASCII.
 
 Work is linear in the message size and bounded to :data:`MAX_TRAILERS`
 trailers; anything beyond sets ``truncated`` so callers can fail closed.
@@ -34,7 +36,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from commitguard.provenance.author import ParsedIdentity, parse_identity
-from commitguard.provenance.normalization import normalize_trailer_key
+from commitguard.provenance.normalization import is_latin_lookalike, normalize_trailer_key
 
 COAUTHOR_TRAILER_KEY = "co-authored-by"
 MAX_TRAILERS = 1000
@@ -121,25 +123,54 @@ def _is_by_key(key: str) -> bool:
     )
 
 
+def _is_ascii_alnum(char: str) -> bool:
+    return char.isascii() and char.isalnum()
+
+
+def _starts_key(char: str) -> bool:
+    # Look-alike letters are part of a disguised key (U+0421 in "Co-authored-by"), not a prefix.
+    return _is_ascii_alnum(char) or is_latin_lookalike(char)
+
+
+def _skip_leading(text: str) -> str:
+    start = 0
+    while start < len(text) and start < MAX_LEADING_CHARACTERS and not _starts_key(text[start]):
+        start += 1
+    return text[start:].strip()
+
+
 def _parse_line(line: str) -> tuple[str, str, list[TrailerIssue]] | None:
     text = unicodedata.normalize("NFKC", line).strip()
     if not text:
         return None
-    if text[0].isalnum():
-        return _parse_text(text)
-    # Symbols or punctuation before the key ("> ", "- ", U+FFFD) are not part of the key:
-    # they must neither hide a trailer nor turn a quoted or listed line into a malformed key.
-    start = 0
-    while start < len(text) and start < MAX_LEADING_CHARACTERS and not text[start].isalnum():
-        start += 1
-    rest = text[start:].strip()
-    if not rest or not rest[0].isalnum():
-        return None
-    retried = _parse_text(rest)
-    if retried is None:
-        return None
-    key, value, issues = retried
-    return key, value, [*issues, TrailerIssue.LEADING_CHARACTERS]
+    stripped = line.strip()
+    if _is_ascii_alnum(stripped[0]):
+        # The common case, including every well-formed trailer: no prefix to consider.
+        return _parse_text(text) if _is_ascii_alnum(text[0]) else None
+    # Characters before the key are not part of it: symbols and punctuation ("> ", "- ",
+    # U+FFFD) and non-ASCII letters or numbers (U+32AC, U+2460) must neither hide a
+    # trailer nor turn a quoted or listed line into a malformed key. Keys are ASCII, so the
+    # prefix is whatever precedes the first ASCII letter or digit, judged both after NFKC
+    # (U+32AC becomes a CJK ideograph) and before it (U+2460 becomes "1", U+24DE a plain
+    # "o"). When the readings disagree, the shortest key wins: it attributes the fewest
+    # prefix characters to the key.
+    readings = [
+        _skip_leading(text),
+        unicodedata.normalize("NFKC", _skip_leading(stripped)).strip(),
+    ]
+    if _is_ascii_alnum(text[0]):
+        readings.append(text)
+    best: tuple[str, str, list[TrailerIssue]] | None = None
+    for candidate in dict.fromkeys(readings):
+        if not candidate or not _starts_key(candidate[0]):
+            continue
+        parsed = _parse_text(candidate)
+        if parsed is None or (best is not None and len(parsed[0]) >= len(best[0])):
+            continue
+        key, value, issues = parsed
+        prefixed = candidate != text
+        best = (key, value, [*issues, TrailerIssue.LEADING_CHARACTERS] if prefixed else issues)
+    return best
 
 
 def _parse_text(text: str) -> tuple[str, str, list[TrailerIssue]] | None:
