@@ -65,7 +65,8 @@
 | [Limitations](research/limitations.md) | What this does not do |
 | [Decision records](adr/) | Decisions and their costs |
 | [Timeline](evidence/timeline.md) · [Validation matrix](evidence/validation-matrix.md) | What is validated, by whom |
-| [Phase 10 report](evidence/phase-10-report.md) | The most recent phase, end to end |
+| [Phase 10 report](evidence/phase-10-report.md) | External adoption, reproducibility and open-source readiness |
+| [Phase 10 verification report](evidence/phase-10-verification-report.md) | Whole-system verification and repair: what was run, what broke, what was fixed |
 
 ## Project
 

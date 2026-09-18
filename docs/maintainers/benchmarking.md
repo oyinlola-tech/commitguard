@@ -48,6 +48,25 @@ Thresholds for judging a change (documented, not automated):
 
 A performance regression alone does not block a release; an unexplained one does.
 
+### Performance thresholds compare across sessions, not across code
+
+`commitguard benchmark compare` judges the latest result against an earlier
+recorded one. Those runs happen at different times, and on a laptop the machine
+itself moves more than 20% between sessions (CPU frequency scaling, thermal
+state, background load). A flagged *performance* regression is therefore a
+question, not an answer.
+
+Answer it the way the Phase 10 verification pass did: check the baseline commit
+out into a worktree and benchmark it **alternately** with the current code on the
+one machine, several pairs each. That removes machine state from the comparison.
+In that case a flagged +36% p50 regression turned out to be -2.7% once measured
+this way (see
+[phase-10-verification-report.md](../evidence/phase-10-verification-report.md),
+section 12).
+
+Correctness measures have a 0% threshold and are not affected by machine state:
+a new false negative is a real regression whenever it appears.
+
 ## Reports
 
 ```bash

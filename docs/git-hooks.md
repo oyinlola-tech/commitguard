@@ -246,6 +246,29 @@ All hooks enforce by default. A disabled hook prints a notice and exits 0;
 and "Security enforcement is incomplete." Disabling a hook does not change
 any policy.
 
+## Automatic removal (opt-in)
+
+With `remediation.auto_remove: true` the `commit-msg` hook deletes prohibited
+attribution from the pending message instead of refusing the commit:
+
+```
+$ git commit -m "feat: add login
+
+Co-authored-by: Claude <noreply@anthropic.com>"
+CommitGuard
+! REMOVED prohibited attribution from the commit message (1 line)
+
+    line 3: Co-authored-by: Claude <noreply@anthropic.com>  [ai_coauthor]
+
+  The commit was created without them.
+  Turn this off with `remediation: {auto_remove: false}` to block instead.
+[main 8ebd243] feat: add login
+```
+
+It is off by default and never applies to identity-based findings, which cannot
+be fixed by editing text. `pre-push` never removes anything. See
+[configuration.md](configuration.md#remediation) for the full rules.
+
 ## Doctor
 
 `commitguard doctor` checks Git, repository, Git directory, hooks directory,

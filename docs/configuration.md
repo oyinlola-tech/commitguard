@@ -69,6 +69,47 @@ reports `! WARNING  pre-push enforcement disabled in configuration` and
 "Security enforcement is incomplete." It never changes policies, and it is
 never treated as a fully protected state.
 
+## Remediation
+
+```yaml
+remediation:
+  auto_remove: false   # default
+```
+
+By default CommitGuard blocks a violating commit and leaves the message to you.
+With `auto_remove: true`, the `commit-msg` hook deletes the offending lines from
+the pending message instead, prints what it removed, and lets the commit
+proceed. Nothing is rewritten: `commit-msg` runs *before* Git creates the commit
+object, so there is no history to rewrite.
+
+It applies only when deleting message lines provably fixes the commit:
+
+| Situation | With `auto_remove: true` |
+|---|---|
+| `Co-authored-by:` naming an AI agent | line deleted, commit proceeds |
+| A tool footer such as `Generated-with: Claude Code` | line deleted, commit proceeds |
+| A human `Co-authored-by:` beside an AI one | only the AI line is deleted |
+| AI agent as the commit **author** or **committer** | **still blocks** - no edit to the text can fix an identity |
+| An identity finding *and* a removable trailer | **still blocks** |
+| A message that is nothing but the trailer | **still blocks** - it would leave no message |
+| A detector failed | **still blocks** - a message that was not fully analysed is never "fixed" |
+
+The stripped message is re-analysed before the commit is allowed. If it is still
+blocked, the original block stands: nothing is ever allowed on the assumption
+that the removal worked.
+
+Two deliberate constraints:
+
+* **`pre-push` is unaffected.** By then the commits exist, and correcting them
+  means rewriting history. CommitGuard never does that on its own; it blocks and
+  tells you which commits to amend or reword.
+* **A mandatory policy cannot set it.** A floor may only make enforcement
+  stricter, and `auto_remove` turns a block into a commit, so
+  `remediation:` in a mandatory policy is a configuration error.
+
+`commitguard doctor` reports `! WARNING  remediation.auto_remove is on` whenever
+it is enabled, because it changes a block into a commit.
+
 ## Validation (security-relevant)
 
 - unknown top-level or policy keys (`acton: allow`) → error
