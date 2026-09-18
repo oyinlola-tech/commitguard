@@ -20,7 +20,9 @@ Empty directories are kept, with a README explaining what would go in them. An
 empty `external-validation/` is itself evidence: it is the honest state of a
 project that is three days old.
 
-Phase reports: [Phase 10](../docs/evidence/phase-10-report.md).
+Phase reports: [Phase 10](../docs/evidence/phase-10-report.md) (adoption and
+reproducibility) and [Phase 10 verification](../docs/evidence/phase-10-verification-report.md)
+(whole-system verification and repair).
 
 ## Verifying the evidence yourself
 
