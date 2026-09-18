@@ -35,7 +35,7 @@ behaviour or errors in how this report's author probed them. They are listed in
 [section 14](#14-remaining-problems) because a verification pass that reports
 only confirmed bugs is hiding half its work.
 
-Final state: **1,397 tests pass, 1 skipped** (1,398 collected), 354 of them
+Final state: **1,426 tests pass, 1 skipped** (1,427 collected), 354 of them
 security tests;
 `ruff`, `ruff format`, `mypy --strict` and `bandit -ll` clean (0 medium, 0 high);
 web dashboard typecheck, lint, 99 tests and production build all pass; detection
@@ -335,7 +335,7 @@ IANA database.
 ## 11. Testing
 
 ```
-1397 passed, 1 skipped in 210.20s
+1426 passed, 1 skipped in 204.00s
 ```
 
 The single skip is the network test, which needs `COMMITGUARD_NETWORK_TESTS=1`.
@@ -343,15 +343,15 @@ The single skip is the network test, which needs `COMMITGUARD_NETWORK_TESTS=1`.
 | Suite | Count |
 |---|---|
 | Security (`-m security`) | 354 |
-| Integration (`-m integration`) | 425 |
-| Total Python (collected) | 1,398 |
+| Integration (`-m integration`) | 432 |
+| Total Python (collected) | 1,427 |
 | Web dashboard (vitest) | 99 |
 
-Static gates, all clean: `ruff check`, `ruff format --check` (465 files),
-`mypy --strict` (187 source files), `bandit -ll` (0 medium, 0 high), web
+Static gates, all clean: `ruff check`, `ruff format --check` (467 files),
+`mypy --strict` (188 source files), `bandit -ll` (0 medium, 0 high), web
 `tsc -b`, `eslint`, `vite build`.
 
-**Tests added in this pass: 12.**
+**Tests added in this pass: 12**, plus 28 for the feature in section 13a.
 
 | Test | Guards |
 |---|---|
