@@ -53,7 +53,8 @@ development (main, X.Y.Z.dev0)
     ▼
 release candidate
     │  commit: version X.Y.ZrcN, CHANGELOG section "## [X.Y.ZrcN] - YYYY-MM-DD"
-    │  tag vX.Y.ZrcN  ──▶ release.yml: validation gate, build, smoke tests, draft release
+    │  tag vX.Y.ZrcN  ──▶ release.yml: gate, build, smoke tests, DRAFT prerelease
+    │                      (no PyPI publish, no Marketplace listing)
     ▼
 validation
     │  automated gate green + manual checklist below
@@ -197,11 +198,16 @@ Marketplace listing, and `gh release create` has no flag for it: the release
 object carries no marketplace or category field. Any claim that a workflow can
 publish to the Marketplace is wrong.
 
-It costs nothing extra, though, because `release.yml` creates a **draft**. The
-checkbox lives on the same form as the **Publish release** button you press to
-turn that draft into a release.
+Everything around it is automatic. Pushing a final tag validates, builds,
+smoke-tests on three operating systems, publishes the GitHub release and
+publishes to PyPI without further action. The Marketplace listing is the one
+remaining click.
 
-On that form:
+The `release` job checks that the listing requirements are met and **fails the
+release if they are not**, then writes the link and the exact values into the
+workflow run summary. So the click cannot fail for a reason you discover later.
+
+To list it: open the published release, press **Edit**, and:
 
 | Field | Value |
 |---|---|
@@ -219,7 +225,9 @@ Requirements GitHub enforces before the checkbox appears:
 - you accept the GitHub Marketplace Developer Agreement (once, on first publish).
 
 After the first listing the checkbox stays ticked for later releases. The
-Marketplace shows the tag, so a release candidate should **not** be listed.
+Marketplace shows the tag, so a release candidate must not be listed - which is
+why the workflow leaves an `rc` tag as a **draft prerelease** and only publishes
+a final tag.
 
 ## Manual release checklist
 
