@@ -4,7 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.0] - 2026-09-18
+
+### Packaging
+
+- **Published to PyPI as `commitguardian`** (`pipx install commitguardian`). The
+  product, import package and console script are all still `commitguard`; the
+  distribution name differs because `commitguard` and `commitguard-cli` on PyPI
+  belong to two unrelated projects by other authors. See
+  [ADR-009](docs/adr/009-published-to-pypi-as-commitguardian.md), which
+  supersedes ADR-008.
+- Releases are published with **PyPI Trusted Publishing** (OIDC from the tagged
+  release workflow). No API token is created, stored or rotated.
+- **The sdist is now built from an allowlist.** The default configuration
+  produced an 8.4 MB sdist containing an editor's scratch worktree under
+  `.kilo/` (a second copy of the repository), the `.hypothesis/` cache and 22 MB
+  of generated benchmark datasets. It is now 988 KB of source, tests, docs and
+  metadata, and the release workflow fails if a local directory reappears.
+- Version `0.1.0.dev0` -> `0.1.0`, so `pip install commitguardian` resolves it
+  without `--pre`.
+- Added `project.urls` (homepage, repository, documentation, changelog, issues)
+  for the PyPI project page.
 
 ### Added
 

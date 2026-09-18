@@ -3,9 +3,12 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "commitguard"
-version = "0.1.0.dev0"
-description = "Git commit provenance and contribution policy enforcement."
+# The PyPI distribution name. It is NOT "commitguard": that name, and
+# "commitguard-cli", belong to two unrelated projects (see docs/adr/009). The
+# import package and the console script stay `commitguard`.
+name = "commitguardian"
+version = "0.1.0"
+description = "Block AI, bot and agent attribution in Git commits, locally and on GitHub."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -50,8 +53,50 @@ dev = [
     "cryptography>=42",
 ]
 
+[project.urls]
+Homepage = "https://github.com/oyinlola-tech/commitguard"
+Repository = "https://github.com/oyinlola-tech/commitguard"
+Documentation = "https://github.com/oyinlola-tech/commitguard/blob/main/docs/README.md"
+Changelog = "https://github.com/oyinlola-tech/commitguard/blob/main/CHANGELOG.md"
+Issues = "https://github.com/oyinlola-tech/commitguard/issues"
+
 [project.scripts]
 commitguard = "commitguard.cli.app:main"
+
+# The sdist is an ALLOWLIST, not "everything git does not ignore". Hatchling's
+# default swept in an editor's scratch worktree under .kilo/ (a second copy of
+# the repository), the .hypothesis/ test cache and 22 MB of generated benchmark
+# datasets - 8.4 MB compressed, and a publishing accident waiting to happen,
+# since a published sdist is public and permanent.
+[tool.hatch.build.targets.sdist]
+# Patterns are gitignore-style, so every one is ANCHORED with a leading slash:
+# bare "hooks" or "README.md" also match web/src/hooks/ and any nested README.
+include = [
+    "/src/commitguard",
+    "/rules",
+    "/config",
+    "/hooks",
+    "/tests",
+    "/requirements",
+    "/docs",
+    "/examples",
+    "/action.yml",
+    "/pyproject.toml",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/CONTRIBUTING.md",
+    "/CODE_OF_CONDUCT.md",
+    "/CITATION.cff",
+]
+exclude = [
+    "**/__pycache__",
+    "**/*.py[cod]",
+    "/docs/images",       # 1 MB of screenshots; the repository has them
+    "/.kilo",             # an editor's scratch worktree: a second copy of the repo
+    "/.hypothesis",       # property-test cache
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/commitguard"]

@@ -81,6 +81,26 @@ jobs:
           python -m build --sdist --wheel --outdir dist
           cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
           python -c "import commitguard, os; print(f'version={commitguard.__version__}')" >> "$GITHUB_OUTPUT"
+      - name: The sdist must contain nothing local
+        run: |
+          set -euo pipefail
+          listing="$(tar tzf dist/*.tar.gz)"
+          # A published sdist is public and permanent. Hatchling's default once
+          # swept in an editor's scratch worktree and 22 MB of generated data.
+          for bad in '/\.kilo/' '/\.hypothesis/' '/node_modules/' '/\.venv/' '/\.env' \
+                     '/benchmarks/datasets/' '/web/node_modules/' '/\.git/'; do
+            if printf '%s\n' "$listing" | grep -qE "$bad"; then
+              echo "::error title=sdist::the sdist contains $bad"
+              printf '%s\n' "$listing" | grep -E "$bad" | head -20
+              exit 1
+            fi
+          done
+          bytes="$(stat -c%s dist/*.tar.gz)"
+          echo "sdist: $(printf '%s\n' "$listing" | wc -l) entries, ${bytes} bytes"
+          if [ "$bytes" -gt 4000000 ]; then
+            echo "::error title=sdist::the sdist is larger than 4 MB; check what was added"
+            exit 1
+          fi
       - name: Software bill of materials (CycloneDX)
         run: |
           python -m pip install cyclonedx-bom
@@ -164,8 +184,15 @@ jobs:
           {
             echo "CommitGuard ${TAG}"
             echo
-            echo "**CommitGuard is not published to PyPI.** The name \`commitguard\` there"
-            echo "belongs to an unrelated project. Install from this repository, pinned to a commit:"
+            echo "Install:"
+            echo
+            echo '```bash'
+            echo "pipx install commitguardian"
+            echo '```'
+            echo
+            echo "The PyPI name is \`commitguardian\`; the command is \`commitguard\`."
+            echo "\`commitguard\` and \`commitguard-cli\` on PyPI are unrelated projects."
+            echo "To pin to this exact commit instead:"
             echo
             echo '```bash'
             echo "pipx install \"git+https://github.com/${GITHUB_REPOSITORY}@${GITHUB_SHA}\""
@@ -198,3 +225,48 @@ jobs:
             --notes-file notes.md \
             $(if [[ "${TAG}" == *rc* ]]; then echo --prerelease; fi) \
             artifacts/distribution/*
+
+  # ---------------------------------------------------------------------------
+  # Publish to PyPI.
+  #
+  # Trusted Publishing (OIDC): PyPI verifies this workflow's identity directly,
+  # so there is no API token to create, store, rotate or leak. `id-token: write`
+  # is granted to THIS JOB ONLY, and only after the gate, the build, the
+  # cross-platform install smoke test and the draft have all succeeded.
+  #
+  # The environment gives a second gate: configure `pypi` in the repository's
+  # settings with a required reviewer, and publishing waits for a human.
+  #
+  # One-time setup on PyPI (Your projects -> Publishing -> Add a pending publisher):
+  #   PyPI project name: commitguardian
+  #   Owner / repository: this repository
+  #   Workflow name:      release.yml
+  #   Environment name:   pypi
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish to PyPI
+    needs: [gate, build, install, draft]
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'rc')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/commitguardian
+    permissions:
+      id-token: write  # the OIDC token Trusted Publishing needs; nothing else
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: distribution
+          path: dist
+      - name: Only the sdist and the wheel are published
+        run: |
+          set -euo pipefail
+          # The artifact also carries SHA256SUMS, the SBOM and platform results.
+          # Those belong on the GitHub release, not on PyPI.
+          find dist -mindepth 1 -maxdepth 1 ! -name '*.whl' ! -name '*.tar.gz' -delete
+          ls -l dist
+          test -n "$(find dist -name '*.whl')"
+          test -n "$(find dist -name '*.tar.gz')"
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          print-hash: true

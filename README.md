@@ -183,18 +183,24 @@ order. A detector that crashes blocks (fail closed). See
 
 ## Install
 
-> [!WARNING]
-> **CommitGuard is not on PyPI.** The name `commitguard` there belongs to an
-> unrelated project, so `pip install commitguard` installs someone else's code.
-> Install from this repository, pinned to a commit:
+```bash
+pipx install commitguardian
+```
+
+> [!IMPORTANT]
+> **The PyPI name is `commitguardian`; the command is `commitguard`.**
+> `commitguard` and `commitguard-cli` on PyPI are two *unrelated* projects by
+> other authors, so `pip install commitguard` installs someone else's code
+> ([why](docs/adr/009-published-to-pypi-as-commitguardian.md)).
 
 ```bash
+# in a virtual environment
+python -m pip install commitguardian
+
+# pinned to an exact commit, if you prefer provenance over convenience
 pipx install "git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
 
-# or in a virtual environment
-python -m pip install "commitguard @ git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
-
-# or from a clone, for development
+# from a clone, for development
 git clone https://github.com/oyinlola-tech/commitguard && cd commitguard
 python -m pip install -e ".[dev]"
 ```
@@ -372,7 +378,7 @@ preserved and chained; failures block. See [docs/git-hooks.md](docs/git-hooks.md
 See [docs/github-enforcement.md](docs/github-enforcement.md).
 
 **GitHub App** (`commitguard github serve`; the App extra adds `cryptography`:
-`python -m pip install "commitguard[app] @ git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"`):
+`python -m pip install "commitguardian[app]"`):
 
 - a centralised service you deploy: install it once on an account or
   organisation and it scans pull requests and pushes of the selected

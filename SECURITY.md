@@ -186,9 +186,10 @@ they certify SOC 2, ISO 27001 or any framework are not made by the project.
 
 ## Installing safely
 
-CommitGuard is **not on PyPI**; that name belongs to an unrelated project.
-Install from a pinned Git commit only - see
-[docs/getting-started/quickstart.md](docs/getting-started/quickstart.md).
+CommitGuard is published as **`commitguardian`**. The names `commitguard` and
+`commitguard-cli` on PyPI belong to unrelated projects, so never install those.
+See [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) and
+[ADR-009](docs/adr/009-published-to-pypi-as-commitguardian.md).
 
 ## Out of scope
 
