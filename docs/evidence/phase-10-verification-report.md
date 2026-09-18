@@ -40,7 +40,8 @@ security tests;
 `ruff`, `ruff format`, `mypy --strict` and `bandit -ll` clean (0 medium, 0 high);
 web dashboard typecheck, lint, 99 tests and production build all pass; detection
 **0 false negatives and 0 false positives over 9,174 labelled cases**; Linux
-platform validation 15/15.
+platform validation 15/15, and the CI matrix green on Linux, macOS and Windows
+for Python 3.12 and 3.13.
 
 **Status: READY WITH KNOWN LIMITATIONS.** The limitations are in
 [section 14](#14-remaining-problems); the most important is that server-side
@@ -316,9 +317,15 @@ attributed to a tenant is removed, and three tables did not honour it.
 
 | Platform | Status | Evidence |
 |---|---|---|
-| Linux (7.1.5, x86_64) | **PASS 15 / FAIL 0** | `benchmarks/results/raw/platform/20260918T071339020561Z_0.1.0.dev0.json` |
-| macOS | **not verified in this pass** | needs the CI matrix; no macOS machine here |
-| Windows | **not verified in this pass** | as above |
+| Linux (7.1.5, x86_64) | **PASS 15 / FAIL 0** | recorded result, and CI |
+| macOS (macos-latest) | **PASS** | CI run 35326541617 on `383b66a` |
+| Windows (windows-latest) | **PASS** | CI run 35326541617 on `383b66a` |
+
+The CI matrix on commit `383b66a` is green on all three operating systems, for
+both Python 3.12 and 3.13, including `Local enforcement validation` (the
+`commitguard benchmark platform` suite) on each. The Linux result above is also
+recorded locally at
+`benchmarks/results/raw/platform/20260918T071339020561Z_0.1.0.dev0.json`.
 
 The Linux run covers installation into a path containing spaces and non-ASCII
 characters, hook integrity, clean and blocked commits, blocked pushes, both
@@ -385,15 +392,15 @@ Recorded to `benchmarks/results/raw/performance/20260918T071333108788Z_0.1.0.dev
 
 | Commits | wall ms | commits/s | p50 ms | p99 ms | peak alloc |
 |---|---|---|---|---|---|
-| 1 | 0.29 | 3,509 | 0.2817 | 0.2817 | 5 KiB |
-| 10 | 1.56 | 6,431 | 0.1369 | 0.2512 | 8 KiB |
-| 100 | 18.3 | 5,451 | 0.1423 | 0.3481 | 25 KiB |
-| 1,000 | 203 | 4,925 | 0.1645 | 0.4581 | 93 KiB |
-| 10,000 | 2,031 | 4,923 | 0.2063 | 0.4872 | 187 KiB |
+| 1 | 0.26 | 3,914 | 0.2527 | 0.2527 | 5 KiB |
+| 10 | 1.58 | 6,332 | 0.1376 | 0.2820 | 8 KiB |
+| 100 | 18.41 | 5,431 | 0.1544 | 0.2896 | 25 KiB |
+| 1,000 | 147.08 | 6,799 | 0.1314 | 0.2648 | 92 KiB |
+| 10,000 | 1,896.10 | 5,274 | 0.1670 | 0.5115 | 187 KiB |
 
-Message-size scaling stays linear to 10 MB (1 KB 0.26 ms, 10 KB 0.78 ms,
-100 KB 7.6 ms, 1 MB 75 ms, 10 MB 808 ms). Peak RSS for the whole run: 82.8 MiB.
-Rule loading: 25-40 ms depending on machine state.
+Message-size scaling stays linear to 10 MB (1 KB 0.29 ms, 10 KB 0.91 ms,
+100 KB 8.23 ms, 1 MB 84.13 ms, 10 MB 923.98 ms). Peak RSS for the whole run:
+82.6 MiB. Rule loading: 31.1 ms.
 
 **A flagged regression that was not one.** `commitguard benchmark compare`
 reported latency p50 +36% and throughput -30% against the run recorded the
@@ -441,18 +448,15 @@ None. No core requirement is broken.
 
 ### Non-blocking
 
-1. **macOS and Windows are unverified in this pass.** The CI matrix covers them;
-   it needs a push to GitHub, which was not performed. Until then, cross-platform
-   status is Linux-only evidence plus static checks.
-2. **Server-side enforcement has never run against real github.com from here.**
+1. **Server-side enforcement has never run against real github.com from here.**
    The App and Action suites run against a fake GitHub transport, and
    branch protection is a model in `test_defense_in_depth.py`. The model
    reproduces GitHub's documented rule and uses the real exit code of the real
    check, but it does not prove any repository is configured correctly.
-3. **`commitguard benchmark compare` is sensitive to cross-session machine
+2. **`commitguard benchmark compare` is sensitive to cross-session machine
    drift** on performance metrics (section 12). Correctness metrics are not
    affected.
-4. **Commits were created in this working tree by tooling outside this session**
+3. **Commits were created in this working tree by tooling outside this session**
    (authored as the repository's Git user at 08:09, carrying this pass's
    changes). They were left untouched. Worth confirming that auto-commit is
    intended, because it commits to `main` directly.
@@ -560,7 +564,7 @@ test, and 1 doctor test.
 | CLI | PASS | every command executed; exit codes 0/1/2 confirmed, including outside a repository |
 | Git hooks | PASS | real repository: clean, blocked, amend, chained hook, install/uninstall idempotency |
 | Pre-push | PASS | real bare remote: new branch, 6-commit range, force push, tag, deletion, up-to-date |
-| Cross platform | PARTIAL | Linux 15/15 recorded; macOS and Windows need the CI matrix (unpushed) |
+| Cross platform | PASS | Linux 15/15 recorded; macOS and Windows green in CI run 35326541617 |
 | GitHub Actions | PASS | workflow and `action.yml` read in full; `tests/unit/github/test_workflows_static.py` (40 tests) |
 | GitHub App | PASS | `tests/integration/github/app/` against a fake GitHub and a real store |
 | GitHub Checks | PASS | `test_app_end_to_end.py`, `test_policy_and_checks.py`, slot-ownership tests |
