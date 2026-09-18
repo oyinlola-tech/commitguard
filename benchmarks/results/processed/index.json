@@ -127,6 +127,15 @@
       "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
     },
     {
+      "benchmark": "detection",
+      "file": "raw/detection/20260918T071254882265Z_0.1.0.dev0.json",
+      "timestamp": "2026-09-18T07:12:54.882265Z",
+      "commitguard_version": "0.1.0.dev0",
+      "operating_system": "Linux",
+      "dataset_version": "1.3.0",
+      "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
+    },
+    {
       "benchmark": "hooks",
       "file": "raw/hooks/20260917T145304718446Z_0.1.0.dev0.json",
       "timestamp": "2026-09-17T14:53:04.718446Z",
@@ -163,9 +172,27 @@
       "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
     },
     {
+      "benchmark": "performance",
+      "file": "raw/performance/20260918T071333108788Z_0.1.0.dev0.json",
+      "timestamp": "2026-09-18T07:13:33.108788Z",
+      "commitguard_version": "0.1.0.dev0",
+      "operating_system": "Linux",
+      "dataset_version": null,
+      "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
+    },
+    {
       "benchmark": "platform",
       "file": "raw/platform/20260917T145416702972Z_0.1.0.dev0.json",
       "timestamp": "2026-09-17T14:54:16.702972Z",
+      "commitguard_version": "0.1.0.dev0",
+      "operating_system": "Linux",
+      "dataset_version": null,
+      "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae"
+    },
+    {
+      "benchmark": "platform",
+      "file": "raw/platform/20260918T071339020561Z_0.1.0.dev0.json",
+      "timestamp": "2026-09-18T07:13:39.020561Z",
       "commitguard_version": "0.1.0.dev0",
       "operating_system": "Linux",
       "dataset_version": null,

@@ -1,0 +1,143 @@
+{
+  "benchmark": "platform",
+  "manifest": {
+    "command": "commitguard benchmark platform --record benchmarks/results",
+    "commitguard_version": "0.1.0.dev0",
+    "configuration_version": "built-in defaults",
+    "cpu_count": 8,
+    "cpu_model": "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz",
+    "dataset_fingerprint": null,
+    "dataset_version": null,
+    "git_version": "2.53.0",
+    "machine": "x86_64",
+    "memory_bytes": 16608079872,
+    "operating_system": "Linux",
+    "os_release": "7.1.5+kali-amd64",
+    "os_version": "#1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29)",
+    "policy_version": "c7042c3a70d87fe54b2c71120e86a5ce3635b86eb003519749ec7c8a114f8359",
+    "python_implementation": "CPython",
+    "python_version": "3.13.15",
+    "rules_version": "57b1df750182531f2033bd6f1ca3ad71ce6ef6eb54832d7d288e0f393ff100ae",
+    "schema_version": 1,
+    "source_dirty": true,
+    "source_revision": "98fcfb6c92104848e3b19aaf7b6dd86b577f5c69",
+    "timestamp": "2026-09-18T07:13:39.020561Z"
+  },
+  "result": {
+    "benchmark": "platform",
+    "benchmark_version": "1.0.0",
+    "checks": [
+      {
+        "area": "environment",
+        "expected": "git --version succeeds",
+        "name": "git is available",
+        "observed": "git version 2.53.0",
+        "status": "PASS"
+      },
+      {
+        "area": "hooks",
+        "expected": "pre-commit, commit-msg and pre-push installed",
+        "name": "install hooks (path with spaces and non-ASCII characters)",
+        "observed": "pre-commit=installed, commit-msg=installed, pre-push=installed",
+        "status": "PASS"
+      },
+      {
+        "area": "hooks",
+        "expected": "every hook reports installed",
+        "name": "hook integrity",
+        "observed": "pre-commit=installed, commit-msg=installed, pre-push=installed",
+        "status": "PASS"
+      },
+      {
+        "area": "pre-commit / commit-msg",
+        "expected": "exit 0, commit created",
+        "name": "clean commit allowed",
+        "observed": "exit 0, commit created",
+        "status": "PASS"
+      },
+      {
+        "area": "pre-commit / commit-msg",
+        "expected": "non-zero exit, no commit",
+        "name": "AI co-authored commit blocked",
+        "observed": "exit 1, commit not created",
+        "status": "PASS"
+      },
+      {
+        "area": "bypass",
+        "expected": "exit 0, commit created (documented limitation)",
+        "name": "git commit --no-verify skips local hooks",
+        "observed": "exit 0, commit created",
+        "status": "PASS"
+      },
+      {
+        "area": "pre-push",
+        "expected": "exit 0",
+        "name": "clean push allowed",
+        "observed": "exit 0",
+        "status": "PASS"
+      },
+      {
+        "area": "pre-push",
+        "expected": "non-zero exit",
+        "name": "AI co-authored push blocked",
+        "observed": "exit 1",
+        "status": "PASS"
+      },
+      {
+        "area": "bypass",
+        "expected": "exit 0 (documented limitation)",
+        "name": "git push --no-verify skips pre-push",
+        "observed": "exit 0",
+        "status": "PASS"
+      },
+      {
+        "area": "cli",
+        "expected": "exit 0",
+        "name": "commitguard scan on a clean commit",
+        "observed": "exit 0",
+        "status": "PASS"
+      },
+      {
+        "area": "cli",
+        "expected": "exit 1 (blocked)",
+        "name": "commitguard scan on an AI co-authored commit",
+        "observed": "exit 1",
+        "status": "PASS"
+      },
+      {
+        "area": "configuration",
+        "expected": "exit 1 (valid configuration, AI commit still blocked)",
+        "name": "configuration with CRLF line endings",
+        "observed": "exit 1",
+        "status": "PASS"
+      },
+      {
+        "area": "configuration",
+        "expected": "exit 2 (error), never exit 0",
+        "name": "invalid configuration fails closed",
+        "observed": "exit 2",
+        "status": "PASS"
+      },
+      {
+        "area": "cli",
+        "expected": "exit 1 for an AI co-authored message",
+        "name": "commitguard check --message-file",
+        "observed": "exit 1",
+        "status": "PASS"
+      },
+      {
+        "area": "hooks",
+        "expected": "hooks absent; an AI commit is no longer blocked locally",
+        "name": "uninstall removes the hooks",
+        "observed": "hooks {'pre-commit': 'missing', 'commit-msg': 'missing', 'pre-push': 'missing'}; AI commit exit 0, created",
+        "status": "PASS"
+      }
+    ],
+    "failed": 0,
+    "passed": 15,
+    "shell_for_hooks": "/bin/sh",
+    "skipped": 0,
+    "system": "Linux 7.1.5+kali-amd64 (x86_64)"
+  },
+  "schema_version": 1
+}
