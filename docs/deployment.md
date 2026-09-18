@@ -3,9 +3,9 @@
 This page moved into [deployment/](deployment/README.md). It is kept so
 existing links keep working.
 
-> CommitGuard is **not published to PyPI**; the PyPI name `commitguard` belongs
-> to an unrelated project. Install from source, pinned to a commit
-> ([deployment/README.md](deployment/README.md#installing-from-source)).
+> Install `commitguardian` (`pipx install commitguardian`). The PyPI names
+> `commitguard` and `commitguard-cli` belong to unrelated projects. Pinning to a
+> commit is also supported ([deployment/README.md](deployment/README.md#installing-from-source)).
 
 | Topic | Page |
 |---|---|

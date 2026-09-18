@@ -84,9 +84,10 @@ later. **Planned**, not implemented: neither exists today.
 
 ## Install
 
-CommitGuard is **not published to PyPI**. The PyPI project named `commitguard`
-is an unrelated project; `pip install 'commitguard[app]'` would install its code,
-not this service. Install from this repository, pinned to a full commit SHA:
+Install `commitguardian[app]`. The PyPI projects named `commitguard` and
+`commitguard-cli` are unrelated, so `pip install 'commitguard[app]'` would
+install someone else's code. For a deployment you may prefer to pin to a full
+commit SHA from this repository:
 
 ```bash
 sudo useradd --system --home-dir /var/lib/commitguard --shell /usr/sbin/nologin commitguard

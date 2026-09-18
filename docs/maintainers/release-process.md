@@ -1,8 +1,9 @@
 # Release process
 
 > Status: **not yet exercised — no release has been published.** CommitGuard
-> has no tags and no GitHub releases, and it is not published to PyPI (the
-> PyPI name `commitguard` belongs to an unrelated project). This page
+> has no tags and no GitHub releases yet. It is published to PyPI as
+> `commitguardian` (the names `commitguard` and `commitguard-cli` belong to
+> unrelated projects; see ADR-009). This page
 > describes the release mechanism being added in Phase 10
 > (`.github/workflows/release.yml`) and the manual steps around it. Until the
 > first release, users install from a pinned commit.
@@ -27,10 +28,12 @@ Artifacts are not signed, and no build provenance attestation is generated.
 | Runtime version (`commitguard --version`) | `src/commitguard/__init__.py`, `__version__` |
 | Dashboard package version | `web/package.json` (`"private": true`, not released separately; currently `0.1.0`, independent of the Python version) |
 
-Both Python locations must be changed together; today they both say
-`0.1.0.dev0`. `tests/integration/git/test_cli_commands.py` checks that
-`commitguard --version` prints `__version__`; no test compares it with
-`pyproject.toml`, so check both by hand.
+Both Python locations must be changed together; today they both say `0.1.0`.
+`tests/integration/git/test_cli_commands.py` checks that `commitguard --version`
+prints `__version__`; no test compares it with `pyproject.toml`, so check both by
+hand. The name in `pyproject.toml` is pinned by
+`tests/integration/test_examples.py`, because that name is what `twine upload`
+claims on PyPI.
 
 Tags:
 
@@ -138,6 +141,55 @@ part of `release.yml` as designed and have not run yet.
 | Artifact validation | **Automated** *(planned)* + **manual** | `release.yml` writes `SHA256SUMS`, generates the SBOM and smoke-tests the built wheel; the maintainer verifies checksums and contents before publishing |
 | Self-enforcement | **Automated** | `commitguard.yml` check `commitguard` on the release commits |
 
+## Publishing to PyPI
+
+The distribution name is **`commitguardian`**. The import package and console
+script stay `commitguard`, and `commitguard` / `commitguard-cli` on PyPI belong
+to other authors ([ADR-009](../adr/009-published-to-pypi-as-commitguardian.md)).
+
+Publishing uses **Trusted Publishing**: PyPI verifies the workflow's OIDC
+identity, so there is no API token to create, store or rotate. The `publish` job
+carries `id-token: write` and nothing else, and it runs only after the gate, the
+build, the cross-platform install smoke test and the draft have all succeeded.
+Release candidates (`rc` in the tag) are not published.
+
+### One-time setup
+
+1. On PyPI: **Your projects -> Publishing -> Add a pending publisher**
+
+   | Field | Value |
+   |---|---|
+   | PyPI project name | `commitguardian` |
+   | Owner / repository | `oyinlola-tech` / `commitguard` |
+   | Workflow name | `release.yml` |
+   | Environment name | `pypi` |
+
+2. In the repository: **Settings -> Environments -> New environment -> `pypi`**.
+   Add yourself as a required reviewer, so publishing waits for a human even
+   though no credential is involved.
+3. Optional but recommended: repeat both steps on
+   [TestPyPI](https://test.pypi.org) and do a dry run first.
+
+### What gets published
+
+Only the wheel and the sdist. `SHA256SUMS`, the SBOM and the cross-platform
+results travel with the *GitHub* release, not PyPI.
+
+The sdist is built from an allowlist in `pyproject.toml`, and the build job
+fails if it contains `.kilo/`, `.hypothesis/`, `node_modules/`, `.venv/`, a
+`.env` file, a generated dataset or `.git/`, or if it exceeds 4 MB. This is not
+hypothetical: the default configuration once produced an 8.4 MB sdist containing
+an editor's scratch worktree - a second copy of the repository. A published sdist
+is public and permanent.
+
+### Verifying a publish
+
+```bash
+pipx install commitguardian
+commitguard --version
+commitguard doctor          # bundled rules must load from the installed package
+```
+
 ## Manual release checklist
 
 - [ ] CI, Security and CommitGuard workflows green on the tagged commit
@@ -151,6 +203,9 @@ part of `release.yml` as designed and have not run yet.
 - [ ] Documentation matches the release (README install instructions, compatibility matrix, status labels)
 - [ ] `pip-audit` clean or findings assessed
 - [ ] Artifacts verified (below)
+- [ ] `twine check dist/*` passes
+- [ ] sdist contains no local files (the build job checks; `tar tzf dist/*.tar.gz` to look)
+- [ ] After publishing: `pipx install commitguardian` in a clean environment, then `commitguard doctor`
 
 ## Artifact verification
 

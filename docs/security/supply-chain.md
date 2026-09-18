@@ -5,10 +5,13 @@ Only what exists today is listed as implemented; the gaps are listed as gaps.
 
 ## The name collision on PyPI
 
-**CommitGuard is not published to PyPI.** The name `commitguard` on PyPI belongs
-to an unrelated project (a Git hooks library by another author, versions up to
-2.2.0), which also installs a `commitguard` console script. Anyone who follows a
-`pip install commitguard` instruction gets that project instead of this one.
+**CommitGuard is published to PyPI as `commitguardian`, never as `commitguard`.**
+Two unrelated projects hold CommitGuard names there: `commitguard` (a Git hooks
+library by another author, versions up to 2.2.0, which also installs a
+`commitguard` console script) and `commitguard-cli` (an AI commit analyser).
+Anyone who follows a `pip install commitguard` instruction gets one of those
+instead of this project. Releases are published with PyPI Trusted Publishing
+(OIDC from the tagged release workflow), so no API token exists to be stolen.
 
 Mitigations in place:
 

@@ -5,7 +5,7 @@ dashboard is built on it. It exposes repositories, scans, violations, policies
 and their governance, exceptions, audit events, notifications and GitHub
 installations. The same process also receives GitHub webhooks.
 
-> **Stability.** CommitGuard is pre-alpha (`0.1.0.dev0`, "Development Status :: 2
+> **Stability.** CommitGuard is pre-alpha (`0.1.0`, "Development Status :: 2
 > - Pre-Alpha"). The API is versioned `v1` in its path, but no compatibility
 > promise exists yet. Endpoints, fields and error codes can change between
 > commits. There is no OpenAPI document; these pages, the view models in

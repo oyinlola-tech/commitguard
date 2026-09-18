@@ -153,10 +153,15 @@ errors, API responses or Check Runs.
 ## 5. Configure the environment
 
 The App needs the optional `app` dependency set (it adds `cryptography` for JWT
-signing; nothing else). CommitGuard is **not published to PyPI**: the PyPI
-project named `commitguard` is an unrelated project, so `pip install
-'commitguard[app]'` would install someone else's code. Install from source in a
-virtual environment, pinned to a full commit SHA:
+signing; nothing else). The PyPI distribution is named **`commitguardian`** -
+`commitguard` and `commitguard-cli` there are unrelated projects by other
+authors, so installing either gets you someone else's tool:
+
+```bash
+python -m pip install "commitguardian[app]"
+```
+
+To pin a deployment to an exact commit instead of a release:
 
 ```bash
 python -m pip install "commitguard[app] @ git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"

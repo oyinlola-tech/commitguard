@@ -7,19 +7,25 @@ You need **Git 2.31+** and **Python 3.12+**.
 
 ## 1. Install CommitGuard
 
-CommitGuard is **not published to PyPI**. The name `commitguard` there belongs to
-an unrelated project, so `pip install commitguard` gets you someone else's code.
-Install from source, pinned to a commit you choose:
-
 ```bash
-pipx install "git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
+pipx install commitguardian
 ```
+
+The PyPI name is **`commitguardian`**; the command you run is **`commitguard`**.
+They differ because `commitguard` and `commitguard-cli` on PyPI are unrelated
+projects by other authors - installing either gets you someone else's tool.
 
 No pipx? Use a virtual environment:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate    # Windows: .venv\Scripts\activate
-python -m pip install "commitguard @ git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
+python -m pip install commitguardian
+```
+
+To pin to an exact commit instead of a release:
+
+```bash
+pipx install "git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
 ```
 
 Check it:

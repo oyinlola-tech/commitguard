@@ -76,8 +76,8 @@ jobs:
 ```
 
 The Action must be pinned to a full commit SHA; `init` refuses tags and
-branches. CommitGuard is not published to PyPI, and no package index name is
-used anywhere, which avoids dependency confusion with a similarly named package.
+branches. The Action installs CommitGuard from its own pinned source, never from
+a package index, so a similarly named package cannot be substituted.
 
 Then configure branch protection and run `commitguard github setup`.
 

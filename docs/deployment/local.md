@@ -20,12 +20,15 @@ Full reference: [../git-hooks.md](../git-hooks.md).
 
 ## Install
 
-CommitGuard is not on PyPI (the PyPI name `commitguard` belongs to an unrelated
-project). Install from source, pinned to a commit:
+The PyPI name is `commitguardian`; the command is `commitguard`. (`commitguard`
+and `commitguard-cli` on PyPI are unrelated projects.)
 
 ```bash
+pipx install commitguardian
+commitguard --version        # commitguard 0.1.0
+
+# or pinned to an exact commit:
 pipx install "git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
-commitguard --version        # commitguard 0.1.0.dev0
 ```
 
 Requirements: Python 3.12+, Git 2.31+.

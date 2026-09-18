@@ -1,14 +1,14 @@
 # Deploying CommitGuard
 
-CommitGuard 0.1.0.dev0 is pre-alpha software. This section describes the ways it
+CommitGuard 0.1.0 is pre-alpha software. This section describes the ways it
 can be deployed today, what each way protects against, and what it does not.
 Every mode runs the same detection engine and policy evaluator; they differ in
 where the check runs, who controls it, and whether it can prevent a merge.
 
-> **Installation.** CommitGuard is **not published to PyPI**. The PyPI project
-> named `commitguard` belongs to an unrelated project; `pip install commitguard`
-> installs someone else's code. Install from source, pinned to a full commit
-> SHA. See [Installing from source](#installing-from-source).
+> **Installation.** `pipx install commitguardian`. The PyPI projects named
+> `commitguard` and `commitguard-cli` belong to other authors; installing either
+> gets you someone else's code. Pinning to a full commit SHA is also supported -
+> see [Installing from source](#installing-from-source).
 
 ## Deployment modes
 

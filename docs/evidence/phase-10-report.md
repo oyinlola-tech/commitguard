@@ -63,6 +63,11 @@ installation, because only `commitguard github validate` can check that.
 
 ## 5. Installation
 
+> **Superseded.** This was accurate on 2026-09-17. CommitGuard is now published
+> to PyPI as `commitguardian` - see
+> [ADR-009](../adr/009-published-to-pypi-as-commitguardian.md). The collision
+> below is unchanged: `commitguard` on PyPI is still an unrelated project.
+
 **CommitGuard is not on PyPI.** That name belongs to an unrelated project, so the
 supported installation is from a pinned Git commit:
 

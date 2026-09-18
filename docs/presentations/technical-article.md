@@ -204,4 +204,4 @@ as a pass.
 ---
 
 *Source, evidence and reproduction: https://github.com/oyinlola-tech/commitguard.
-Not published to PyPI - that name belongs to an unrelated project.*
+Published to PyPI as `commitguardian`; `commitguard` there is an unrelated project.*

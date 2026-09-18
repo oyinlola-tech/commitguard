@@ -1,6 +1,10 @@
 # ADR-008: CommitGuard is installed from Git, not PyPI
 
-**Status:** Accepted (Phase 10) · **Applies to:** all installation documentation
+**Status:** Superseded by [ADR-009](009-published-to-pypi-as-commitguardian.md) (Phase 10) · **Applies to:** all installation documentation
+
+> The collision described here is real and unchanged: `commitguard` on PyPI is
+> still someone else's project. What changed is the answer. CommitGuard is now
+> published under the distinct name `commitguardian`; see ADR-009.
 
 ## Context
 

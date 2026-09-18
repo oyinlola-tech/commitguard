@@ -12,7 +12,8 @@ record is written when a decision was genuinely contested - not for every choice
 | [005](005-no-regex-trailer-parser.md) | The trailer parser uses no regular expressions | Accepted |
 | [006](006-mandatory-policy-only-strengthens.md) | A mandatory policy can only strengthen enforcement | Accepted |
 | [007](007-immutable-evidence.md) | Benchmark results and dataset versions are immutable | Accepted |
-| [008](008-not-published-to-pypi.md) | CommitGuard is installed from Git, not PyPI | Accepted |
+| [008](008-not-published-to-pypi.md) | CommitGuard is installed from Git, not PyPI | Superseded by 009 |
+| [009](009-published-to-pypi-as-commitguardian.md) | Published to PyPI as `commitguardian` | Accepted |
 
 Format: context, decision, consequences (including the bad ones), and how the
 decision is enforced in code or tests.
