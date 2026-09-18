@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Tag or commit to build (a dry run: the draft step is skipped)"
+        description: "Tag to release (e.g. v0.1.0), or a commit to build as a dry run"
         required: true
 
 permissions:
@@ -36,9 +36,9 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[dev]"
       - name: The tag must match the version in the source
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.ref, 'v') }}
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.ref || github.ref_name }}
         run: |
           set -euo pipefail
           version=$(python -c "import commitguard; print(commitguard.__version__)")
@@ -65,7 +65,7 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.build.outputs.version }}
+      version: ${{ steps.build.outputs.version }}   # e.g. 0.1.0, from the built wheel
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
@@ -80,8 +80,21 @@ jobs:
           set -euo pipefail
           python -m pip install build
           python -m build --sdist --wheel --outdir dist
-          cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
-          python -c "import commitguard, os; print(f'version={commitguard.__version__}')" >> "$GITHUB_OUTPUT"
+          # Subshell: the cd must not leak into the rest of the step.
+          ( cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS )
+          # Read the version from the wheel filename. Do NOT `import commitguard`
+          # here: this job never installs the package, so the import fails - which
+          # is exactly how the v0.1.0 release build broke.
+          version="$(python - <<'PY'
+          import pathlib, re, sys
+          wheels = sorted(pathlib.Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              sys.exit(f"expected exactly one wheel, found {[w.name for w in wheels]}")
+          print(re.fullmatch(r"[^-]+-([^-]+)-.*", wheels[0].name).group(1))
+          PY
+          )"
+          echo "built version ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
       - name: The sdist must contain nothing local
         run: |
           set -euo pipefail
@@ -171,7 +184,9 @@ jobs:
   release:
     name: Publish the GitHub release
     needs: [build, install]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A dispatch naming a tag is the supported way to finish a release whose
+    # later steps failed the first time, without moving or reusing the tag.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.ref, 'v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write  # only this job, only to create the release
@@ -184,7 +199,7 @@ jobs:
           path: artifacts
       - name: Assemble the release notes
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.ref || github.ref_name }}
         run: |
           set -euo pipefail
           {
@@ -219,20 +234,36 @@ jobs:
             echo "See CHANGELOG.md for the changes in this release."
           } > notes.md
           cat notes.md
-      - name: Create the release
+      # Create or update: a release for this tag may already exist, because
+      # listing an Action on the Marketplace REQUIRES a published release, and
+      # the natural way to get one is the web form - which creates the tag and
+      # the release together, and so triggers this very workflow. Failing here
+      # would strand the artifacts and skip the PyPI publish, which is exactly
+      # what happened on v0.1.0.
+      - name: Create or update the release
         id: create
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.ref || github.ref_name }}
         run: |
           set -euo pipefail
           if [[ "${TAG}" == *rc* ]]; then
-            # A candidate is a draft prerelease: it must not reach the Marketplace.
-            gh release create "${TAG}" --draft --prerelease \
-              --title "CommitGuard ${TAG}" --notes-file notes.md \
-              artifacts/distribution/*
+            flags=(--draft --prerelease)   # never reaches the Marketplace
           else
-            gh release create "${TAG}" --latest \
+            flags=(--latest)
+          fi
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists: attaching artifacts and notes"
+            # --clobber so a re-run replaces assets instead of erroring.
+            gh release upload "${TAG}" artifacts/distribution/* --clobber
+            # Keep a hand-written body: only fill one in if it is empty.
+            if [ -z "$(gh release view "${TAG}" --json body --jq .body)" ]; then
+              gh release edit "${TAG}" --notes-file notes.md
+            else
+              echo "keeping the existing release notes"
+            fi
+          else
+            gh release create "${TAG}" "${flags[@]}" \
               --title "CommitGuard ${TAG}" --notes-file notes.md \
               artifacts/distribution/*
           fi
@@ -243,9 +274,9 @@ jobs:
       # it. What this does is guarantee the manual click cannot fail, and put the
       # exact link and values one copy away.
       - name: Marketplace listing (manual, by GitHub's design)
-        if: ${{ !contains(github.ref_name, 'rc') }}
+        if: ${{ !contains(inputs.ref || github.ref_name, 'rc') }}
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.ref || github.ref_name }}
           RELEASE_URL: ${{ steps.create.outputs.url }}
         run: |
           set -euo pipefail
@@ -307,7 +338,11 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: [gate, build, install, release]
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'rc')
+    if: >-
+      ${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.ref, 'v'))
+          && !contains(inputs.ref || github.ref_name, 'rc') }}
+    # Also reachable by re-running this workflow manually on the tag, which is
+    # how to finish a release whose PyPI step did not run the first time.
     runs-on: ubuntu-latest
     environment:
       name: pypi

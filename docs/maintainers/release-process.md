@@ -234,6 +234,40 @@ Marketplace shows the tag, so a release candidate must not be listed - which is
 why the workflow leaves an `rc` tag as a **draft prerelease** and only publishes
 a final tag.
 
+## When a release only half-finishes
+
+The first real tag, `v0.1.0`, exposed two faults at once. Both are fixed; this
+is what to do if a release stops partway.
+
+**Symptom:** the tag exists, the GitHub release exists, but PyPI has nothing.
+
+**Cause 1 - the build job imported the package it had just built.** It ran
+`python -c "import commitguard"` from inside `dist/`, where the package is
+neither installed nor on the path. The gate installs the package, so the gate
+passed and the build failed. The version now comes from the wheel filename.
+
+**Cause 2 - the release job assumed it was the one creating the release.**
+Listing an Action on the Marketplace *requires* a published release, and the
+web form creates the tag and the release together - which triggers this
+workflow, which then found the release already there. `gh release create`
+failed, so `publish` never ran. The job now creates **or updates**: it uploads
+the artifacts to the existing release with `--clobber`, and leaves hand-written
+notes alone.
+
+**To finish a stalled release, do not move or reuse the tag.** Run the workflow
+manually against it:
+
+> Actions -> Release -> Run workflow -> *Use workflow from:* `main`
+> -> *ref:* `v0.1.0`
+
+The workflow definition comes from `main` (so you get the fixes) while the code
+built comes from the tag (so you release what you tagged). The gate still
+checks that the tag matches `__version__`, the release job attaches the missing
+artifacts, and `publish` uploads to PyPI.
+
+Passing a commit SHA instead of a tag stays a dry run: it builds and tests, and
+skips both the release and the publish.
+
 ## Manual release checklist
 
 - [ ] CI, Security and CommitGuard workflows green on the tagged commit
