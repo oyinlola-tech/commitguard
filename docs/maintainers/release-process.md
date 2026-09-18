@@ -190,6 +190,37 @@ commitguard --version
 commitguard doctor          # bundled rules must load from the installed package
 ```
 
+## Listing the Action on the GitHub Marketplace
+
+**This cannot be automated.** There is no REST or GraphQL API for an Actions
+Marketplace listing, and `gh release create` has no flag for it: the release
+object carries no marketplace or category field. Any claim that a workflow can
+publish to the Marketplace is wrong.
+
+It costs nothing extra, though, because `release.yml` creates a **draft**. The
+checkbox lives on the same form as the **Publish release** button you press to
+turn that draft into a release.
+
+On that form:
+
+| Field | Value |
+|---|---|
+| Publish this Action to the GitHub Marketplace | tick |
+| Primary Category | Security |
+| Another Category | Code review |
+
+Requirements GitHub enforces before the checkbox appears:
+
+- `action.yml` at the repository root, with `name`, `description` and `branding`
+  (all present);
+- a README;
+- the repository is public;
+- the action `name` is unique across the Marketplace;
+- you accept the GitHub Marketplace Developer Agreement (once, on first publish).
+
+After the first listing the checkbox stays ticked for later releases. The
+Marketplace shows the tag, so a release candidate should **not** be listed.
+
 ## Manual release checklist
 
 - [ ] CI, Security and CommitGuard workflows green on the tagged commit
@@ -206,6 +237,7 @@ commitguard doctor          # bundled rules must load from the installed package
 - [ ] `twine check dist/*` passes
 - [ ] sdist contains no local files (the build job checks; `tar tzf dist/*.tar.gz` to look)
 - [ ] After publishing: `pipx install commitguardian` in a clean environment, then `commitguard doctor`
+- [ ] Final releases only: Marketplace checkbox ticked when publishing the draft (not for an rc)
 
 ## Artifact verification
 
