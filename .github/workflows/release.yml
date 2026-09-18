@@ -289,10 +289,14 @@ jobs:
   # Trusted Publishing (OIDC): PyPI verifies this workflow's identity directly,
   # so there is no API token to create, store, rotate or leak. `id-token: write`
   # is granted to THIS JOB ONLY, and only after the gate, the build, the
-  # cross-platform install smoke test and the draft have all succeeded.
+  # cross-platform install smoke test and the GitHub release have succeeded.
   #
-  # The environment gives a second gate: configure `pypi` in the repository's
-  # settings with a required reviewer, and publishing waits for a human.
+  # This is FULLY AUTOMATIC: pushing a final tag publishes to PyPI with no
+  # further action. The `pypi` environment must exist in the repository settings
+  # (it is named in the Trusted Publisher), but it only pauses for approval if
+  # you add a required reviewer to it. Adding one is the way to get a human check
+  # before something public and permanent; leaving it empty keeps tag-to-PyPI
+  # hands-off.
   #
   # One-time setup on PyPI (Your projects -> Publishing -> Add a pending publisher):
   #   PyPI project name: commitguardian
