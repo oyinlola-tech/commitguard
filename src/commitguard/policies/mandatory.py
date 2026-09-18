@@ -11,8 +11,9 @@ is applied *after* those layers and can only make enforcement stricter:
 
 So with a mandatory ``ai_coauthor: block``, a repository ``ai_coauthor: allow``
 (or ``enabled: false``) still results in BLOCK. A mandatory policy cannot
-disable or relax anything; ``enabled: false`` is rejected as a configuration
-error rather than silently ignored.
+disable or relax anything; ``enabled: false``, local hook enforcement and
+``remediation`` (which can turn a block into a commit) are rejected as
+configuration errors rather than silently ignored.
 """
 
 from commitguard.config.schema import CommitGuardConfig
@@ -31,6 +32,10 @@ def validate_mandatory_config(config: CommitGuardConfig) -> None:
         )
     if config.enforcement.model_fields_set:
         raise ValueError("a mandatory policy cannot configure local hook enforcement")
+    if config.remediation.model_fields_set:
+        # auto_remove turns a block into a commit. A floor may only make
+        # enforcement stricter, so it must never be able to switch that on.
+        raise ValueError("a mandatory policy cannot configure remediation")
 
 
 def apply_mandatory_policies(policies: PolicySet, mandatory: CommitGuardConfig) -> PolicySet:

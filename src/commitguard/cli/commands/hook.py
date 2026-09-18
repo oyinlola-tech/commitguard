@@ -64,6 +64,28 @@ def _fail_closed(operation: str) -> Iterator[None]:
         raise typer.Exit(code=int(ExitCode.ERROR)) from None
 
 
+def _removal_notice(run: HookRun) -> str:
+    """What ``remediation.auto_remove`` deleted. Never silent: the developer
+    wrote those lines and must see that they are gone."""
+    lines = [
+        "CommitGuard",
+        f"! REMOVED prohibited attribution from the commit message "
+        f"({len(run.removed)} line{'s' if len(run.removed) > 1 else ''})",
+        "",
+    ]
+    lines += [
+        f"    line {removed.line_number}: {sanitize_block(removed.text, max_length=200)}"
+        f"  [{removed.rule_id}]"
+        for removed in run.removed
+    ]
+    lines += [
+        "",
+        "  The commit was created without them.",
+        "  Turn this off with `remediation: {auto_remove: false}` to block instead.",
+    ]
+    return "\n".join(lines)
+
+
 def _finish(run: HookRun, text: str) -> None:
     if not run.enabled:
         _err(
@@ -71,6 +93,8 @@ def _finish(run: HookRun, text: str) -> None:
             "no checks were run (see `commitguard doctor`)."
         )
         return
+    if run.removed:
+        _err(_removal_notice(run))
     _err(text)
     if run.report is not None and run.report.action is Action.BLOCK:
         raise typer.Exit(code=int(ExitCode.BLOCKED))

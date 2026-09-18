@@ -42,4 +42,12 @@ enforcement:
   pre_commit: true
   commit_msg: true
   pre_push: true
+
+# What to do about a violation. By default CommitGuard blocks and leaves the
+# message to you. Set auto_remove: true and the commit-msg hook deletes the
+# offending lines instead, reports what it removed, and lets the commit through.
+# Attribution in the author or committer identity still blocks: no edit to the
+# message can fix that. `commitguard doctor` shows when this is on.
+# remediation:
+#   auto_remove: true
 """

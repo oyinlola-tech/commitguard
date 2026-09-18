@@ -18,15 +18,21 @@ such as ``--cleanup=verbatim`` are invisible to it. pre-push analyses the real
 commit objects and is the authoritative local check.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from commitguard.config.enforcement import Enforcement, build_enforcement
+from commitguard.config.enforcement import (
+    Enforcement,
+    Remediation,
+    build_enforcement,
+    build_remediation,
+)
 from commitguard.config.loader import LoadedConfig
 from commitguard.core.context import ScanTrigger
+from commitguard.core.decision import Action
 from commitguard.exceptions.git import GitError
 from commitguard.git.push import PushUpdate, parse_pre_push_input
 from commitguard.git.ranges import resolve_commit_range
@@ -37,6 +43,12 @@ from commitguard.services.analysis import (
     build_report,
     load_analyzer,
     pending_commit,
+)
+from commitguard.services.remediation import (
+    RemovedLine,
+    removable_lines,
+    strip_lines,
+    with_actual_text,
 )
 from commitguard.services.reports import ScanReport
 from commitguard.utils.filesystem import read_bytes_limited
@@ -73,17 +85,25 @@ class HookRun(BaseModel):
     report: ScanReport | None = None
     updates: tuple[UpdatePlan, ...] = ()
     remote: str | None = None
+    #: Lines deleted from the pending message by ``remediation.auto_remove``.
+    #: Non-empty only when the rewritten message then analysed clean.
+    removed: tuple[RemovedLine, ...] = ()
 
 
 def _setup(
     repository: Repository, config_path: Path | None
-) -> tuple[Analyzer, LoadedConfig, Enforcement]:
+) -> tuple[Analyzer, LoadedConfig, Enforcement, Remediation]:
     analyzer, loaded = load_analyzer(repository, config_path=config_path)
-    return analyzer, loaded, build_enforcement(*loaded.configs)
+    return (
+        analyzer,
+        loaded,
+        build_enforcement(*loaded.configs),
+        build_remediation(*loaded.configs),
+    )
 
 
 def run_pre_commit(repository: Repository, *, config_path: Path | None = None) -> HookRun:
-    analyzer, loaded, enforcement = _setup(repository, config_path)
+    analyzer, loaded, enforcement, _ = _setup(repository, config_path)
     if not enforcement.pre_commit:
         return HookRun(hook=HookName.PRE_COMMIT, enabled=False)
     author, committer = repository.pending_identities()
@@ -105,24 +125,55 @@ def run_pre_commit(repository: Repository, *, config_path: Path | None = None) -
 def run_commit_msg(
     repository: Repository, message_file: Path, *, config_path: Path | None = None
 ) -> HookRun:
-    analyzer, loaded, enforcement = _setup(repository, config_path)
+    analyzer, loaded, enforcement, remediation = _setup(repository, config_path)
     if not enforcement.commit_msg:
         return HookRun(hook=HookName.COMMIT_MSG, enabled=False)
     raw = read_bytes_limited(message_file, max_bytes=MAX_MESSAGE_FILE_BYTES)
     message = repository.cleanup_message(raw.decode("utf-8", errors="replace"))
     author, committer = repository.pending_identities()
-    report = analyzer.analyze(pending_commit(message, author, committer), ScanTrigger.COMMIT_MSG)
-    return HookRun(
-        hook=HookName.COMMIT_MSG,
-        enabled=True,
-        report=build_report(
-            [report],
+
+    def analyse(text: str) -> ScanReport:
+        commit = analyzer.analyze(pending_commit(text, author, committer), ScanTrigger.COMMIT_MSG)
+        return build_report(
+            [commit],
             repository=repository,
             target="pending commit message",
             trigger=ScanTrigger.COMMIT_MSG,
             config=loaded,
-        ),
-    )
+        )
+
+    report = analyse(message)
+    removed: tuple[RemovedLine, ...] = ()
+    if remediation.auto_remove and report.action is Action.BLOCK:
+        fixed = _auto_remove(message_file, message, report, analyse)
+        if fixed is not None:
+            report, removed = fixed
+    return HookRun(hook=HookName.COMMIT_MSG, enabled=True, report=report, removed=removed)
+
+
+def _auto_remove(
+    message_file: Path,
+    message: str,
+    report: ScanReport,
+    analyse: Callable[[str], ScanReport],
+) -> tuple[ScanReport, tuple[RemovedLine, ...]] | None:
+    """Delete the offending lines, if that genuinely clears the block.
+
+    Returns the report for the rewritten message and what was removed, or
+    ``None`` to leave the original block in place. Every path that is not
+    provably clean returns ``None``: the caller then blocks as usual.
+    """
+    removals = removable_lines(report.commits[0]) if report.commits else None
+    if removals is None:
+        return None
+    rewritten = strip_lines(message, frozenset(r.line_number for r in removals))
+    if not rewritten.strip():
+        return None  # nothing would be left; refuse rather than empty the message
+    after = analyse(rewritten)
+    if after.action is Action.BLOCK:
+        return None  # the removal did not fix it: never allow on assumption
+    message_file.write_text(rewritten, encoding="utf-8")
+    return after, with_actual_text(message, removals)
 
 
 def plan_push(
@@ -180,7 +231,7 @@ def run_pre_push(
     *,
     config_path: Path | None = None,
 ) -> HookRun:
-    analyzer, loaded, enforcement = _setup(repository, config_path)
+    analyzer, loaded, enforcement, _ = _setup(repository, config_path)
     if not enforcement.pre_push:
         return HookRun(hook=HookName.PRE_PUSH, enabled=False, remote=remote)
     updates = parse_pre_push_input(stdin_text)

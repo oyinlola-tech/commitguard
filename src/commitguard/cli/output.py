@@ -54,15 +54,6 @@ def fail(message: str, code: ExitCode = ExitCode.ERROR) -> NoReturn:
     raise typer.Exit(code=int(code))
 
 
-def not_implemented(feature: str, phase: str) -> NoReturn:
-    """Exit clearly (and with the error code) for commands that do not exist yet."""
-    typer.echo(
-        f"commitguard: {feature} is not implemented yet (planned for {phase}).",
-        err=True,
-    )
-    raise typer.Exit(code=int(ExitCode.ERROR))
-
-
 def supports_unicode() -> bool:
     encoding = (getattr(sys.stdout, "encoding", None) or "").lower()
     return encoding.startswith("utf")

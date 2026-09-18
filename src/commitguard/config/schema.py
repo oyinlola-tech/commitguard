@@ -53,6 +53,31 @@ class EnforcementOverride(BaseModel):
         return value
 
 
+class RemediationOverride(BaseModel):
+    """What CommitGuard may do about a violation, beyond reporting it.
+
+    ``auto_remove`` lets the ``commit-msg`` hook delete the offending lines from
+    the pending message instead of refusing the commit. It only ever applies
+    when *every* blocking finding is a message line: attribution carried by the
+    author or committer identity cannot be fixed by editing text, and still
+    blocks. The stripped message is re-analysed, and the commit proceeds only if
+    it is then clean.
+
+    It is off by default, because it edits what the developer wrote.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    auto_remove: StrictBool | None = None
+
+    @field_validator("auto_remove", mode="before")
+    @classmethod
+    def _reject_explicit_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("must not be null; remove the key to use the default")
+        return value
+
+
 class CommitGuardConfig(BaseModel):
     """Top-level ``.commitguard.yaml`` document."""
 
@@ -61,6 +86,7 @@ class CommitGuardConfig(BaseModel):
     version: Literal[1]
     policies: dict[str, PolicyOverride] = {}
     enforcement: EnforcementOverride = EnforcementOverride()
+    remediation: RemediationOverride = RemediationOverride()
 
     @field_validator("version", mode="before")
     @classmethod

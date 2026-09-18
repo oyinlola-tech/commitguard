@@ -1,5 +1,6 @@
 """pre-commit and commit-msg enforcement through real `git commit`."""
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -213,3 +214,103 @@ def test_repository_cannot_shadow_the_commitguard_package(hooked_repo, commit_wi
     assert result.returncode == 1
     assert "COMMIT BLOCKED" in result.stderr
     assert not (hooked_repo.path / "SHADOWED").exists()
+
+
+# --------------------------------------------------------------------------- #
+# remediation.auto_remove: delete the attribution instead of refusing the commit
+# --------------------------------------------------------------------------- #
+AUTO_REMOVE = "version: 1\nremediation:\n  auto_remove: true\n"
+
+
+@pytest.fixture
+def auto_removing_repo(hooked_repo):  # type: ignore[no-untyped-def]
+    (hooked_repo.path / ".commitguard.yaml").write_text(AUTO_REMOVE, encoding="utf-8")
+    return hooked_repo
+
+
+def stored_message(repo) -> str:  # type: ignore[no-untyped-def]
+    return repo.run("log", "-1", "--format=%B").stdout
+
+
+def test_auto_remove_deletes_the_trailer_and_lets_the_commit_through(
+    auto_removing_repo,  # type: ignore[no-untyped-def]
+    commit_with_hooks,  # type: ignore[no-untyped-def]
+) -> None:
+    result = commit_with_hooks(AI_MSG)
+    assert result.returncode == 0, result.stderr
+    assert "REMOVED prohibited attribution" in result.stderr
+    assert "Co-authored-by: Claude <noreply@anthropic.com>" in result.stderr
+    assert "ai_coauthor" in result.stderr
+    message = stored_message(auto_removing_repo)
+    assert "feat: add payments" in message
+    assert "Claude" not in message
+    assert "Co-authored-by" not in message
+
+
+def test_auto_remove_keeps_human_coauthors(
+    auto_removing_repo,  # type: ignore[no-untyped-def]
+    commit_with_hooks,  # type: ignore[no-untyped-def]
+) -> None:
+    result = commit_with_hooks(
+        "feat: pair\n\n"
+        "Co-authored-by: Ada Lovelace <ada@example.com>\n"
+        "Co-authored-by: Claude <noreply@anthropic.com>"
+    )
+    assert result.returncode == 0, result.stderr
+    message = stored_message(auto_removing_repo)
+    assert "Co-authored-by: Ada Lovelace <ada@example.com>" in message
+    assert "Claude" not in message
+
+
+def test_auto_remove_never_applies_to_an_ai_identity(
+    auto_removing_repo,  # type: ignore[no-untyped-def]
+    commit_with_hooks,  # type: ignore[no-untyped-def]
+) -> None:
+    """An AI author cannot be deleted from a message, so the commit still blocks."""
+    result = commit_with_hooks("feat: x", "--author=Claude <noreply@anthropic.com>")
+    assert result.returncode == 1
+    assert "COMMIT BLOCKED" in result.stderr
+    assert "REMOVED" not in result.stderr
+    assert no_commit_created(auto_removing_repo)
+
+
+def test_auto_remove_blocks_when_removal_would_leave_no_message(
+    auto_removing_repo,  # type: ignore[no-untyped-def]
+    commit_with_hooks,  # type: ignore[no-untyped-def]
+) -> None:
+    result = commit_with_hooks("Co-authored-by: Claude <noreply@anthropic.com>")
+    assert result.returncode == 1
+    assert "COMMIT BLOCKED" in result.stderr
+    assert "REMOVED" not in result.stderr
+    assert no_commit_created(auto_removing_repo)
+
+
+def test_auto_remove_is_off_unless_configured(hooked_repo, commit_with_hooks) -> None:  # type: ignore[no-untyped-def]
+    result = commit_with_hooks(AI_MSG)
+    assert result.returncode == 1
+    assert "REMOVED" not in result.stderr
+    assert no_commit_created(hooked_repo)
+
+
+def test_auto_remove_does_not_weaken_the_pushed_result(
+    auto_removing_repo,  # type: ignore[no-untyped-def]
+    commit_with_hooks,  # type: ignore[no-untyped-def]
+) -> None:
+    """Whatever is committed must still satisfy pre-push: the two agree."""
+    assert commit_with_hooks(AI_MSG).returncode == 0
+    push = auto_removing_repo.run("push", "origin", "HEAD:refs/heads/main")
+    assert push.returncode == 0, push.stderr
+    assert "BLOCKED" not in push.stderr
+
+
+def test_doctor_reports_that_auto_remove_is_on(auto_removing_repo) -> None:  # type: ignore[no-untyped-def]
+    """It turns a block into a commit, so it must never be invisible."""
+    result = subprocess.run(
+        [sys.executable, "-P", "-m", "commitguard", "doctor"],
+        cwd=auto_removing_repo.path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "remediation.auto_remove is on" in result.stdout
+    assert "WARNING" in result.stdout

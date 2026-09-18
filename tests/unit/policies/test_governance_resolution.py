@@ -283,3 +283,22 @@ def test_a_mandatory_rule_stricter_than_the_built_in_default_is_not_a_conflict()
     assert effective.conflicts == ()
     assert provenance.source is PolicyLevel.ORGANIZATION
     assert provenance.enforcement is Enforcement.MANDATORY
+
+
+def test_a_mandatory_policy_cannot_switch_on_auto_removal() -> None:
+    """``auto_remove`` turns a block into a commit; a floor may only strengthen."""
+    from commitguard.config.schema import CommitGuardConfig
+    from commitguard.policies.mandatory import validate_mandatory_config
+
+    weakening = CommitGuardConfig.model_validate(
+        {"version": 1, "remediation": {"auto_remove": True}}
+    )
+    with pytest.raises(ValueError, match="cannot configure remediation"):
+        validate_mandatory_config(weakening)
+
+    # Even switching it *off* is refused: remediation is not a floor's business.
+    disabling = CommitGuardConfig.model_validate(
+        {"version": 1, "remediation": {"auto_remove": False}}
+    )
+    with pytest.raises(ValueError, match="cannot configure remediation"):
+        validate_mandatory_config(disabling)

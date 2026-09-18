@@ -1,4 +1,4 @@
-"""Effective hook enforcement settings, merged across configuration layers."""
+"""Effective hook enforcement and remediation settings, merged across layers."""
 
 from pydantic import BaseModel, ConfigDict
 
@@ -30,6 +30,24 @@ def build_enforcement(*configs: CommitGuardConfig) -> Enforcement:
     effective = Enforcement()
     for config in configs:
         updates = config.enforcement.model_dump(exclude_unset=True)
+        if updates:
+            effective = effective.model_copy(update=updates)
+    return effective
+
+
+class Remediation(BaseModel):
+    """Resolved remediation settings. Secure default: change nothing, just block."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    auto_remove: bool = False
+
+
+def build_remediation(*configs: CommitGuardConfig) -> Remediation:
+    """Merge remediation settings from configuration layers (lowest first)."""
+    effective = Remediation()
+    for config in configs:
+        updates = config.remediation.model_dump(exclude_unset=True)
         if updates:
             effective = effective.model_copy(update=updates)
     return effective

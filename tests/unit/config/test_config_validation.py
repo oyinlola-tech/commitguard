@@ -223,3 +223,32 @@ class TestEnforcement:
     def test_invalid_enforcement_is_rejected(self, text: str) -> None:
         with pytest.raises(ConfigurationError):
             parse_config(text)
+
+
+class TestRemediation:
+    def test_auto_remove_is_off_by_default(self) -> None:
+        """It edits what the developer wrote, so it is never on unless asked for."""
+        from commitguard.config.enforcement import build_remediation
+
+        assert not build_remediation(parse_config("version: 1\n")).auto_remove
+
+    def test_layers_override_auto_remove(self) -> None:
+        from commitguard.config.enforcement import build_remediation
+
+        lower = parse_config("version: 1\nremediation:\n  auto_remove: true\n")
+        upper = parse_config("version: 1\nremediation:\n  auto_remove: false\n")
+        assert build_remediation(lower).auto_remove
+        assert not build_remediation(lower, upper).auto_remove
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "version: 1\nremediation:\n  auto_remove: 'true'\n",
+            "version: 1\nremediation:\n  auto_remove:\n",
+            "version: 1\nremediation:\n  autoremove: true\n",
+            "version: 1\nremediation: true\n",
+        ],
+    )
+    def test_invalid_remediation_is_rejected(self, text: str) -> None:
+        with pytest.raises(ConfigurationError):
+            parse_config(text)

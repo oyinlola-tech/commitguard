@@ -19,7 +19,7 @@ import typer
 
 from commitguard import __version__
 from commitguard.cli.output import ExitCode, info, supports_unicode
-from commitguard.config.enforcement import build_enforcement
+from commitguard.config.enforcement import build_enforcement, build_remediation
 from commitguard.config.loader import LoadedConfig, load_effective_config
 from commitguard.core.decision import Action
 from commitguard.exceptions.base import CommitGuardError
@@ -182,6 +182,17 @@ def _hook_checks(repository: Repository, loaded: LoadedConfig | None) -> list[Ch
                     "set enforcement." + name.replace("-", "_") + ": true",
                 )
             )
+    if loaded is not None and build_remediation(*loaded.configs).auto_remove:
+        # This turns a blocked commit into a commit. It must never be invisible.
+        checks.append(
+            Check(
+                "Enforcement",
+                Status.WARN,
+                "remediation.auto_remove is on: prohibited attribution is deleted from the "
+                "commit message instead of blocking the commit (identity findings still block)",
+                "set remediation.auto_remove: false to block instead",
+            )
+        )
     return checks
 
 
