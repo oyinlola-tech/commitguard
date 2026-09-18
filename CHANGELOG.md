@@ -6,6 +6,39 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`remediation.auto_remove`** (opt-in, off by default): the `commit-msg` hook
+  deletes prohibited AI, bot or agent attribution from the pending commit
+  message instead of refusing the commit, reports every line it removed, and
+  lets the commit through. It rewrites no history - `commit-msg` runs before Git
+  creates the commit object. It refuses whatever it cannot provably fix:
+  attribution in the author or committer identity, a message that would be left
+  empty, or a detector failure. The stripped message is re-analysed and the
+  commit proceeds only if it is then clean. `pre-push` never removes anything,
+  and a mandatory organization policy cannot switch it on.
+  See [docs/configuration.md](docs/configuration.md#remediation).
+
+### Fixed (Phase 10 verification pass)
+
+- The Git hook's fail-closed message escaped newlines, so a multi-line reason
+  (an invalid `.commitguard.yaml` listing several fields) printed as one
+  unreadable `\x0a` run. Reason blocks now keep their newlines and indent every
+  continuation line, so text from a configuration file cannot start a line at
+  column 0 and impersonate a CommitGuard status line.
+- GitHub App state: `installation_repositories`, `known_repositories` and
+  `installation_sync_status` were never deleted when an installation was purged,
+  so an organization's repository names stayed in the database indefinitely,
+  contradicting the documented retention behaviour.
+- The repository's own enforcement workflow fell back to installing CommitGuard
+  from `$GITHUB_WORKSPACE` - the change under review - when the trusted commit
+  predated CI support. The check now fails instead.
+- `.env.example` claimed CommitGuard reads no environment variables; it reads 30.
+  It now lists them all, and a test keeps it in sync with the source.
+- Removed pictographic characters from CommitGuard's own output (Check Run
+  markdown, GitHub Actions summaries, CLI status lines) and documentation prose.
+  They remain only in detection *inputs* (the adversarial dataset and fixtures).
+
 ### Security (Phase 10 — three detection bypasses and two ReDoS defects, found by this project's own testing)
 
 - **Detection bypass**: a Unicode letter or number before a trailer key
