@@ -136,13 +136,13 @@ never its value.
 |---|---|---|
 | `✗ Git version: the GitHub App needs Git 2.45 or newer (found 2.39.2)` | old Git on the host | install Git 2.45+ |
 | `✗ Git version: git is not available` | Git not on the service user's `PATH` | install Git or fix `PATH` |
-| `⚠ Private key: the key file is readable by other users (chmod 600)` | loose file mode | `chmod 600`, owned by the service user |
+| `! Private key: the key file is readable by other users (chmod 600)` | loose file mode | `chmod 600`, owned by the service user |
 | `✗ GitHub authentication: GitHub API ... failed: HTTP 401 (unauthorized)` | App ID and key do not belong together, or the key was revoked; also a badly wrong system clock | check the App ID, generate a new key, check time synchronisation |
 | `✗ GitHub authentication: ... no response (unavailable)` | no outbound HTTPS to `api.github.com` | firewall, DNS, `HTTPS_PROXY` |
 | `✗ Required permissions: missing checks: write` (or others) | App permissions incomplete | edit the App's permissions |
-| `⚠ Least privilege: not needed by CommitGuard: ...` | extra permissions granted | remove them |
+| `! Least privilege: not needed by CommitGuard: ...` | extra permissions granted | remove them |
 | `✗ Webhook events: not subscribed: pull_request, push` | App event subscriptions incomplete | subscribe to the events in [../github-app.md](../github-app.md#3-subscribe-to-events) |
-| `⚠ Re-runs and merge queue: not subscribed: ... (GitHub re-run requests and merge queue validation are off)` | optional events or **Merge queues: read** missing | add them if you need these features |
+| `! Re-runs and merge queue: not subscribed: ... (GitHub re-run requests and merge queue validation are off)` | optional events or **Merge queues: read** missing | add them if you need these features |
 | `✗ Installation access: the App is not installed on any account` | not installed | install the App |
 | `✗ Installation permissions: installation <id> (...) has not granted ...` | the account has not accepted updated permissions | an owner accepts the new permissions on GitHub |
 | `✗ Installation access: installation <id> not found` | wrong `--installation-id` | take the ID from the installation's settings URL |

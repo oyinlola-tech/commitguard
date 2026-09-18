@@ -242,7 +242,7 @@ enforcement:
 ```
 
 All hooks enforce by default. A disabled hook prints a notice and exits 0;
-`commitguard doctor` reports `⚠ pre-push enforcement disabled in configuration`
+`commitguard doctor` reports `! WARNING  pre-push enforcement disabled in configuration`
 and "Security enforcement is incomplete." Disabling a hook does not change
 any policy.
 

@@ -65,7 +65,7 @@ enforces. Layers merge field by field like policies.
 
 Disabling a hook is intentional and visible: the hook prints
 "pre-push enforcement is disabled by configuration" and `commitguard doctor`
-reports `⚠ pre-push enforcement disabled in configuration` and
+reports `! WARNING  pre-push enforcement disabled in configuration` and
 "Security enforcement is incomplete." It never changes policies, and it is
 never treated as a fully protected state.
 
