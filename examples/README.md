@@ -18,11 +18,12 @@ asserts the documented decision, so an example cannot drift from the code.
 
 ## Installing CommitGuard first
 
-CommitGuard is **not on PyPI**. The name `commitguard` there belongs to an
-unrelated project, so `pip install commitguard` installs someone else's code.
-Install from source, pinned to a commit:
+Install CommitGuard as `commitguardian` - `commitguard` and `commitguard-cli`
+on PyPI are unrelated projects by other authors:
 
 ```bash
+pipx install commitguardian
+# or pin to an exact commit:
 pipx install "git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
 # or, in a virtual environment:
 python -m pip install "commitguard @ git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
