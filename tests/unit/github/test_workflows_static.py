@@ -146,6 +146,25 @@ def test_repository_workflow_installs_commitguard_from_trusted_commit() -> None:
     assert "pip install -e" not in install
 
 
+def test_the_enforcement_workflow_never_installs_the_scanner_from_the_change() -> None:
+    """The scanner must come from the trusted commit or the check must fail.
+
+    A bootstrap fallback used to install from ``$GITHUB_WORKSPACE`` - the change
+    under review - whenever the trusted commit was too old to run the check, so
+    a pull request based on an early commit could have supplied its own scanner.
+    """
+    steps = _load(ROOT / ".github/workflows/commitguard.yml")["jobs"][JOB_ID]["steps"]
+    install = next(s for s in steps if s.get("id") == "install")["run"]
+    assignments = [
+        line.strip()
+        for line in install.splitlines()
+        if line.strip().startswith("src=") or line.strip().startswith('src="')
+    ]
+    assert assignments, install
+    assert all("GITHUB_WORKSPACE" not in line for line in assignments), assignments
+    assert "RUNNER_TEMP" in assignments[0]
+
+
 def test_ci_workflow_installs_checked_out_source_not_pypi() -> None:
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
     assert 'pip install -e ".[dev]"' in ci

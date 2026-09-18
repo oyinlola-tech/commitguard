@@ -1,8 +1,10 @@
 """Terminal output helpers and exit codes.
 
 All text derived from commits, configuration files or Git error output passes
-through :func:`~commitguard.security.sanitization.sanitize_for_terminal` here
-or in :mod:`commitguard.cli.render`.
+through :mod:`commitguard.security.sanitization` here or in
+:mod:`commitguard.cli.render`: :func:`sanitize_block` for multi-line reason
+blocks (newlines kept, continuation lines indented so none can impersonate a
+CommitGuard status line) and :func:`sanitize_for_terminal` elsewhere.
 """
 
 import sys
@@ -42,8 +44,7 @@ def info(message: str) -> None:
 
 def error(message: str) -> None:
     typer.echo(
-        "commitguard: error: "
-        + sanitize_block(message, max_length=4000),
+        "commitguard: error: " + sanitize_block(message, max_length=4000),
         err=True,
     )
 

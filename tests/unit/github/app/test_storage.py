@@ -336,7 +336,8 @@ def test_purging_a_removed_installation_leaves_no_row_behind(store: SqliteStateS
 
     assert store.query("SELECT 1 FROM installations") == []
     for table in ("installation_repositories", "known_repositories", "installation_sync_status"):
-        assert store.query(f"SELECT 1 FROM {table}") == [], f"{table} kept an orphaned row"
+        # Table names are literals above, not input.
+        assert store.query(f"SELECT 1 FROM {table}") == [], f"{table} kept an orphaned row"  # noqa: S608
 
 
 def test_every_tenant_table_has_a_documented_cleanup_path(store: SqliteStateStore) -> None:
@@ -346,7 +347,8 @@ def test_every_tenant_table_has_a_documented_cleanup_path(store: SqliteStateStor
     covered = {
         table
         for table in _tenant_tables(store)
-        if any(f"DELETE FROM {table} " in statement for statement in _ORPHAN_DELETES)
+        # Not a query: this matches the statement text. Names come from sqlite_master.
+        if any(f"DELETE FROM {table} " in statement for statement in _ORPHAN_DELETES)  # noqa: S608
     }
     unexplained = sorted(set(_tenant_tables(store)) - covered - set(_CLEANED_ELSEWHERE))
     assert not unexplained, (
