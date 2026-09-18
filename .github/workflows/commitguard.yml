@@ -69,10 +69,12 @@ jobs:
           fi
           src="${RUNNER_TEMP}/commitguard-trusted"
           git worktree add --detach "${src}" "${trusted}"
+          # Never fall back to ${GITHUB_WORKSPACE}: that is the change being
+          # checked, so a pull request could supply its own scanner. If the
+          # trusted commit cannot run the check, the check fails.
           if [ ! -f "${src}/requirements/ci.txt" ] || [ ! -f "${src}/src/commitguard/cli/commands/ci.py" ]; then
-            # Bootstrap only: the trusted commit predates CI enforcement.
-            echo "::warning title=CommitGuard::trusted commit ${trusted} has no CI support; installing from the checked-out change"
-            src="${GITHUB_WORKSPACE}"
+            echo "::error title=CommitGuard::trusted commit ${trusted} cannot run CommitGuard (it predates CI enforcement); rebase onto a newer base"
+            exit 2
           fi
           "${BASE_PYTHON}" -m venv "${RUNNER_TEMP}/commitguard-venv"
           py="${RUNNER_TEMP}/commitguard-venv/bin/python"
