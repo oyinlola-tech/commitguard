@@ -25,6 +25,15 @@ All notable changes to this project are documented here. The format follows
   without `--pre`.
 - Added `project.urls` (homepage, repository, documentation, changelog, issues)
   for the PyPI project page.
+- **Releases publish automatically.** A final tag `vX.Y.Z` now validates,
+  builds, smoke-tests on Linux, macOS and Windows, publishes the GitHub release
+  and publishes to PyPI with no further action. A release candidate (`rcN`)
+  stops at a draft prerelease and is never published to PyPI.
+- The GitHub Marketplace listing stays manual, because GitHub provides no API
+  for it: `gh release create` has no marketplace flag and the release object has
+  no marketplace field. The release job instead **fails** if `action.yml` or the
+  README would stop the listing checkbox appearing, and writes the link and the
+  exact category values into the workflow run summary.
 
 ### Added
 
