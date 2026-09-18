@@ -14,7 +14,7 @@ from typing import NoReturn
 import typer
 
 from commitguard.exceptions.base import CommitGuardError
-from commitguard.security.sanitization import sanitize_for_terminal
+from commitguard.security.sanitization import sanitize_block, sanitize_for_terminal
 
 
 class ExitCode(IntEnum):
@@ -43,7 +43,7 @@ def info(message: str) -> None:
 def error(message: str) -> None:
     typer.echo(
         "commitguard: error: "
-        + sanitize_for_terminal(message, max_length=4000, keep_newlines=True),
+        + sanitize_block(message, max_length=4000),
         err=True,
     )
 

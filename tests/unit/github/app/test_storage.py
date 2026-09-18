@@ -263,3 +263,93 @@ def test_store_never_holds_commit_messages_or_identities(
         raw += wal.read_bytes()
     assert b"Co-authored-by" not in raw
     assert b"@example.com" not in raw
+
+
+# --------------------------------------------------------------------------- #
+# Retention: nothing outlives the installation it belongs to
+# --------------------------------------------------------------------------- #
+#: Tables keyed by installation whose rows are cleaned up somewhere other than
+#: ``_ORPHAN_DELETES``, with the reason.
+_CLEANED_ELSEWHERE = {
+    "deliveries": "purged by received_at",
+    "check_runs": "purged by updated_at",
+    "scan_jobs": "purged by updated_at once finished",
+    "merge_groups": "purged once destroyed",
+    "notification_events": "purged by the notification service's own retention",
+    "session_installations": "ON DELETE CASCADE from sessions",
+    "session_repositories": "ON DELETE CASCADE from sessions",
+}
+
+
+def _tenant_tables(store: SqliteStateStore) -> list[str]:
+    names = [
+        row["name"]
+        for row in store.query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
+    ]
+    return [
+        name
+        for name in names
+        if name not in ("installations", "audit_events")
+        and any(
+            column["name"] == "installation_id"
+            for column in store.query(f"PRAGMA table_info({name})")
+        )
+    ]
+
+
+def test_purging_a_removed_installation_leaves_no_row_behind(store: SqliteStateStore) -> None:
+    """A repository inventory used to survive its installation forever.
+
+    ``known_repositories`` is purged only once a repository has been *removed*
+    from a live installation, and ``installation_repositories`` and
+    ``installation_sync_status`` had no purge at all, so uninstalling left an
+    organisation's repository names in the database with nothing able to
+    attribute or delete them.
+    """
+    old = NOW - timedelta(days=400)
+    with store.transaction() as db:
+        db.execute(
+            "INSERT INTO installations VALUES (42, 1001, 'octo-org', 'Organization', "
+            "'selected', 'deleted', '{}', ?, ?)",
+            (old.timestamp(), old.timestamp()),
+        )
+        db.execute(
+            "INSERT INTO installation_repositories VALUES (42, 5001, 'octo-org', 'project', ?)",
+            (old.timestamp(),),
+        )
+        db.execute(
+            "INSERT INTO known_repositories (installation_id, repository_id, owner, name, "
+            "first_seen_at, last_seen_at, removed_at) VALUES (42, 5001, 'octo-org', 'project', "
+            "?, ?, NULL)",
+            (old.timestamp(), old.timestamp()),
+        )
+        db.execute(
+            "INSERT INTO installation_sync_status (installation_id, account_id, state, "
+            "started_at, updated_at) VALUES (42, 1001, 'healthy', ?, ?)",
+            (old.timestamp(), old.timestamp()),
+        )
+
+    store.purge_expired(NOW)
+
+    assert store.query("SELECT 1 FROM installations") == []
+    for table in ("installation_repositories", "known_repositories", "installation_sync_status"):
+        assert store.query(f"SELECT 1 FROM {table}") == [], f"{table} kept an orphaned row"
+
+
+def test_every_tenant_table_has_a_documented_cleanup_path(store: SqliteStateStore) -> None:
+    """A new installation-scoped table must say how its rows are ever removed."""
+    from commitguard.github.storage import _ORPHAN_DELETES
+
+    covered = {
+        table
+        for table in _tenant_tables(store)
+        if any(f"DELETE FROM {table} " in statement for statement in _ORPHAN_DELETES)
+    }
+    unexplained = sorted(set(_tenant_tables(store)) - covered - set(_CLEANED_ELSEWHERE))
+    assert not unexplained, (
+        f"these tables are keyed by installation but nothing removes their rows when the "
+        f"installation is purged: {', '.join(unexplained)}"
+    )

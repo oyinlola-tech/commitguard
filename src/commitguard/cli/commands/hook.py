@@ -21,7 +21,7 @@ from commitguard.cli.output import ExitCode
 from commitguard.cli.render import render_commit_hook_text, render_push_text
 from commitguard.core.decision import Action
 from commitguard.git.repository import Repository
-from commitguard.security.sanitization import sanitize_for_terminal
+from commitguard.security.sanitization import sanitize_block
 from commitguard.services.hooks import (
     HookRun,
     run_commit_msg,
@@ -54,7 +54,7 @@ def _fail_closed(operation: str) -> Iterator[None]:
     except typer.Exit:
         raise
     except Exception as exc:  # noqa: BLE001 - every failure must block, never allow
-        reason = sanitize_for_terminal(str(exc) or type(exc).__name__, max_length=2000)
+        reason = sanitize_block(str(exc) or type(exc).__name__, max_length=2000)
         _err(
             "CommitGuard could not verify repository policy.\n"
             f"Reason: {reason}\n"

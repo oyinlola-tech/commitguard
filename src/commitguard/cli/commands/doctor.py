@@ -489,7 +489,8 @@ def doctor_command(
             raise typer.Exit(code=int(ExitCode.ERROR))
         return
 
-    ok, cross, bang = ("\u2713", "\u2717", "\u26a0") if supports_unicode() else ("OK", "X", "!")
+    ok, cross = ("\u2713", "\u2717") if supports_unicode() else ("OK", "X")
+    bang = "!"
     symbol = {
         Status.OK: ok,
         Status.INFO: "i",

@@ -67,3 +67,19 @@ def sanitize_for_terminal(
     if len(result) > max_length:
         result = result[: max_length - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
     return result
+
+
+def sanitize_block(text: str, *, max_length: int = DEFAULT_MAX_LENGTH, indent: str = "  ") -> str:
+    """Sanitise multi-line text for a human-readable report block.
+
+    Newlines are kept - a validation error that lists several fields is
+    unreadable once they become ``\\x0a`` - but every line after the first is
+    indented, so text we did not write cannot produce a line that starts at
+    column 0 and impersonates one of ours (for example a forged ``Result:
+    PASS``). Everything :func:`sanitize_for_terminal` escapes is still escaped.
+    """
+    safe = sanitize_for_terminal(text, max_length=max_length, keep_newlines=True)
+    first, separator, rest = safe.partition("\n")
+    if not separator:
+        return first
+    return first + "\n" + "\n".join(indent + line for line in rest.split("\n"))

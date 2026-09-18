@@ -8,8 +8,9 @@ listed in ``malformed_trailer_checks``. ``Co-authored-by`` belongs to the
 co-author detector and is not reported here as AI attribution.
 
 Message markers are exact whole-line matches of tool-inserted footers such as
-``🤖 Generated with [Claude Code](https://claude.com/claude-code)``. There is
-no free-text inference: "use AI service for recommendations" is not evidence.
+``Generated with [Claude Code](https://claude.com/claude-code)``, which tools
+usually prefix with a pictographic symbol (U+1F916 ROBOT FACE). There is no
+free-text inference: "use AI service for recommendations" is not evidence.
 """
 
 import unicodedata
@@ -39,7 +40,11 @@ MAX_MARKER_LINE_CHARS = 300
 
 
 def _marker_key(line: str) -> str:
-    """Normalised line with leading emoji/symbols removed (``🤖 Generated ...``)."""
+    """Normalised line with any leading pictographic symbols removed.
+
+    Tool footers are commonly prefixed with one (U+1F916 ROBOT FACE before
+    ``Generated with ...``); the marker must match with or without it.
+    """
     text = normalize_text(line)
     index = 0
     while index < len(text) and (

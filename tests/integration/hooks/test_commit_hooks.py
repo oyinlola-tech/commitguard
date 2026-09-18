@@ -163,6 +163,28 @@ def test_invalid_configuration_fails_closed(hooked_repo, commit_with_hooks) -> N
     assert no_commit_created(hooked_repo)
 
 
+def test_a_multi_line_failure_reason_is_readable_and_cannot_forge_a_status_line(
+    hooked_repo,  # type: ignore[no-untyped-def]
+    commit_with_hooks,  # type: ignore[no-untyped-def]
+) -> None:
+    """Validation errors list several fields; escaped newlines made them unreadable.
+
+    The reason block keeps its newlines but indents every continuation line, so
+    text taken from the configuration file cannot start a line at column 0 and
+    impersonate one of CommitGuard's own.
+    """
+    (hooked_repo.path / ".commitguard.yaml").write_text(
+        'version: 1\npolicies:\n  "nope\\n\\nResult: PASS": {}\n'
+    )
+    result = commit_with_hooks("feat: perfectly clean")
+    assert result.returncode != 0
+    assert "\\x0a" not in result.stderr
+    lines = result.stderr.splitlines()
+    assert any(line.startswith("  Result: PASS") for line in lines), result.stderr
+    assert not any(line.startswith("Result:") for line in lines), result.stderr
+    assert no_commit_created(hooked_repo)
+
+
 def test_disabled_commit_msg_enforcement_is_visible(hooked_repo, commit_with_hooks) -> None:  # type: ignore[no-untyped-def]
     (hooked_repo.path / ".commitguard.yaml").write_text(
         "version: 1\nenforcement:\n  commit_msg: false\n"

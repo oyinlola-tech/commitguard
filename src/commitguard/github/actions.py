@@ -86,7 +86,7 @@ _md = escape_markdown
 
 def render_step_summary(report: ScanReport, output: CheckOutput) -> str:
     ci = report.ci
-    icon = {"failure": "❌", "success": "✅"}[output.conclusion]
+    icon = {"failure": "FAILED", "success": "PASSED"}[output.conclusion]
     lines = [f"## {icon} {_md(output.title)}", ""]
     if ci is not None:
         lines += [

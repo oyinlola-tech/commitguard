@@ -108,7 +108,8 @@ CommitGuard cannot verify these settings locally."""
 
 def setup_command() -> None:
     """Show GitHub workflow status, the required check name and setup steps."""
-    ok, cross, bang = ("✓", "✗", "⚠") if supports_unicode() else ("OK", "X", "!")
+    ok, cross = ("✓", "✗") if supports_unicode() else ("OK", "X")
+    bang = "!"
     symbol = {
         WorkflowIssueLevel.OK: "-",
         WorkflowIssueLevel.WARN: bang,
@@ -149,7 +150,8 @@ github_app.command("setup")(setup_command)
 
 class _Checklist:
     def __init__(self) -> None:
-        self.ok, self.cross, self.bang = ("✓", "✗", "⚠") if supports_unicode() else ("OK", "X", "!")
+        self.ok, self.cross = ("✓", "✗") if supports_unicode() else ("OK", "X")
+        self.bang = "!"
         self.failed = False
 
     def passed(self, label: str, detail: str = "") -> None:

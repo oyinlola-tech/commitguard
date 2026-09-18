@@ -51,7 +51,7 @@ def error_output(kind: FailureKind, reason: str) -> tuple[CheckRunConclusion, Ch
         FailureKind.INTERNAL: "Scan could not be completed",
     }[kind]
     summary = (
-        "## ❌ CommitGuard could not verify repository policy\n\n"
+        "## CommitGuard could not verify repository policy\n\n"
         f"Reason: {md(reason, 500)}\n\n"
         "Security validation could not be completed, so this check fails (fail closed). "
         "Push a new commit or reopen the pull request to scan again."
@@ -83,15 +83,15 @@ def completed_output(result: ScanResult) -> tuple[CheckRunConclusion, CheckRunOu
     with_warnings = decision.state is EnforcementState.PASSED_WITH_WARNINGS
 
     if blocked:
-        heading, title = "❌ CommitGuard: BLOCKED", f"Blocked: {stats.violations} violation(s)"
+        heading, title = "CommitGuard: BLOCKED", f"Blocked: {stats.violations} violation(s)"
     elif with_warnings:
         heading, title = (
-            "✅ CommitGuard: PASS (with warnings)",
+            "CommitGuard: PASS (with warnings)",
             f"Passed with {stats.warnings} warning(s)",
         )
     else:
         heading, title = (
-            "✅ CommitGuard: PASS",
+            "CommitGuard: PASS",
             f"Passed: {stats.commits_scanned} commit(s) scanned",
         )
 
@@ -116,7 +116,7 @@ def completed_output(result: ScanResult) -> tuple[CheckRunConclusion, CheckRunOu
         summary += ["All configured CommitGuard policies passed.", ""]
     if ci is not None and ci.policy_weakenings:
         summary += [
-            "### ⚠️ Security policy modification detected",
+            "### Security policy modification detected",
             "",
             "The evaluated commits attempt to weaken an existing CommitGuard policy. "
             "They were evaluated with the trusted policy; additional authorization may be "

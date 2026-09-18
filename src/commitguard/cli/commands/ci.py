@@ -32,7 +32,7 @@ from commitguard.github.actions import (
 )
 from commitguard.github.checks import build_check_output
 from commitguard.github.events import load_github_event
-from commitguard.security.sanitization import sanitize_for_terminal
+from commitguard.security.sanitization import sanitize_block
 from commitguard.security.validation import validate_repository_path
 from commitguard.services.ci import DEFAULT_CI_MAX_COMMITS
 from commitguard.services.scan import ScanRequest, ScanService
@@ -122,7 +122,7 @@ def github_command(
             )
         text = (
             "CommitGuard could not verify repository policy.\n"
-            f"Reason: {sanitize_for_terminal(message, max_length=4000, keep_newlines=True)}\n"
+            f"Reason: {sanitize_block(message, max_length=4000)}\n"
             "Security validation could not be completed.\n"
             "Result: FAILED"
         )

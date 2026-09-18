@@ -1170,6 +1170,16 @@ _ORPHAN_DELETES = (
     "(SELECT installation_id FROM installations)",
     "DELETE FROM enforcement_status WHERE installation_id NOT IN "
     "(SELECT installation_id FROM installations)",
+    # The repository inventory of an installation that is gone. `known_repositories`
+    # is otherwise purged only once a repository has been *removed* from a live
+    # installation, so rows for repositories still granted at uninstall time would
+    # keep an organisation's repository names forever.
+    "DELETE FROM installation_repositories WHERE installation_id NOT IN "
+    "(SELECT installation_id FROM installations)",
+    "DELETE FROM known_repositories WHERE installation_id NOT IN "
+    "(SELECT installation_id FROM installations)",
+    "DELETE FROM installation_sync_status WHERE installation_id NOT IN "
+    "(SELECT installation_id FROM installations)",
 )
 
 
