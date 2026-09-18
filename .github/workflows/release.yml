@@ -1,8 +1,9 @@
 # Release: validate, build once, install and smoke-test everywhere, then draft.
 #
-# Triggered by a tag `vX.Y.Z` or `vX.Y.ZrcN`. Nothing is published automatically:
-# the workflow creates a DRAFT release for the maintainer to check and publish
-# (docs/maintainers/release-process.md). CommitGuard is not published to PyPI.
+# Triggered by a tag `vX.Y.Z` or `vX.Y.ZrcN`. The GitHub release is a DRAFT for
+# the maintainer to check and publish; PyPI publishing runs only for a final tag
+# (no `rc`) and waits on the `pypi` environment's reviewer.
+# See docs/maintainers/release-process.md.
 name: Release
 
 on:
