@@ -10,8 +10,9 @@
 
 ## What a release is
 
-A release is a **draft GitHub release**, created by the release workflow from a
-tag and published by the maintainer, containing:
+A release is created by the release workflow from a tag. A **final** tag is
+published automatically - GitHub release and PyPI - and a **release candidate**
+(`rcN`) stops at a draft prerelease. Either way it contains:
 
 - a source distribution (sdist) and a wheel, built once on Linux;
 - `SHA256SUMS` for those files;
@@ -62,8 +63,9 @@ validation
     ▼
 public release
     │  commit: version X.Y.Z, CHANGELOG "## [X.Y.Z] - YYYY-MM-DD"
-    │  tag vX.Y.Z ──▶ release.yml ──▶ draft release
-    │  maintainer verifies artifacts and publishes the draft
+    │  tag vX.Y.Z ──▶ release.yml: gate, build, smoke tests,
+    │                  GitHub release PUBLISHED + PyPI PUBLISHED
+    │  maintainer ticks the Marketplace checkbox (the only manual step)
     ▼
 back to development
        commit: version X.Y.(Z+1).dev0 (or X.(Y+1).0.dev0), new [Unreleased] section
@@ -93,7 +95,8 @@ back to development
    ```
 
 5. The release workflow runs (see [Validation gate](#validation-gate)) and, if
-   everything passes, creates a draft release.
+   everything passes, creates a **draft prerelease**. A candidate is never
+   published to PyPI and never listed on the Marketplace.
 
 ### 3. Validation
 
@@ -104,12 +107,13 @@ a fix on `main` and a new candidate (`rcN+1`); never move or reuse a tag.
 
 1. Update the version to `X.Y.Z`, rename the changelog section, commit, tag
    `vX.Y.Z`, push the tag.
-2. When the draft release appears, verify it ([Artifact
-   verification](#artifact-verification)).
-3. Write release notes from the changelog section, including installation from
-   the tag: `pipx install "git+https://github.com/oyinlola-tech/commitguard@vX.Y.Z"`
-   (or from the downloaded wheel after checking `SHA256SUMS`).
-4. Publish the draft. Mark release candidates as pre-releases.
+2. The workflow publishes the GitHub release and, once the `pypi` environment
+   allows it, publishes to PyPI. Nothing else is required for either.
+3. Verify the artifacts ([Artifact verification](#artifact-verification)) and
+   that `pipx install commitguardian` works in a clean environment.
+4. Tick the Marketplace checkbox on the release
+   ([Listing the Action](#listing-the-action-on-the-github-marketplace)). The
+   workflow run summary has the link and the values.
 5. Bump `main` to the next `.dev0` version.
 
 If a published release turns out to be broken, do not delete or retag it.
@@ -151,7 +155,8 @@ to other authors ([ADR-009](../adr/009-published-to-pypi-as-commitguardian.md)).
 Publishing uses **Trusted Publishing**: PyPI verifies the workflow's OIDC
 identity, so there is no API token to create, store or rotate. The `publish` job
 carries `id-token: write` and nothing else, and it runs only after the gate, the
-build, the cross-platform install smoke test and the draft have all succeeded.
+build, the cross-platform install smoke test and the GitHub release have all
+succeeded.
 Release candidates (`rc` in the tag) are not published.
 
 ### One-time setup
@@ -232,7 +237,7 @@ a final tag.
 ## Manual release checklist
 
 - [ ] CI, Security and CommitGuard workflows green on the tagged commit
-- [ ] Release workflow green; draft release created
+- [ ] Release workflow green; release published (or, for an `rc`, draft prerelease created)
 - [ ] Version identical in `pyproject.toml`, `src/commitguard/__init__.py`, tag and changelog heading
 - [ ] `CHANGELOG.md` section complete; enforcement-affecting changes called out
 - [ ] Schema migrations (if any) documented with upgrade and backup notes
@@ -245,7 +250,7 @@ a final tag.
 - [ ] `twine check dist/*` passes
 - [ ] sdist contains no local files (the build job checks; `tar tzf dist/*.tar.gz` to look)
 - [ ] After publishing: `pipx install commitguardian` in a clean environment, then `commitguard doctor`
-- [ ] Final releases only: Marketplace checkbox ticked when publishing the draft (not for an rc)
+- [ ] Final releases only: Marketplace checkbox ticked on the published release (never for an `rc`)
 
 ## Artifact verification
 
