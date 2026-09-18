@@ -114,7 +114,7 @@ metadata:
 |---|---|---|---|
 | `ai_coauthor` | `coauthor` | `Co-authored-by: Claude <noreply@anthropic.com>` | block |
 | `ai_identity` | `identity` | author/committer `Copilot <…+Copilot@users.noreply.github.com>` | block |
-| `ai_trailer` | `trailer` | `Generated-by: Claude Code`, `🤖 Generated with [Claude Code](…)` | block |
+| `ai_trailer` | `trailer` | `Generated-by: Claude Code`, `Generated with [Claude Code](…)` (with or without a leading pictographic symbol) | block |
 | `malformed_trailer` | `trailer` | `Co-authored-by Claude noreply@anthropic.com` | warn |
 | `bot_identity` | `bot` | author `dependabot[bot]` (a bot, **not** an AI) | warn |
 
