@@ -42,7 +42,9 @@
 
 > [!IMPORTANT]
 > **A failing GitHub check blocks merges only when branch protection requires it.**
-> CommitGuard cannot configure or verify that. See [What works today](#what-works-today).
+> CommitGuard never configures that for you. The CLI cannot see it at all; the
+> GitHub App reports what GitHub's read-only endpoints show and says `unknown`
+> when they show nothing. See [What works today](#what-works-today).
 
 ## See it work
 
