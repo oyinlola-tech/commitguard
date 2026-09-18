@@ -21,6 +21,6 @@ Package layout (dependency direction flows downwards only)::
     utils        -> subprocess / filesystem / platform helpers
 """
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"
 
 __all__ = ["__version__"]

@@ -85,12 +85,19 @@ def test_the_organization_example_floor_cannot_be_lowered() -> None:
     assert effective["ai_identity"].enabled
 
 
-def test_no_documentation_tells_anyone_to_install_from_pypi() -> None:
+#: PyPI names that belong to OTHER projects. Never install these.
+TAKEN_ON_PYPI = ("commitguard", "commitguard-cli")
+#: This project's own PyPI distribution name (the import package is `commitguard`).
+DISTRIBUTION = "commitguardian"
+
+
+def test_no_documentation_installs_a_name_that_belongs_to_someone_else() -> None:
     """`pip install commitguard` installs an unrelated project: never suggest it.
 
-    The name `commitguard` on PyPI belongs to a different project, so a copied
-    install line would send a user to someone else's code (a dependency-confusion
-    risk of our own making). Every install command must name a Git source.
+    Both `commitguard` and `commitguard-cli` on PyPI belong to different authors,
+    so a copied install line would send a user to someone else's code - a
+    dependency-confusion risk of our own making. Installing this project means
+    `commitguardian` from PyPI, or any name from a Git source.
     """
     root = EXAMPLES.parent
     offenders = []
@@ -100,12 +107,32 @@ def test_no_documentation_tells_anyone_to_install_from_pypi() -> None:
             if line.lstrip().startswith("```"):
                 in_code_block = not in_code_block
                 continue
+            if not in_code_block:
+                continue
             stripped = line.strip().removeprefix("$").strip()
-            is_command = stripped.startswith(
-                ("pip install", "python -m pip install", "pipx install")
-            )
-            names_project = is_command and "commitguard" in stripped
-            from_source = "git+https://" in stripped or "-e" in stripped
-            if in_code_block and names_project and not from_source:
+            if not stripped.startswith(("pip install", "python -m pip install", "pipx install")):
+                continue
+            if "git+https://" in stripped or " -e " in stripped or stripped.endswith(" -e ."):
+                continue  # installing from a Git source or the working tree is always fine
+            # A plain index install: the name must be ours, as a whole word.
+            words = stripped.replace('"', " ").replace("'", " ").replace("[", " [").split()
+            named = {w for w in words if w.startswith("commitguard")}
+            if named - {DISTRIBUTION}:
                 offenders.append(f"{path.relative_to(root)}:{number}: {stripped}")
-    assert offenders == [], "install commands must use a Git source:\n" + "\n".join(offenders)
+    assert offenders == [], (
+        f"these install commands name a PyPI project that is not ours "
+        f"({', '.join(TAKEN_ON_PYPI)} belong to other authors); use {DISTRIBUTION} "
+        f"or a Git source:\n" + "\n".join(offenders)
+    )
+
+
+def test_the_distribution_name_is_not_one_that_belongs_to_someone_else() -> None:
+    """The name in pyproject.toml is what `twine upload` would claim on PyPI."""
+    pyproject = (EXAMPLES.parent / "pyproject.toml").read_text(encoding="utf-8")
+    declared = next(
+        line.split("=", 1)[1].strip().strip('"')
+        for line in pyproject.splitlines()
+        if line.startswith("name = ")
+    )
+    assert declared == DISTRIBUTION
+    assert declared not in TAKEN_ON_PYPI
