@@ -163,13 +163,18 @@ jobs:
           path: platform-${{ matrix.os }}.json
           if-no-files-found: error
 
-  draft:
-    name: Create the draft release
+  # ---------------------------------------------------------------------------
+  # The GitHub release. Published automatically for a final tag; a release
+  # candidate stays a draft so it is never listed on the Marketplace, which
+  # shows whatever tag it was published from.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish the GitHub release
     needs: [build, install]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # only this job, only to create the draft
+      contents: write  # only this job, only to create the release
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
@@ -214,18 +219,69 @@ jobs:
             echo "See CHANGELOG.md for the changes in this release."
           } > notes.md
           cat notes.md
-      - name: Create the draft
+      - name: Create the release
+        id: create
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh release create "${TAG}" \
-            --draft \
-            --title "CommitGuard ${TAG}" \
-            --notes-file notes.md \
-            $(if [[ "${TAG}" == *rc* ]]; then echo --prerelease; fi) \
-            artifacts/distribution/*
+          if [[ "${TAG}" == *rc* ]]; then
+            # A candidate is a draft prerelease: it must not reach the Marketplace.
+            gh release create "${TAG}" --draft --prerelease \
+              --title "CommitGuard ${TAG}" --notes-file notes.md \
+              artifacts/distribution/*
+          else
+            gh release create "${TAG}" --latest \
+              --title "CommitGuard ${TAG}" --notes-file notes.md \
+              artifacts/distribution/*
+          fi
+          echo "url=$(gh release view "${TAG}" --json url --jq .url)" >> "$GITHUB_OUTPUT"
+
+      # The one step no workflow can perform: there is no REST or GraphQL API for
+      # an Actions Marketplace listing, and `gh release create` has no flag for
+      # it. What this does is guarantee the manual click cannot fail, and put the
+      # exact link and values one copy away.
+      - name: Marketplace listing (manual, by GitHub's design)
+        if: ${{ !contains(github.ref_name, 'rc') }}
+        env:
+          TAG: ${{ github.ref_name }}
+          RELEASE_URL: ${{ steps.create.outputs.url }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import os, pathlib, re, sys
+          # Top-level keys only (nested ones are indented), so no YAML parser is
+          # needed and this cannot break on a runner without PyYAML.
+          text = pathlib.Path("action.yml").read_text(encoding="utf-8")
+          def top(key):
+              match = re.search(rf"^{key}:[ \t]*(.*)$", text, re.M)
+              return match.group(1).strip() if match else ""
+          problems = [f"action.yml has no `{k}`" for k in ("name", "description", "branding")
+                      if not (top(k) or re.search(rf"^{k}:\s*$", text, re.M))]
+          name, description = top("name"), top("description")
+          if len(description) > 125:
+              problems.append(
+                  f"action.yml description is {len(description)} characters; "
+                  "the Marketplace card truncates past ~125"
+              )
+          if not pathlib.Path("README.md").exists():
+              problems.append("no README.md")
+          print("## Publish to the GitHub Marketplace\n")
+          if problems:
+              print("The listing checkbox will NOT appear until these are fixed:\n")
+              for problem in problems:
+                  print(f"- {problem}")
+              sys.exit(1)
+          print(f"1. Open [the release]({os.environ['RELEASE_URL']}) and press **Edit**")
+          print("2. Tick **Publish this Action to the GitHub Marketplace**")
+          print("3. Primary Category: **Security**, Another Category: **Code review**")
+          print("4. Press **Update release**\n")
+          print(f"Listing name: `{name}`\n")
+          print("> There is no API for this. `gh release create` has no marketplace flag and")
+          print("> the release object carries no marketplace field, so no workflow can do it.")
+          print("> After the first listing the checkbox stays ticked for later releases.")
+          PY
 
   # ---------------------------------------------------------------------------
   # Publish to PyPI.
@@ -246,7 +302,7 @@ jobs:
   # ---------------------------------------------------------------------------
   publish:
     name: Publish to PyPI
-    needs: [gate, build, install, draft]
+    needs: [gate, build, install, release]
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'rc')
     runs-on: ubuntu-latest
     environment:
