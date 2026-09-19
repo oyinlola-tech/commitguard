@@ -111,7 +111,7 @@ Allowed: 1
     Evidence: Claude <noreply@anthropic.com> (Co-authored-by trailer, line 3)
 ...
 How to fix:
-  CommitGuard never modifies commits. ...
+  CommitGuard did not change these commits. ...
 No changes were pushed to the remote repository.
 ```
 
@@ -266,8 +266,15 @@ CommitGuard
 ```
 
 It is off by default and never applies to identity-based findings, which cannot
-be fixed by editing text. `pre-push` never removes anything. See
-[configuration.md](configuration.md#remediation) for the full rules.
+be fixed by editing text. See [configuration.md](configuration.md#remediation)
+for the full rules.
+
+Commits made with `git commit --no-verify`, `git cherry-pick`, `git rebase` or
+`git am` skip `commit-msg`. `remediation.fix_on_push: true` makes `pre-push`
+rewrite those *unpushed* commits' messages and stop the push, so the next
+`git push` sends the cleaned commits. It never touches a commit any remote
+already has, tags, signed commits or identity findings; see
+[configuration.md](configuration.md#fix_on_push-commits-the-commit-msg-hook-never-saw).
 
 ## Doctor
 

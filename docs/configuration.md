@@ -73,7 +73,8 @@ never treated as a fully protected state.
 
 ```yaml
 remediation:
-  auto_remove: false   # default
+  auto_remove: false   # default: remove attribution before a commit is created
+  fix_on_push: false   # default: rewrite unpushed commits that slipped past it
 ```
 
 By default CommitGuard blocks a violating commit and leaves the message to you.
@@ -98,17 +99,68 @@ The stripped message is re-analysed before the commit is allowed. If it is still
 blocked, the original block stands: nothing is ever allowed on the assumption
 that the removal worked.
 
-Two deliberate constraints:
+A mandatory policy cannot set either option. A floor may only make enforcement
+stricter, and both turn a block into something that proceeds, so `remediation:`
+in a mandatory policy is a configuration error.
 
-* **`pre-push` is unaffected.** By then the commits exist, and correcting them
-  means rewriting history. CommitGuard never does that on its own; it blocks and
-  tells you which commits to amend or reword.
-* **A mandatory policy cannot set it.** A floor may only make enforcement
-  stricter, and `auto_remove` turns a block into a commit, so
-  `remediation:` in a mandatory policy is a configuration error.
+### `fix_on_push`: commits the commit-msg hook never saw
 
-`commitguard doctor` reports `! WARNING  remediation.auto_remove is on` whenever
-it is enabled, because it changes a block into a commit.
+`auto_remove` only sees commits made with `git commit`. These create commits
+without running `commit-msg`, so their attribution reaches `pre-push` intact:
+
+| How the commit was made | Cleaned by `auto_remove`? |
+|---|---|
+| `git commit`, `git commit --amend`, `git merge` | yes |
+| `git commit --no-verify` | no |
+| `git cherry-pick`, `git rebase`, `git am` | no |
+| tools that create commits without running hooks | no |
+
+With `fix_on_push: true`, the `pre-push` hook rewrites those commits' messages
+to remove the attribution. **It then stops that push.** Git decides which
+objects a push sends before the hook runs, so the push in progress would still
+carry the old commits; the next `git push` sends the cleaned ones:
+
+```
+$ git push
+CommitGuard
+! CLEANED 2 unpushed commits (AI attribution removed; history rewritten)
+
+  e70fd0f -> 23acf33  feat: two
+      removed: Co-Authored-By: Claude <noreply@anthropic.com>  [ai_coauthor]
+  d91e62b -> 06d7cc6  feat: three
+
+  Only commits that no remote has were changed; the old ones are in
+  `git reflog`. Branch updated: main.
+
+  This push was stopped (Git had already chosen what to send).
+  Run `git push` again to send the cleaned commits.
+
+$ git push
+CommitGuard: ✓ 3 outgoing commits checked, no policy violations
+```
+
+This rewrites history, so it is deliberately narrow. It does nothing - and the
+push is blocked as usual - unless every one of these holds:
+
+* **No remote has the commits.** A commit contained in *any* remote-tracking
+  branch, not only the one you are pushing to, has been shared and is never
+  rewritten.
+* **Only a local branch is being pushed.** Tags are never touched.
+* **Every blocking finding is a message line.** An AI author or committer still
+  blocks. If any commit cannot be fixed, *none* are rewritten.
+* **No commit is signed** (`gpgsig`, `mergetag`), since rewriting would silently
+  drop the signature, and none carries a header CommitGuard does not recognise.
+* **No rebase, merge, cherry-pick, revert or bisect is in progress.**
+* **Every rewritten commit re-analyses clean.** Nothing moves on assumption.
+
+Only the message changes. The tree, author, committer and both timestamps are
+copied byte for byte, so your working tree and index are untouched. Commits
+after a cleaned one get new IDs because their parent changed; commits before it
+keep theirs. Branches move atomically, and only if they still point where they
+did when the push began. The originals stay in `git reflog`.
+
+`commitguard doctor` reports a warning whenever either option is on, because
+each changes a block into something that proceeds.
 
 ## Validation (security-relevant)
 

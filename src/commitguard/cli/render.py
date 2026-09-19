@@ -153,13 +153,15 @@ def render_check_text(report: ScanReport) -> str:
 # --------------------------------------------------------------------------- #
 _PUSH_REMEDIATION = [
     "How to fix:",
-    "  CommitGuard never modifies commits. Rewrite the blocked commits so they no",
-    "  longer carry the attribution, then push again:",
+    "  CommitGuard did not change these commits. Rewrite the blocked commits so",
+    "  they no longer carry the attribution, then push again:",
     "  - latest commit only:  git commit --amend",
     "      (replaces that one local commit with an edited copy)",
     "  - older commits:       git rebase -i <commit>^   and mark them 'reword'",
     "      (recreates the selected commits and every commit after them)",
     "  Only rewrite commits that have not already been shared with others.",
+    "  To have CommitGuard do this for unpushed commits, set",
+    "  remediation.fix_on_push: true (see docs/configuration.md).",
 ]
 
 

@@ -307,3 +307,252 @@ def test_malformed_stdin_fails_closed(git_repo) -> None:  # type: ignore[no-unty
     result = CliRunner().invoke(app, ["hook", "pre-push", "origin", "url"], input="garbage\n")
     assert result.exit_code == 2
     assert "could not verify repository policy" in result.output
+
+
+# --------------------------------------------------------------------------- #
+# remediation.fix_on_push: rewrite unpushed commits the commit-msg hook never saw
+# --------------------------------------------------------------------------- #
+FIX_ON_PUSH = "version: 1\nremediation:\n  fix_on_push: true\n"
+
+
+@pytest.fixture
+def fixing_repo(hooked_repo):  # type: ignore[no-untyped-def]
+    (hooked_repo.path / ".commitguard.yaml").write_text(FIX_ON_PUSH, encoding="utf-8")
+    return hooked_repo
+
+
+def messages(repo, ref: str = "main") -> str:  # type: ignore[no-untyped-def]
+    return repo.git("log", ref, "--format=%B")
+
+
+def test_fix_on_push_cleans_unpushed_commits_then_the_next_push_succeeds(
+    fixing_repo, bare_remote, get_remote_refs
+) -> None:  # type: ignore[no-untyped-def]
+    """`repo.commit` uses --no-verify: exactly the commits commit-msg never sees."""
+    first = fixing_repo.commit("feat: one\n")
+    fixing_repo.commit(AI)
+    fixing_repo.commit("feat: three\n")
+
+    stopped = push(fixing_repo, "main")
+    assert stopped.returncode != 0, "the push carrying the old commits must not proceed"
+    assert "CLEANED 2 unpushed commits" in stopped.stderr
+    assert "removed: Co-authored-by: Claude <noreply@anthropic.com>" in stopped.stderr
+    assert "Run `git push` again" in stopped.stderr
+    assert get_remote_refs(bare_remote) == {}, "nothing may reach the remote on this push"
+
+    assert "Claude" not in messages(fixing_repo)
+    assert fixing_repo.git("rev-parse", "HEAD~2") == first, "commits before it keep their id"
+
+    again = push(fixing_repo, "main")
+    assert again.returncode == 0, again.stderr
+    assert "no policy violations" in again.stderr
+    assert "Claude" not in fixing_repo.git("--git-dir", str(bare_remote), "log", "--format=%B")
+
+
+def test_fix_on_push_changes_only_the_message(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    (fixing_repo.path / "a.txt").write_text("content\n", encoding="utf-8")
+    fixing_repo.git("add", "a.txt")
+    fixing_repo.git(
+        "commit",
+        "--quiet",
+        "--no-verify",
+        "-m",
+        "feat: add a\n\nBody stays.\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+        env={
+            "GIT_AUTHOR_DATE": "2026-01-02T03:04:05+01:00",
+            "GIT_COMMITTER_DATE": "2026-01-03T04:05:06+02:00",
+        },
+    )
+    fields = "%T|%an|%ae|%aI|%cn|%ce|%cI"
+    before = fixing_repo.git("log", "-1", f"--format={fields}")
+
+    assert push(fixing_repo, "main").returncode != 0
+
+    assert fixing_repo.git("log", "-1", f"--format={fields}") == before
+    assert fixing_repo.git("log", "-1", "--format=%B") == "feat: add a\n\nBody stays."
+    assert fixing_repo.git("status", "--porcelain") == "?? .commitguard.yaml"
+
+
+def test_fix_on_push_keeps_human_trailers(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    fixing_repo.commit(
+        "feat: pair\n\n"
+        "Co-authored-by: Ada Lovelace <ada@example.com>\n"
+        "Co-authored-by: Claude <noreply@anthropic.com>\n"
+    )
+    assert push(fixing_repo, "main").returncode != 0
+    stored = fixing_repo.git("log", "-1", "--format=%B")
+    assert "Co-authored-by: Ada Lovelace <ada@example.com>" in stored
+    assert "Claude" not in stored
+
+
+def test_fix_on_push_never_rewrites_a_commit_another_remote_has(fixing_repo, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Once any remote has a commit it has been shared; rewriting it would fork history."""
+    other = tmp_path / "other.git"
+    fixing_repo.git("init", "--quiet", "--bare", str(other))
+    fixing_repo.git("remote", "add", "other", str(other))
+    bad = fixing_repo.commit(AI)
+    fixing_repo.git("push", "--quiet", "--no-verify", "other", "main")
+    fixing_repo.git("fetch", "--quiet", "other")
+
+    result = push(fixing_repo, "main")
+    assert result.returncode != 0
+    assert "PUSH BLOCKED" in result.stderr
+    assert "CLEANED" not in result.stderr
+    assert fixing_repo.head() == bad
+
+
+def test_fix_on_push_leaves_an_ai_identity_blocked(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    from commitguard.provenance.author import Identity
+
+    bad = fixing_repo.commit(
+        "feat: x\n", author=Identity(name="Claude", email="noreply@anthropic.com")
+    )
+    result = push(fixing_repo, "main")
+    assert result.returncode != 0
+    assert "PUSH BLOCKED" in result.stderr
+    assert "CLEANED" not in result.stderr
+    assert fixing_repo.head() == bad
+
+
+def test_fix_on_push_never_touches_a_tag(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    bad = fixing_repo.commit(AI)
+    fixing_repo.git("tag", "v1")
+    result = push(fixing_repo, "v1")
+    assert result.returncode != 0
+    assert "PUSH BLOCKED" in result.stderr, "a normal block, not an internal error"
+    assert "CLEANED" not in result.stderr
+    assert fixing_repo.git("rev-parse", "v1^{commit}") == bad
+    assert fixing_repo.head() == bad
+
+
+def test_fix_on_push_does_nothing_during_a_merge(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    bad = fixing_repo.commit(AI)
+    merge_head = fixing_repo.path / fixing_repo.git("rev-parse", "--git-path", "MERGE_HEAD")
+    merge_head.write_text(bad + "\n", encoding="utf-8")
+    result = push(fixing_repo, "main")
+    assert result.returncode != 0
+    assert "CLEANED" not in result.stderr
+    assert fixing_repo.head() == bad
+
+
+def test_fix_on_push_leaves_a_signed_commit_alone(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    """Rewriting would silently strip the signature, so it is never done."""
+    plain = fixing_repo.commit(AI)
+    raw = fixing_repo.git("cat-file", "commit", plain)
+    headers, _, body = raw.partition("\n\n")
+    signed = (
+        headers
+        + "\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n fake\n -----END PGP SIGNATURE-----"
+        + "\n\n"
+        + body
+        + "\n"
+    )
+    result = fixing_repo.run("hash-object", "-t", "commit", "-w", "--stdin", input_text=signed)
+    assert result.returncode == 0, result.stderr
+    signed_sha = result.stdout.strip()
+    fixing_repo.git("update-ref", "refs/heads/main", signed_sha)
+
+    pushed = push(fixing_repo, "main")
+    assert pushed.returncode != 0
+    assert "CLEANED" not in pushed.stderr
+    assert fixing_repo.head() == signed_sha
+
+
+def test_fix_on_push_is_off_by_default(hooked_repo, bare_remote, get_remote_refs) -> None:  # type: ignore[no-untyped-def]
+    bad = hooked_repo.commit(AI)
+    result = push(hooked_repo, "main")
+    assert result.returncode != 0
+    assert "PUSH BLOCKED" in result.stderr
+    assert "CLEANED" not in result.stderr
+    assert hooked_repo.head() == bad
+    assert get_remote_refs(bare_remote) == {}
+
+
+def test_fix_on_push_is_all_or_nothing(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    """One unfixable commit means nothing is rewritten, even the fixable ones.
+
+    Rewriting only the fixable commit would change history and still leave a
+    push that is blocked, which is the worst of both.
+    """
+    from commitguard.provenance.author import Identity
+
+    fixing_repo.commit("feat: x\n", author=Identity(name="Claude", email="noreply@anthropic.com"))
+    bad = fixing_repo.commit(AI)
+    result = push(fixing_repo, "main")
+    assert result.returncode != 0
+    assert "CLEANED" not in result.stderr
+    assert fixing_repo.head() == bad
+
+
+def test_fix_on_push_never_moves_a_branch_on_assumption(fixing_repo, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """If removing the lines did not actually clear the block, nothing moves.
+
+    Simulated by a stripping step that changes nothing: the rewritten commits
+    are re-analysed before any branch is updated.
+    """
+    from commitguard.services import push_fix
+    from commitguard.services.hooks import run_pre_push
+
+    bad = fixing_repo.commit(AI)
+    monkeypatch.setattr(push_fix, "strip_lines", lambda message, _lines: message)
+    run = run_pre_push(
+        Repository.discover(fixing_repo.path),
+        "origin",
+        f"refs/heads/main {bad} refs/heads/main {'0' * 40}\n",
+    )
+    assert run.fixed is None
+    assert run.report is not None
+    assert run.report.action.value == "block"
+    assert fixing_repo.head() == bad
+
+
+def test_fix_on_push_never_leaves_a_commit_with_no_message(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    bad = fixing_repo.commit("Co-authored-by: Claude <noreply@anthropic.com>\n")
+    result = push(fixing_repo, "main")
+    assert result.returncode != 0
+    assert "CLEANED" not in result.stderr
+    assert fixing_repo.head() == bad
+
+
+def test_fix_on_push_refuses_when_the_analysed_text_is_not_the_stored_text(
+    fixing_repo,
+) -> None:  # type: ignore[no-untyped-def]
+    """Line numbers from the analysis must refer to the message being rewritten.
+
+    Git's own output always agrees; this guards the day it does not, by feeding
+    an analysis of a different message than the one stored.
+    """
+    from commitguard.policies.defaults import default_policy_set
+    from commitguard.services.analysis import Analyzer
+    from commitguard.services.push_fix import BranchUpdate, fix_outgoing_commits
+
+    bad = fixing_repo.commit("feat: x\n\nCo-authored-by: Claude <noreply@anthropic.com>\n")
+    repository = Repository.discover(fixing_repo.path)
+    [stored] = repository.read_commits([bad])
+    # The same attribution, but on a different line than the stored message has it.
+    shifted = stored.model_copy(
+        update={"message": "feat: x\n\nextra\n\nCo-authored-by: Claude <noreply@anthropic.com>\n"}
+    )
+    analyzer = Analyzer.create(default_policy_set())
+    fixed = fix_outgoing_commits(
+        repository,
+        analyzer,
+        [BranchUpdate(local_ref="refs/heads/main", local_oid=bad, commits=(bad,))],
+        {bad: shifted},
+        {bad: analyzer.analyze(shifted)},
+    )
+    assert fixed is None
+    assert fixing_repo.head() == bad
+
+
+def test_doctor_reports_that_fix_on_push_is_on(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, "-P", "-m", "commitguard", "doctor"],
+        cwd=fixing_repo.path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "remediation.fix_on_push is on" in result.stdout

@@ -64,13 +64,21 @@ class RemediationOverride(BaseModel):
     it is then clean.
 
     It is off by default, because it edits what the developer wrote.
+
+    ``fix_on_push`` covers the commits ``commit-msg`` never saw (``--no-verify``,
+    cherry-pick, rebase, ``git am``). The ``pre-push`` hook rewrites the
+    *unpushed* commits on the branch to remove the same lines, then stops that
+    push: Git has already chosen which objects to send, so the corrected
+    commits go out on the next ``git push``. This rewrites history, so it is a
+    separate switch and also off by default.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     auto_remove: StrictBool | None = None
+    fix_on_push: StrictBool | None = None
 
-    @field_validator("auto_remove", mode="before")
+    @field_validator("auto_remove", "fix_on_push", mode="before")
     @classmethod
     def _reject_explicit_null(cls, value: object) -> object:
         if value is None:

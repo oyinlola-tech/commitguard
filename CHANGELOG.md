@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`remediation.fix_on_push`** (opt-in, off by default): the `pre-push` hook
+  removes AI, bot and agent attribution from *unpushed* commits that never
+  passed through `commit-msg` - made with `git commit --no-verify`,
+  `git cherry-pick`, `git rebase`, `git am`, or tools that skip hooks - then
+  stops that push so the next `git push` sends the cleaned commits (a hook
+  cannot change what a push in progress sends). Only the message changes: the
+  tree, author, committer and timestamps are copied byte for byte, and the
+  originals stay in the reflog. It refuses, and blocks as before, for any
+  commit a remote-tracking branch contains, tags, signed commits, identity
+  findings, a message that would be left empty, or an unfinished rebase, merge,
+  cherry-pick, revert or bisect; if any commit cannot be fixed, none are
+  rewritten; and nothing moves unless every rewritten commit re-analyses clean.
+  Branches move atomically with a compare-and-swap. `commitguard doctor` warns
+  while it is on, and a mandatory policy cannot enable it. Each of these guards
+  is covered by a test that fails when the guard is removed.
+
+### Changed
+
+- The blocked-push message no longer says "CommitGuard never modifies
+  commits", which is not true when `fix_on_push` is enabled. It now says the
+  commits were not changed and points to the setting.
+
 ## [0.1.0] - 2026-09-18
 
 ### Packaging

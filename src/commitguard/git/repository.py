@@ -386,6 +386,79 @@ class Repository:
             raise UnsafeInputError(f"{path} at {commit[:12]} is larger than {max_bytes} bytes")
         return self._git(["cat-file", "blob", oid]).stdout
 
+    # ------------------------------------------------------------------ #
+    # Rewriting unpushed commits (remediation.fix_on_push)
+    # ------------------------------------------------------------------ #
+    #: State files that mean a rebase, merge, cherry-pick, revert or bisect is
+    #: in progress. Moving a branch underneath one of those corrupts it.
+    _IN_PROGRESS = (
+        "rebase-merge",
+        "rebase-apply",
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "BISECT_LOG",
+    )
+
+    def operation_in_progress(self) -> str | None:
+        """Name of an unfinished rebase/merge/cherry-pick/revert/bisect, if any."""
+        for name in self._IN_PROGRESS:
+            result = self._git(["rev-parse", "--git-path", name])
+            path = Path(result.stdout.decode("utf-8", errors="replace").strip())
+            if not path.is_absolute():
+                path = self.root / path
+            if path.exists():
+                return name
+        return None
+
+    def read_raw_commit(self, sha: str) -> bytes:
+        """The commit object exactly as stored (headers, blank line, message)."""
+        if not is_git_sha(sha):
+            raise UnsafeInputError("read_raw_commit requires a full commit id")
+        return self._git(["cat-file", "commit", sha]).stdout
+
+    def write_commit_object(self, data: bytes) -> str:
+        """Store a commit object and return its id. Nothing references it yet."""
+        result = self._git(["hash-object", "-t", "commit", "-w", "--stdin"], input_bytes=data)
+        sha = result.stdout.decode("ascii", errors="replace").strip()
+        if not is_git_sha(sha):
+            raise MalformedGitOutputError("git hash-object returned no object id")
+        return sha
+
+    def not_on_any_remote(self, shas: Sequence[str]) -> set[str]:
+        """The subset of ``shas`` not reachable from any remote-tracking branch.
+
+        A commit that some remote already has - even a different remote than the
+        one being pushed to - has been shared, and must never be rewritten.
+        """
+        for sha in shas:
+            if not is_git_sha(sha):
+                raise UnsafeInputError("not_on_any_remote requires full commit ids")
+        if not shas:
+            return set()
+        result = self._git(
+            ["rev-list", "--not", "--remotes", "--not", "--end-of-options", *shas, "--"]
+        )
+        reachable = set(result.stdout.decode("ascii", errors="replace").split())
+        return {sha for sha in shas if sha in reachable}
+
+    def move_branches(self, moves: Sequence[tuple[str, str, str]], reason: str) -> None:
+        """Atomically point each ``refs/heads/...`` at a new commit.
+
+        Each move is ``(ref, new, old)`` and applies only if the ref still points
+        at ``old``; either every ref moves or none does. Old commits stay in the
+        reflog.
+        """
+        lines = []
+        for ref, new, old in moves:
+            if not ref.startswith("refs/heads/") or any(ord(c) <= 0x20 for c in ref):
+                raise UnsafeInputError("move_branches only updates local branches")
+            if not (is_git_sha(new) and is_git_sha(old)):
+                raise UnsafeInputError("move_branches requires full commit ids")
+            lines.append(f"update {ref} {new} {old}\n")
+        payload = "start\n" + "".join(lines) + "prepare\ncommit\n"
+        self._git(["update-ref", "-m", reason, "--stdin"], input_bytes=payload.encode("ascii"))
+
     def config_get(self, key: str) -> str | None:
         """Return a Git configuration value, or None if it is unset."""
         validate_git_config_key(key)

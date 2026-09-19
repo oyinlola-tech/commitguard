@@ -41,6 +41,7 @@ class Remediation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     auto_remove: bool = False
+    fix_on_push: bool = False
 
 
 def build_remediation(*configs: CommitGuardConfig) -> Remediation:

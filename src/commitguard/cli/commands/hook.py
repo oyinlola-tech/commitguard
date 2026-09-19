@@ -28,6 +28,7 @@ from commitguard.services.hooks import (
     run_pre_commit,
     run_pre_push,
 )
+from commitguard.services.push_fix import PushFix
 
 MAX_PRE_PUSH_STDIN_BYTES = 8 * 1024 * 1024
 
@@ -86,6 +87,35 @@ def _removal_notice(run: HookRun) -> str:
     return "\n".join(lines)
 
 
+def _push_fix_notice(fixed: PushFix) -> str:
+    """What ``remediation.fix_on_push`` rewrote. Always shown in full: it
+    changed commits the developer made."""
+    count = len(fixed.commits)
+    lines = [
+        "CommitGuard",
+        f"! CLEANED {count} unpushed commit{'s' if count != 1 else ''} "
+        "(AI attribution removed; history rewritten)",
+        "",
+    ]
+    for commit in fixed.commits:
+        subject = sanitize_block(commit.subject, max_length=72)
+        lines.append(f"  {commit.old_sha[:7]} -> {commit.new_sha[:7]}  {subject}")
+        lines += [
+            f"      removed: {sanitize_block(r.text, max_length=200)}  [{r.rule_id}]"
+            for r in commit.removed
+        ]
+    branches = ", ".join(ref.removeprefix("refs/heads/") for ref in fixed.branches)
+    lines += [
+        "",
+        "  Only commits that no remote has were changed; the old ones are in",
+        f"  `git reflog`. Branch updated: {branches}.",
+        "",
+        "  This push was stopped (Git had already chosen what to send).",
+        "  Run `git push` again to send the cleaned commits.",
+    ]
+    return "\n".join(lines)
+
+
 def _finish(run: HookRun, text: str) -> None:
     if not run.enabled:
         _err(
@@ -95,6 +125,10 @@ def _finish(run: HookRun, text: str) -> None:
         return
     if run.removed:
         _err(_removal_notice(run))
+    if run.fixed is not None:
+        # The commits being pushed are the old ones: this push must not proceed.
+        _err(_push_fix_notice(run.fixed))
+        raise typer.Exit(code=int(ExitCode.BLOCKED))
     _err(text)
     if run.report is not None and run.report.action is Action.BLOCK:
         raise typer.Exit(code=int(ExitCode.BLOCKED))

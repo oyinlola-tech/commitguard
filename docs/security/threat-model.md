@@ -706,9 +706,15 @@ not file contents) of repositories while they are installed. See
 - Detectors receive data, not a repository handle; architecture tests forbid
   I/O imports in detection layers **[done]**.
 - Git reads use `GIT_OPTIONAL_LOCKS=0` **[done]**.
-- CommitGuard never rewrites commits or history; it never runs `git reset`,
-  `rebase`, `commit --amend`, `filter-branch` or `filter-repo`. Remediation
-  text explains the scope of any command it suggests **[by design]**.
+- CommitGuard never runs `git reset`, `rebase`, `commit --amend`,
+  `filter-branch` or `filter-repo`, and by default never rewrites commits or
+  history. The one exception is opt-in: with `remediation.fix_on_push`, the
+  `pre-push` hook rewrites the *message* of unpushed commits. It refuses any
+  commit a remote-tracking branch contains, tags, signed commits, identity
+  findings and in-progress rebases or merges; moves branches atomically with a
+  compare-and-swap; re-analyses every rewritten commit before moving anything;
+  and leaves the originals in the reflog. The server side (Action, App) never
+  rewrites anything **[by design; `tests/integration/hooks/test_pre_push.py`]**.
 - `init` never overwrites an existing file **[done]**.
 
 ## Maintaining this document

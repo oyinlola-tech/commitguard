@@ -302,3 +302,12 @@ def test_a_mandatory_policy_cannot_switch_on_auto_removal() -> None:
     )
     with pytest.raises(ValueError, match="cannot configure remediation"):
         validate_mandatory_config(disabling)
+
+
+def test_a_mandatory_policy_cannot_switch_on_rewriting_history() -> None:
+    from commitguard.config.schema import CommitGuardConfig
+    from commitguard.policies.mandatory import validate_mandatory_config
+
+    config = CommitGuardConfig.model_validate({"version": 1, "remediation": {"fix_on_push": True}})
+    with pytest.raises(ValueError, match="cannot configure remediation"):
+        validate_mandatory_config(config)

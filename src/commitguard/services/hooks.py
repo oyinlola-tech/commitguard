@@ -44,6 +44,7 @@ from commitguard.services.analysis import (
     load_analyzer,
     pending_commit,
 )
+from commitguard.services.push_fix import BranchUpdate, PushFix, fix_outgoing_commits
 from commitguard.services.remediation import (
     RemovedLine,
     removable_lines,
@@ -88,6 +89,9 @@ class HookRun(BaseModel):
     #: Lines deleted from the pending message by ``remediation.auto_remove``.
     #: Non-empty only when the rewritten message then analysed clean.
     removed: tuple[RemovedLine, ...] = ()
+    #: Unpushed commits rewritten by ``remediation.fix_on_push``. When set, the
+    #: push that triggered it is stopped and the next push sends the fixed commits.
+    fixed: PushFix | None = None
 
 
 def _setup(
@@ -231,24 +235,42 @@ def run_pre_push(
     *,
     config_path: Path | None = None,
 ) -> HookRun:
-    analyzer, loaded, enforcement, _ = _setup(repository, config_path)
+    analyzer, loaded, enforcement, remediation = _setup(repository, config_path)
     if not enforcement.pre_push:
         return HookRun(hook=HookName.PRE_PUSH, enabled=False, remote=remote)
     updates = parse_pre_push_input(stdin_text)
     plans, shas = plan_push(repository, updates, remote, max_commits=enforcement.max_push_commits)
-    reports = [
-        analyzer.analyze(commit, ScanTrigger.PRE_PUSH) for commit in repository.read_commits(shas)
-    ]
+    commits = repository.read_commits(shas)
+    reports = [analyzer.analyze(commit, ScanTrigger.PRE_PUSH) for commit in commits]
+    report = build_report(
+        reports,
+        repository=repository,
+        target=f"push to {remote}",
+        trigger=ScanTrigger.PRE_PUSH,
+        config=loaded,
+    )
+    fixed = None
+    if remediation.fix_on_push and report.action is Action.BLOCK:
+        fixed = fix_outgoing_commits(
+            repository,
+            analyzer,
+            [
+                BranchUpdate(
+                    local_ref=plan.update.local_ref,
+                    local_oid=plan.update.local_oid,
+                    commits=plan.commits,
+                )
+                for plan in plans
+                if plan.disposition is UpdateDisposition.SCANNED
+            ],
+            {commit.sha: commit for commit in commits if commit.sha},
+            {c.sha: r for c, r in zip(commits, reports, strict=True) if c.sha},
+        )
     return HookRun(
         hook=HookName.PRE_PUSH,
         enabled=True,
         remote=remote,
         updates=tuple(plans),
-        report=build_report(
-            reports,
-            repository=repository,
-            target=f"push to {remote}",
-            trigger=ScanTrigger.PRE_PUSH,
-            config=loaded,
-        ),
+        report=report,
+        fixed=fixed,
     )

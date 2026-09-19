@@ -285,8 +285,12 @@ result=BLOCK commits=1 block=1 warn=0 allow=0
 | `1` | blocked by policy (a finding or detector failure evaluated to `block`) |
 | `2` | error: invalid configuration/rules, Git error, bad arguments, unexpected failure (hooks block on errors) |
 
-CommitGuard never modifies commits or rewrites history; remediation is always
-left to the developer.
+By default CommitGuard never modifies commits or rewrites history; remediation
+is left to the developer. Two opt-in settings change that, locally only:
+`remediation.auto_remove` deletes AI attribution from a message before the
+commit is created, and `remediation.fix_on_push` rewrites *unpushed* commits
+that slipped past it (see [configuration](docs/configuration.md#remediation)).
+The GitHub Action and App never rewrite anything.
 
 ## Configuration
 

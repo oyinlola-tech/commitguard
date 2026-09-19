@@ -33,7 +33,11 @@ enforcement:
 # What to do about a violation. By default CommitGuard blocks and leaves the
 # message to you. Set auto_remove: true and the commit-msg hook deletes the
 # offending lines instead, reports what it removed, and lets the commit through.
-# Attribution in the author or committer identity still blocks: no edit to the
-# message can fix that. `commitguard doctor` shows when this is on.
+# Set fix_on_push: true and pre-push also rewrites unpushed commits that skipped
+# commit-msg (--no-verify, cherry-pick, rebase), then asks you to push again; it
+# never touches a commit any remote already has. Attribution in the author or
+# committer identity always blocks: no edit to the message can fix that.
+# `commitguard doctor` shows when either is on.
 # remediation:
 #   auto_remove: true
+#   fix_on_push: true

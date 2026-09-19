@@ -69,7 +69,7 @@ class IdentityDetector(Detector):
                     commit_sha=commit.sha,
                     remediation=(
                         "Recreate the commit under the responsible human contributor's identity "
-                        "before pushing. CommitGuard never rewrites commits itself."
+                        "before pushing. CommitGuard never changes who authored a commit."
                     ),
                 )
             )

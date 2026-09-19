@@ -182,7 +182,8 @@ def _hook_checks(repository: Repository, loaded: LoadedConfig | None) -> list[Ch
                     "set enforcement." + name.replace("-", "_") + ": true",
                 )
             )
-    if loaded is not None and build_remediation(*loaded.configs).auto_remove:
+    remediation = build_remediation(*loaded.configs) if loaded is not None else None
+    if remediation is not None and remediation.auto_remove:
         # This turns a blocked commit into a commit. It must never be invisible.
         checks.append(
             Check(
@@ -191,6 +192,17 @@ def _hook_checks(repository: Repository, loaded: LoadedConfig | None) -> list[Ch
                 "remediation.auto_remove is on: prohibited attribution is deleted from the "
                 "commit message instead of blocking the commit (identity findings still block)",
                 "set remediation.auto_remove: false to block instead",
+            )
+        )
+    if remediation is not None and remediation.fix_on_push:
+        checks.append(
+            Check(
+                "Enforcement",
+                Status.WARN,
+                "remediation.fix_on_push is on: pre-push rewrites unpushed commits to remove "
+                "prohibited attribution, then asks you to push again (never commits a remote "
+                "already has; identity findings still block)",
+                "set remediation.fix_on_push: false to block instead",
             )
         )
     return checks

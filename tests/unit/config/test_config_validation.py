@@ -252,3 +252,32 @@ class TestRemediation:
     def test_invalid_remediation_is_rejected(self, text: str) -> None:
         with pytest.raises(ConfigurationError):
             parse_config(text)
+
+
+class TestFixOnPush:
+    def test_is_off_by_default(self) -> None:
+        """It rewrites history, so it is never on unless asked for."""
+        from commitguard.config.enforcement import build_remediation
+
+        assert not build_remediation(parse_config("version: 1\n")).fix_on_push
+
+    def test_is_independent_of_auto_remove(self) -> None:
+        from commitguard.config.enforcement import build_remediation
+
+        only_commit = build_remediation(
+            parse_config("version: 1\nremediation:\n  auto_remove: true\n")
+        )
+        assert only_commit.auto_remove
+        assert not only_commit.fix_on_push
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "version: 1\nremediation:\n  fix_on_push: 'yes'\n",
+            "version: 1\nremediation:\n  fix_on_push:\n",
+            "version: 1\nremediation:\n  fixonpush: true\n",
+        ],
+    )
+    def test_invalid_values_are_rejected(self, text: str) -> None:
+        with pytest.raises(ConfigurationError):
+            parse_config(text)
