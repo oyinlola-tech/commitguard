@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-19
+
 ### Added
 
 - **`remediation.fix_on_push`** (opt-in, off by default): the `pre-push` hook

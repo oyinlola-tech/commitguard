@@ -60,7 +60,7 @@ commitguard doctor --json
 
 ```json
 {
-  "commitguard_version": "0.1.0",
+  "commitguard_version": "0.1.1",
   "status": "HEALTHY",
   "enforcement": "LOCAL ENFORCEMENT ONLY",
   "counts": {"PASS": 14, "INFO": 1, "NOT CONFIGURED": 2, "WARNING": 0, "FAIL": 0},
