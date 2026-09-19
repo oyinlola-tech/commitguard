@@ -1,6 +1,6 @@
 # Deploying CommitGuard
 
-CommitGuard 0.1.1 is pre-alpha software. This section describes the ways it
+CommitGuard 0.1.2 is pre-alpha software. This section describes the ways it
 can be deployed today, what each way protects against, and what it does not.
 Every mode runs the same detection engine and policy evaluator; they differ in
 where the check runs, who controls it, and whether it can prevent a merge.

@@ -29,7 +29,7 @@ Artifacts are not signed, and no build provenance attestation is generated.
 | Runtime version (`commitguard --version`) | `src/commitguard/__init__.py`, `__version__` |
 | Dashboard package version | `web/package.json` (`"private": true`, not released separately; currently `0.1.0`, independent of the Python version) |
 
-Both Python locations must be changed together; today they both say `0.1.1`.
+Both Python locations must be changed together; today they both say `0.1.2`.
 `tests/integration/git/test_cli_commands.py` checks that `commitguard --version`
 prints `__version__`; no test compares it with `pyproject.toml`, so check both by
 hand. The name in `pyproject.toml` is pinned by

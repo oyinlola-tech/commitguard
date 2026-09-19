@@ -228,6 +228,22 @@ def plan_push(
     return plans, list(ordered)
 
 
+def _branch_ref(repository: Repository, update: PushUpdate) -> str:
+    """The local ref a push update really moves.
+
+    ``git push origin HEAD`` (and ``HEAD:main``) makes Git report the local ref
+    as plain ``HEAD``. It is the checked-out branch when ``HEAD`` points at one
+    whose tip is exactly the commit being pushed; otherwise it stays ``HEAD``,
+    which ``fix_on_push`` refuses to move (a detached ``HEAD`` is not a branch).
+    """
+    if update.local_ref != "HEAD":
+        return update.local_ref
+    branch = repository.current_branch()
+    if branch is not None and repository.ref_commit(branch) == update.local_oid:
+        return branch
+    return update.local_ref
+
+
 def run_pre_push(
     repository: Repository,
     remote: str,
@@ -256,7 +272,7 @@ def run_pre_push(
             analyzer,
             [
                 BranchUpdate(
-                    local_ref=plan.update.local_ref,
+                    local_ref=_branch_ref(repository, plan.update),
                     local_oid=plan.update.local_oid,
                     commits=plan.commits,
                 )

@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # "commitguard-cli", belong to two unrelated projects (see docs/adr/009). The
 # import package and the console script stay `commitguard`.
 name = "commitguardian"
-version = "0.1.1"
+version = "0.1.2"
 description = "Block AI, bot and agent attribution in Git commits, locally and on GitHub."
 readme = "README.md"
 license = "MIT"

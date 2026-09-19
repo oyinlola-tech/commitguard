@@ -25,7 +25,7 @@ and `commitguard-cli` on PyPI are unrelated projects.)
 
 ```bash
 pipx install commitguardian
-commitguard --version        # commitguard 0.1.1
+commitguard --version        # commitguard 0.1.2
 
 # or pinned to an exact commit:
 pipx install "git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"

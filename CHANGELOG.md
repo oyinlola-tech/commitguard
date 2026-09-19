@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-19
+
+### Fixed
+
+- `remediation.fix_on_push` did nothing for `git push origin HEAD` or
+  `git push origin HEAD:main`. For those forms Git reports the local ref as plain
+  `HEAD`, which the "only move local branches" guard did not recognise, so the
+  push was blocked instead of cleaned (safely - nothing was rewritten or sent).
+  `HEAD` is now resolved to the checked-out branch when that branch's tip is the
+  commit being pushed; a detached `HEAD` is still refused. Found by testing the
+  released 0.1.1 package on a real machine.
+
 ## [0.1.1] - 2026-09-19
 
 ### Added

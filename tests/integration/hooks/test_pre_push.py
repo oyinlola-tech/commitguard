@@ -556,3 +556,28 @@ def test_doctor_reports_that_fix_on_push_is_on(fixing_repo) -> None:  # type: ig
         check=False,
     )
     assert "remediation.fix_on_push is on" in result.stdout
+
+
+@pytest.mark.parametrize("refspec", ["main", "HEAD", "HEAD:main"])
+def test_fix_on_push_works_for_every_way_of_naming_the_branch(fixing_repo, refspec: str) -> None:  # type: ignore[no-untyped-def]
+    """`git push origin HEAD` makes Git report the local ref as plain `HEAD`.
+
+    That form was refused on 0.1.1 because `HEAD` is not `refs/heads/...`: found
+    by testing the released package on a real machine, not by the suite.
+    """
+    fixing_repo.commit(AI)
+    result = push(fixing_repo, refspec)
+    assert result.returncode != 0
+    assert "CLEANED 1 unpushed commit" in result.stderr, result.stderr
+    assert "Claude" not in messages(fixing_repo)
+
+
+def test_fix_on_push_refuses_a_detached_head(fixing_repo) -> None:  # type: ignore[no-untyped-def]
+    """A detached HEAD is not a branch, so there is nothing safe to move."""
+    bad = fixing_repo.commit(AI)
+    fixing_repo.git("checkout", "--quiet", "--detach", bad)
+    result = push(fixing_repo, "HEAD:refs/heads/main")
+    assert result.returncode != 0
+    assert "PUSH BLOCKED" in result.stderr
+    assert "CLEANED" not in result.stderr
+    assert fixing_repo.head() == bad

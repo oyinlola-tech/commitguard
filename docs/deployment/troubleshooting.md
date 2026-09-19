@@ -30,7 +30,7 @@ repository. Uninstall it and install from source, pinned to a commit:
 ```bash
 python -m pip uninstall commitguard
 pipx install "git+https://github.com/oyinlola-tech/commitguard@<commit-sha>"
-commitguard --version      # commitguard 0.1.1
+commitguard --version      # commitguard 0.1.2
 ```
 
 **`the GitHub App needs the optional dependencies: pip install 'commitguard[app]'`**

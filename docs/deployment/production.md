@@ -1,6 +1,6 @@
 # Running the App service in production
 
-> Status: **Experimental.** CommitGuard is pre-alpha (0.1.1).
+> Status: **Experimental.** CommitGuard is pre-alpha (0.1.2).
 > No external production deployments have been recorded yet.
 > The App service and organization governance have been validated only by this
 > repository's test suites, against an offline model of GitHub. There are no

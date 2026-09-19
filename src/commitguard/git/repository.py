@@ -425,6 +425,12 @@ class Repository:
             raise MalformedGitOutputError("git hash-object returned no object id")
         return sha
 
+    def current_branch(self) -> str | None:
+        """``refs/heads/<name>`` that ``HEAD`` points at, or None when detached."""
+        result = self._git(["symbolic-ref", "--quiet", "HEAD"], check=False)
+        ref = result.stdout.decode("utf-8", errors="replace").strip()
+        return ref if result.ok and ref.startswith("refs/heads/") else None
+
     def not_on_any_remote(self, shas: Sequence[str]) -> set[str]:
         """The subset of ``shas`` not reachable from any remote-tracking branch.
 
